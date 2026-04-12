@@ -1,25 +1,49 @@
-# email_service.py
-
 import smtplib
 from email.message import EmailMessage
-from config import EMAIL_ADDRESS, EMAIL_PASSWORD
+import os
+
+from config import EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER
 
 
-def send_email(to_email, subject, body, attachments=[]):
+def send_email_with_attachment(subject, body, attachments=None, to_email=None):
+    if attachments is None:
+        attachments = []
+
+    receiver = to_email if to_email else EMAIL_RECEIVER
 
     msg = EmailMessage()
-    msg["From"] = EMAIL_ADDRESS
-    msg["To"] = to_email
     msg["Subject"] = subject
+    msg["From"] = EMAIL_SENDER
+    msg["To"] = receiver
     msg.set_content(body)
 
-    for file in attachments:
-        with open(file, "rb") as f:
-            data = f.read()
-            name = file.split("/")[-1]
+    for file_path in attachments:
+        if not file_path:
+            continue
+        if not os.path.exists(file_path):
+            print(f"⚠️ Attachment not found: {file_path}")
+            continue
 
-        msg.add_attachment(data, maintype="application", subtype="octet-stream", filename=name)
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+            file_name = os.path.basename(file_path)
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        smtp.send_message(msg)
+        msg.add_attachment(
+            file_data,
+            maintype="application",
+            subtype="octet-stream",
+            filename=file_name,
+        )
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.send_message(msg)
+
+        print("📧 ✅ Email sent successfully!")
+        return True
+
+    except Exception as e:
+        print("📧 ❌ Email failed:", e)
+        return False
