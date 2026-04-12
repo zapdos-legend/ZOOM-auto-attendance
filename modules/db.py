@@ -4,7 +4,6 @@ import os
 DB_FILE = "data/attendance.db"
 
 def init_db():
-    # ✅ VERY IMPORTANT (this fixes your error)
     os.makedirs("data", exist_ok=True)
 
     conn = sqlite3.connect(DB_FILE)
@@ -22,3 +21,29 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+# ✅ NEW FUNCTION (fix error)
+def save_attendance_to_db(name, join_time, leave_time, duration):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    INSERT INTO participants (name, join_time, leave_time, duration)
+    VALUES (?, ?, ?, ?)
+    """, (name, join_time, leave_time, duration))
+
+    conn.commit()
+    conn.close()
+
+
+# ✅ NEW FUNCTION (fix error)
+def get_members():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM participants")
+    data = cursor.fetchall()
+
+    conn.close()
+    return data
