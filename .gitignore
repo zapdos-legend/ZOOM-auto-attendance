@@ -1,0 +1,6 @@
+__pycache__/
+attendance_reports/
+data/live_status.json
+PyWhatKit_DB.txt
+ngrok.exe
+.env
