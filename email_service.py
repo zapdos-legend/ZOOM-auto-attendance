@@ -1,15 +1,17 @@
+import os
 import smtplib
 from email.message import EmailMessage
-import os
 
-from config import EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER
+from config import EMAIL_ENABLED, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER
 
 
 def send_email_with_attachment(subject, body, attachments=None, to_email=None):
-    if attachments is None:
-        attachments = []
+    if not EMAIL_ENABLED:
+        print("📧 Email disabled in config.")
+        return False
 
-    receiver = to_email if to_email else EMAIL_RECEIVER
+    attachments = attachments or []
+    receiver = to_email or EMAIL_RECEIVER
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -41,9 +43,9 @@ def send_email_with_attachment(subject, body, attachments=None, to_email=None):
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.send_message(msg)
 
-        print("📧 ✅ Email sent successfully!")
+        print(f"📧 ✅ Email sent to {receiver}")
         return True
 
     except Exception as e:
-        print("📧 ❌ Email failed:", e)
+        print(f"📧 ❌ Email failed for {receiver}: {e}")
         return False

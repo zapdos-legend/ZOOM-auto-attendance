@@ -1,94 +1,104 @@
-import os
 import csv
-from datetime import datetime
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.pagesizes import A4
+import os
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-from config import PRESENT_PERCENTAGE
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+from config import OUTPUT_FOLDER, PRESENT_PERCENTAGE
 
 
-def generate_reports(participants, meeting_info, output_folder):
-    os.makedirs(output_folder, exist_ok=True)
+def generate_reports(rows, meeting_meta):
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-    topic = meeting_info["topic"].replace(" ", "_")
-    meeting_id = meeting_info["meeting_id"]
+    safe_topic = meeting_meta["topic"].replace(" ", "_").replace("/", "_")
+    base_name = (
+        f'{safe_topic}_{meeting_meta["zoom_meeting_id"]}_'
+        f'{meeting_meta["meeting_date"]}_{meeting_meta["start_time"].replace(":", "-")}_to_{meeting_meta["end_time"].replace(":", "-")}'
+    )
 
-    date_str = meeting_info["date"]
-    start_str = meeting_info["start_time_str"]
-    end_str = meeting_info["end_time_str"]
-
-    base_name = f"{topic}_{meeting_id}_{date_str}_{start_str}_to_{end_str}"
-
-    csv_path = os.path.join(output_folder, base_name + ".csv")
-    pdf_path = os.path.join(output_folder, base_name + ".pdf")
-
-    total_meeting_minutes = meeting_info["total_minutes"]
-    threshold_minutes = (PRESENT_PERCENTAGE / 100) * total_meeting_minutes
+    csv_file = os.path.join(OUTPUT_FOLDER, f"{base_name}.csv")
+    pdf_file = os.path.join(OUTPUT_FOLDER, f"{base_name}.pdf")
 
     # CSV
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+    with open(csv_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Name", "Join Time", "Leave Time", "Duration (Min)", "Rejoins", "Status"])
-
-        for name, p in participants.items():
-            join_time = p["first_join"].strftime("%H:%M:%S") if p["first_join"] else ""
-            leave_time = p["last_leave"].strftime("%H:%M:%S") if p["last_leave"] else ""
-
-            duration_min = round(p["total_seconds"] / 60, 2)
-
-            status = "Present" if duration_min >= threshold_minutes else "Absent"
-            p["status"] = status
-
-            writer.writerow([name, join_time, leave_time, duration_min, p["rejoin_count"], status])
+        writer.writerow(["Name", "Join Time", "Leave Time", "Duration (Min)", "Rejoins", "Status", "Is Member", "Is Host"])
+        for row in rows:
+            writer.writerow([
+                row["name"],
+                row["join_time_str"],
+                row["leave_time_str"],
+                row["duration_minutes"],
+                row["rejoins"],
+                row["status"],
+                row["is_member"],
+                row["is_host"],
+            ])
 
     # PDF
     styles = getSampleStyleSheet()
-    doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+    doc = SimpleDocTemplate(pdf_file, pagesize=A4)
     elements = []
 
-    elements.append(Paragraph(f"📌 Zoom Attendance Report", styles["Title"]))
+    elements.append(Paragraph("Attendance Report", styles["Title"]))
     elements.append(Spacer(1, 10))
 
-    elements.append(Paragraph(f"<b>Topic:</b> {meeting_info['topic']}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Meeting ID:</b> {meeting_id}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Date:</b> {date_str}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Start Time:</b> {start_str}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>End Time:</b> {end_str}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Topic:</b> {meeting_meta['topic']}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Meeting ID:</b> {meeting_meta['zoom_meeting_id']}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Date:</b> {meeting_meta['meeting_date']}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Start Time:</b> {meeting_meta['start_time']}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>End Time:</b> {meeting_meta['end_time']}", styles["Normal"]))
     elements.append(Spacer(1, 10))
 
-    elements.append(Paragraph(f"⏳ Total Meeting Duration: {round(total_meeting_minutes,2)} minutes", styles["Normal"]))
-    elements.append(Spacer(1, 10))
+    total_meeting_minutes = meeting_meta["total_minutes"]
+    threshold = round((PRESENT_PERCENTAGE / 100.0) * total_meeting_minutes, 2)
 
-    note_text = f"""
-    <b>📌 Attendance Criteria:</b><br/>
+    elements.append(Paragraph(f"<b>Total Meeting Duration:</b> {round(total_meeting_minutes, 2)} minutes", styles["Normal"]))
+    elements.append(Spacer(1, 8))
+
+    note = f"""
+    <b>📌 Attendance Criteria</b><br/>
     ✅ Present = Duration ≥ {PRESENT_PERCENTAGE}% of total meeting duration<br/>
-    ❌ Absent = Duration < {PRESENT_PERCENTAGE}% of total meeting duration<br/><br/>
-    <b>🎯 Today’s Present Threshold:</b> {round(threshold_minutes,2)} minutes
+    ❌ Absent = Duration &lt; {PRESENT_PERCENTAGE}% of total meeting duration<br/><br/>
+    <b>🎯 Present Threshold For This Meeting:</b> {threshold} minutes
     """
-    elements.append(Paragraph(note_text, styles["Normal"]))
-    elements.append(Spacer(1, 15))
+    note_table = Table([[Paragraph(note, styles["Normal"])]], colWidths=[500])
+    note_table.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 1.5, colors.black),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
+        ("PADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(note_table)
+    elements.append(Spacer(1, 12))
 
-    table_data = [["Name", "Join", "Leave", "Duration (Min)", "Rejoins", "Status"]]
+    table_data = [["Name", "Join", "Leave", "Duration", "Rejoins", "Status"]]
+    for row in rows:
+        table_data.append([
+            row["name"],
+            row["join_time_str"],
+            row["leave_time_str"],
+            row["duration_minutes"],
+            row["rejoins"],
+            row["status"],
+        ])
 
-    for name, p in participants.items():
-        join_time = p["first_join"].strftime("%H:%M:%S") if p["first_join"] else ""
-        leave_time = p["last_leave"].strftime("%H:%M:%S") if p["last_leave"] else ""
-
-        duration_min = round(p["total_seconds"] / 60, 2)
-        status = p["status"]
-
-        table_data.append([name, join_time, leave_time, duration_min, p["rejoin_count"], status])
-
-    table = Table(table_data)
-    table.setStyle(TableStyle([
+    table = Table(table_data, repeatRows=1)
+    style = TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
         ("GRID", (0, 0), (-1, -1), 1, colors.black),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-    ]))
+    ])
 
+    for i in range(1, len(table_data)):
+        if table_data[i][5] == "PRESENT":
+            style.add("TEXTCOLOR", (5, i), (5, i), colors.green)
+        else:
+            style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
+
+    table.setStyle(style)
     elements.append(table)
-    doc.build(elements)
 
-    return csv_path, pdf_path
+    doc.build(elements)
+    return csv_file, pdf_file
