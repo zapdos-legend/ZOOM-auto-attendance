@@ -1,11 +1,9 @@
 import sqlite3
 import os
 
-DB_FILE = "data/attendance.db"
+DB_FILE = "attendance.db"   # ✅ remove folder dependency
 
 def init_db():
-    os.makedirs("data", exist_ok=True)
-
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
@@ -23,7 +21,6 @@ def init_db():
     conn.close()
 
 
-# ✅ NEW FUNCTION (fix error)
 def save_attendance_to_db(name, join_time, leave_time, duration):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -37,7 +34,6 @@ def save_attendance_to_db(name, join_time, leave_time, duration):
     conn.close()
 
 
-# ✅ NEW FUNCTION (fix error)
 def get_members():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
