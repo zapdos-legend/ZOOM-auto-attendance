@@ -3,5 +3,5 @@ streamlit
 pandas
 reportlab
 matplotlib
-pywhatkit
-sqlite3
+waitress
+requests
