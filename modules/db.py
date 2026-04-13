@@ -1,12 +1,14 @@
 import os
 import sqlite3
 
-from config import DB_FILE, DATA_DIR
+from config import DATA_DIR, DB_FILE
 
 
 def get_conn():
     os.makedirs(DATA_DIR, exist_ok=True)
-    return sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def init_db():
@@ -207,17 +209,10 @@ def get_dashboard_analytics(host_name_hint=""):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM meetings
-    """)
+    cur.execute("SELECT COUNT(*) FROM meetings")
     total_meetings = cur.fetchone()[0]
 
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM members
-        WHERE active = 1
-    """)
+    cur.execute("SELECT COUNT(*) FROM members WHERE active = 1")
     active_members = cur.fetchone()[0]
 
     cur.execute("""
@@ -227,15 +222,6 @@ def get_dashboard_analytics(host_name_hint=""):
         GROUP BY status
     """)
     status_counts = {row[0]: row[1] for row in cur.fetchall()}
-
-    cur.execute("""
-        SELECT meeting_date, COUNT(*)
-        FROM attendance
-        WHERE is_member = 1 AND status = 'PRESENT'
-        GROUP BY meeting_date
-        ORDER BY id ASC
-    """)
-    daily_present_rows = cur.fetchall()
 
     if host_name_hint:
         cur.execute("""
@@ -263,6 +249,5 @@ def get_dashboard_analytics(host_name_hint=""):
         "total_meetings": total_meetings,
         "active_members": active_members,
         "status_counts": status_counts,
-        "daily_present_rows": daily_present_rows,
         "top_rows": top_rows,
     }

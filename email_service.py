@@ -2,12 +2,19 @@ import os
 import smtplib
 from email.message import EmailMessage
 
-from config import EMAIL_ENABLED, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER
+from config import (
+    EMAIL_ENABLED,
+    EMAIL_PASSWORD,
+    EMAIL_RECEIVER,
+    EMAIL_SENDER,
+    SMTP_PORT,
+    SMTP_SERVER,
+)
 
 
 def send_email_with_attachment(subject, body, attachments=None, to_email=None):
     if not EMAIL_ENABLED:
-        print("📧 Email disabled in config.")
+        print("📧 Email is disabled.")
         return False
 
     attachments = attachments or []
@@ -38,7 +45,7 @@ def send_email_with_attachment(subject, body, attachments=None, to_email=None):
         )
 
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls()
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.send_message(msg)

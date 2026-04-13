@@ -7,7 +7,7 @@ def send_email_with_attachment_wrapper(subject, body, attachments=None, to_email
 
 
 def send_whatsapp_report(message):
-    # Cloud-safe placeholder for Render
+    # Cloud-safe placeholder
     print("📲 WhatsApp placeholder:")
     print(message)
     return True

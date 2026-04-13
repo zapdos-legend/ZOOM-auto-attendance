@@ -1,5 +1,3 @@
-from datetime import datetime
-
 participants = {}
 
 meeting_info = {
@@ -66,7 +64,7 @@ def process_leave(name, leave_time):
 
 
 def close_open_sessions(end_time):
-    for name, p in participants.items():
+    for _, p in participants.items():
         current_join = p.get("current_join")
         if current_join is not None:
             session_seconds = (end_time - current_join).total_seconds()
@@ -77,7 +75,7 @@ def close_open_sessions(end_time):
             p["status"] = "LEFT"
 
 
-def build_final_rows(total_meeting_minutes, present_percentage, member_lookup, host_name_hint=""):
+def build_attendee_rows(total_meeting_minutes, present_percentage, host_name_hint=""):
     threshold = (present_percentage / 100.0) * total_meeting_minutes
     rows = []
 
@@ -86,7 +84,6 @@ def build_final_rows(total_meeting_minutes, present_percentage, member_lookup, h
         join_str = p["first_join"].strftime("%H:%M:%S") if p["first_join"] else "-"
         leave_str = p["last_leave"].strftime("%H:%M:%S") if p["last_leave"] else "-"
 
-        is_member = name.strip().lower() in member_lookup
         is_host = p.get("is_host", False) or (
             host_name_hint and name.strip().lower() == host_name_hint.strip().lower()
         )
@@ -101,7 +98,7 @@ def build_final_rows(total_meeting_minutes, present_percentage, member_lookup, h
             "duration_minutes": duration_minutes,
             "rejoins": p.get("rejoin_count", 0),
             "status": status,
-            "is_member": 1 if is_member else 0,
+            "is_member": 0,
             "is_host": 1 if is_host else 0,
         })
 

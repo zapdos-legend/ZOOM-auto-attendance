@@ -1,9 +1,10 @@
 import csv
 import os
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from config import OUTPUT_FOLDER, PRESENT_PERCENTAGE
 
@@ -20,7 +21,6 @@ def generate_reports(rows, meeting_meta):
     csv_file = os.path.join(OUTPUT_FOLDER, f"{base_name}.csv")
     pdf_file = os.path.join(OUTPUT_FOLDER, f"{base_name}.pdf")
 
-    # CSV
     with open(csv_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Name", "Join Time", "Leave Time", "Duration (Min)", "Rejoins", "Status", "Is Member", "Is Host"])
@@ -36,7 +36,6 @@ def generate_reports(rows, meeting_meta):
                 row["is_host"],
             ])
 
-    # PDF
     styles = getSampleStyleSheet()
     doc = SimpleDocTemplate(pdf_file, pagesize=A4)
     elements = []
@@ -63,6 +62,7 @@ def generate_reports(rows, meeting_meta):
     ❌ Absent = Duration &lt; {PRESENT_PERCENTAGE}% of total meeting duration<br/><br/>
     <b>🎯 Present Threshold For This Meeting:</b> {threshold} minutes
     """
+
     note_table = Table([[Paragraph(note, styles["Normal"])]], colWidths=[500])
     note_table.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 1.5, colors.black),
