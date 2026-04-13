@@ -20,7 +20,6 @@ from flask import (
 )
 
 from config import (
-    CLOUD_MODE,
     HOST_NAME_HINT,
     INACTIVITY_CONFIRM_SECONDS,
     OUTPUT_FOLDER,
@@ -235,7 +234,6 @@ def dashboard():
         <html>
         <head>
             <title>Zoom Attendance Dashboard</title>
-            <meta http-equiv="refresh" content="10">
             <style>
                 body { font-family: Arial, sans-serif; margin: 20px; background: #f7f7f7; }
                 h1, h2, h3 { margin-bottom: 8px; }
@@ -246,15 +244,24 @@ def dashboard():
                 th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
                 th { background: #efefef; }
                 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-                input[type=text], input[type=email] { width: 100%; padding: 8px; margin-bottom: 8px; }
-                button { padding: 8px 12px; cursor: pointer; }
+                input[type=text], input[type=email] { width: 100%; padding: 8px; margin-bottom: 8px; box-sizing: border-box; }
+                button, .refresh-btn { padding: 8px 12px; cursor: pointer; text-decoration: none; display: inline-block; }
                 .actions form { display: inline-block; margin: 0 4px; }
                 .small { color: #555; font-size: 14px; }
+                .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+                .refresh-btn { background: #0d6efd; color: white; border-radius: 8px; }
             </style>
         </head>
         <body>
-            <h1>📊 Zoom Attendance Dashboard</h1>
-            <p class="small">Permanent dashboard link: /dashboard</p>
+            <div class="topbar">
+                <div>
+                    <h1>📊 Zoom Attendance Dashboard</h1>
+                    <p class="small">Permanent dashboard link: /dashboard</p>
+                </div>
+                <div>
+                    <a class="refresh-btn" href="{{ url_for('dashboard') }}">Refresh Dashboard</a>
+                </div>
+            </div>
 
             {% with messages = get_flashed_messages() %}
               {% if messages %}
