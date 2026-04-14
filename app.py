@@ -127,7 +127,16 @@ def finalize_meeting_after_delay(expected_uuid):
 
         close_open_sessions(end_time)
 
-        total_minutes = max(round((end_time - start_time).total_seconds() / 60.0, 2), 0.0)
+        rows = build_attendee_rows(0, PRESENT_PERCENTAGE, HOST_NAME_HINT)
+
+        max_duration_minutes = 0.0
+        for row in rows:
+            if row["duration_minutes"] > max_duration_minutes:
+                max_duration_minutes = row["duration_minutes"]
+
+        actual_minutes = max(round((end_time - start_time).total_seconds() / 60.0, 2), 0.0)
+        total_minutes = max(actual_minutes, max_duration_minutes)
+
         rows = build_attendee_rows(total_minutes, PRESENT_PERCENTAGE, HOST_NAME_HINT)
 
         member_lookup = get_active_member_lookup()
@@ -174,7 +183,8 @@ def finalize_meeting_after_delay(expected_uuid):
             f"End Time: {meeting_meta['end_time']}\n"
             f"Total Duration: {meeting_meta['total_minutes']} minutes\n"
         )
-        send_email_with_attachment_wrapper(subject, body, [csv_file, pdf_file])
+        admin_email_result = send_email_with_attachment_wrapper(subject, body, [csv_file, pdf_file])
+        print(f"📧 Admin report result: {admin_email_result}")
 
         for row in rows:
             if row["is_member"] == 1 and row["status"] == "ABSENT" and row.get("email"):
@@ -209,220 +219,249 @@ def finalize_meeting_after_delay(expected_uuid):
         reset_runtime_state()
 
 
+def render_page(title, content_html):
+    return render_template_string("""
+    <!doctype html>
+    <html>
+    <head>
+        <title>{{ title }}</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; background: #f7f7f7; }
+            h1, h2, h3 { margin-bottom: 8px; }
+            .card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+            .nav a { margin-right: 12px; text-decoration: none; font-weight: bold; }
+            table { width: 100%; border-collapse: collapse; margin-top: 8px; background: white; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+            th { background: #efefef; }
+            input[type=text], input[type=email] { width: 100%; padding: 8px; margin-bottom: 8px; box-sizing: border-box; }
+            button, .btn { padding: 8px 12px; cursor: pointer; text-decoration: none; display: inline-block; }
+            .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+            .metric { background: #fafafa; border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
+            .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+            .refresh-btn { background: #0d6efd; color: white; border-radius: 8px; }
+        </style>
+    </head>
+    <body>
+        <div class="topbar">
+            <div>
+                <h1>📊 Zoom Attendance Platform</h1>
+                <div class="nav">
+                    <a href="{{ url_for('dashboard_live') }}">Live</a>
+                    <a href="{{ url_for('dashboard_members') }}">Members</a>
+                    <a href="{{ url_for('dashboard_analytics') }}">Analytics</a>
+                    <a href="{{ url_for('dashboard_meetings') }}">Recent Meetings</a>
+                </div>
+            </div>
+            <div>
+                <a class="btn refresh-btn" href="{{ request.path }}">Refresh</a>
+            </div>
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="card">
+              {% for msg in messages %}
+                <p>{{ msg }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        {{ content|safe }}
+    </body>
+    </html>
+    """, title=title, content=content_html)
+
+
 @app.route("/")
 def home():
     return (
         '<h2>✅ Zoom Attendance System Running</h2>'
-        '<p><a href="/dashboard">Open Dashboard</a></p>',
+        '<p><a href="/dashboard/live">Open Live Dashboard</a></p>',
         200,
     )
 
 
 @app.route("/dashboard")
 def dashboard():
-    try:
-        live_rows = get_live_rows_for_dashboard()
-        members = get_members()
-        meetings = get_recent_meetings(limit=30)
-        analytics = get_dashboard_analytics(HOST_NAME_HINT)
+    return redirect(url_for("dashboard_live"))
 
-        present_count = analytics["status_counts"].get("PRESENT", 0)
-        absent_count = analytics["status_counts"].get("ABSENT", 0)
 
-        html = """
-        <!doctype html>
-        <html>
-        <head>
-            <title>Zoom Attendance Dashboard</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 20px; background: #f7f7f7; }
-                h1, h2, h3 { margin-bottom: 8px; }
-                .card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-                .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-                .metric { background: #fafafa; border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
-                table { width: 100%; border-collapse: collapse; margin-top: 8px; background: white; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
-                th { background: #efefef; }
-                .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-                input[type=text], input[type=email] { width: 100%; padding: 8px; margin-bottom: 8px; box-sizing: border-box; }
-                button, .refresh-btn { padding: 8px 12px; cursor: pointer; text-decoration: none; display: inline-block; }
-                .actions form { display: inline-block; margin: 0 4px; }
-                .small { color: #555; font-size: 14px; }
-                .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-                .refresh-btn { background: #0d6efd; color: white; border-radius: 8px; }
-            </style>
-        </head>
-        <body>
-            <div class="topbar">
-                <div>
-                    <h1>📊 Zoom Attendance Dashboard</h1>
-                    <p class="small">Permanent dashboard link: /dashboard</p>
-                </div>
-                <div>
-                    <a class="refresh-btn" href="{{ url_for('dashboard') }}">Refresh Dashboard</a>
-                </div>
-            </div>
+@app.route("/dashboard/live")
+def dashboard_live():
+    live_rows = get_live_rows_for_dashboard()
 
-            {% with messages = get_flashed_messages() %}
-              {% if messages %}
-                <div class="card">
-                  {% for msg in messages %}
-                    <p>{{ msg }}</p>
-                  {% endfor %}
-                </div>
-              {% endif %}
-            {% endwith %}
+    content = render_template_string("""
+    <div class="card">
+        <h2>🟢 Live Attendance</h2>
+        <table>
+            <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Duration (Min)</th>
+                <th>Rejoins</th>
+                <th>Host</th>
+            </tr>
+            {% for row in live_rows %}
+            <tr>
+                <td>{{ row.name }}</td>
+                <td>{{ row.status }}</td>
+                <td>{{ row.duration_minutes }}</td>
+                <td>{{ row.rejoins }}</td>
+                <td>{{ 'Yes' if row.is_host else 'No' }}</td>
+            </tr>
+            {% endfor %}
+            {% if not live_rows %}
+            <tr><td colspan="5">No live attendees right now.</td></tr>
+            {% endif %}
+        </table>
+    </div>
+    """, live_rows=live_rows)
 
-            <div class="card">
-                <h2>🟢 Live Attendance</h2>
-                <table>
-                    <tr>
-                        <th>Name</th>
-                        <th>Status</th>
-                        <th>Duration (Min)</th>
-                        <th>Rejoins</th>
-                        <th>Host</th>
-                    </tr>
-                    {% for row in live_rows %}
-                    <tr>
-                        <td>{{ row.name }}</td>
-                        <td>{{ row.status }}</td>
-                        <td>{{ row.duration_minutes }}</td>
-                        <td>{{ row.rejoins }}</td>
-                        <td>{{ 'Yes' if row.is_host else 'No' }}</td>
-                    </tr>
-                    {% endfor %}
-                    {% if not live_rows %}
-                    <tr><td colspan="5">No live attendees right now.</td></tr>
-                    {% endif %}
-                </table>
-            </div>
+    return render_page("Live Dashboard", content)
 
-            <div class="row">
-                <div class="card">
-                    <h2>👥 Members</h2>
-                    <form method="POST" action="{{ url_for('add_member_route') }}">
-                        <input type="text" name="name" placeholder="Name" required>
-                        <input type="email" name="email" placeholder="Email">
-                        <input type="text" name="whatsapp" placeholder="WhatsApp">
-                        <button type="submit">Add Member</button>
+
+@app.route("/dashboard/members")
+def dashboard_members():
+    members = get_members()
+
+    content = render_template_string("""
+    <div class="card">
+        <h2>👥 Members</h2>
+        <form method="POST" action="{{ url_for('add_member_route') }}">
+            <input type="text" name="name" placeholder="Name" required>
+            <input type="email" name="email" placeholder="Email">
+            <input type="text" name="whatsapp" placeholder="WhatsApp">
+            <button type="submit">Add Member</button>
+        </form>
+
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Active</th>
+                <th>Action</th>
+            </tr>
+            {% for m in members %}
+            <tr>
+                <td>{{ m[0] }}</td>
+                <td>{{ m[1] }}</td>
+                <td>{{ m[2] }}</td>
+                <td>{{ 'Yes' if m[4] == 1 else 'No' }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('toggle_member_route', member_id=m[0]) }}" style="display:inline-block;">
+                        <input type="hidden" name="active" value="{{ 0 if m[4] == 1 else 1 }}">
+                        <button type="submit">{{ 'Deactivate' if m[4] == 1 else 'Activate' }}</button>
                     </form>
-
-                    <table>
-                        <tr>
-                            <th>ID</th>
-                            <th>Name</th>
-                            <th>Email</th>
-                            <th>Active</th>
-                            <th>Action</th>
-                        </tr>
-                        {% for m in members %}
-                        <tr>
-                            <td>{{ m[0] }}</td>
-                            <td>{{ m[1] }}</td>
-                            <td>{{ m[2] }}</td>
-                            <td>{{ 'Yes' if m[4] == 1 else 'No' }}</td>
-                            <td class="actions">
-                                <form method="POST" action="{{ url_for('toggle_member_route', member_id=m[0]) }}">
-                                    <input type="hidden" name="active" value="{{ 0 if m[4] == 1 else 1 }}">
-                                    <button type="submit">{{ 'Deactivate' if m[4] == 1 else 'Activate' }}</button>
-                                </form>
-                                <form method="POST" action="{{ url_for('remove_member_route', member_id=m[0]) }}">
-                                    <button type="submit">Delete</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                        {% if not members %}
-                        <tr><td colspan="5">No members added yet.</td></tr>
-                        {% endif %}
-                    </table>
-
-                    <h3>📩 Manual Reminder</h3>
-                    <form method="POST" action="{{ url_for('send_reminder_route') }}">
-                        <input type="text" name="topic" placeholder="Meeting Topic" required>
-                        <input type="text" name="meeting_time" placeholder="Meeting Time e.g. 06:00 PM" required>
-                        <button type="submit">Send Reminder Now</button>
+                    <form method="POST" action="{{ url_for('remove_member_route', member_id=m[0]) }}" style="display:inline-block;">
+                        <button type="submit">Delete</button>
                     </form>
-                </div>
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not members %}
+            <tr><td colspan="5">No members added yet.</td></tr>
+            {% endif %}
+        </table>
+    </div>
 
-                <div class="card">
-                    <h2>📈 Analytics</h2>
-                    <div class="grid">
-                        <div class="metric"><b>Total Meetings</b><br>{{ analytics.total_meetings }}</div>
-                        <div class="metric"><b>Active Members</b><br>{{ analytics.active_members }}</div>
-                        <div class="metric"><b>Present Records</b><br>{{ present_count }}</div>
-                        <div class="metric"><b>Absent Records</b><br>{{ absent_count }}</div>
-                    </div>
+    <div class="card">
+        <h2>📩 Manual Reminder</h2>
+        <form method="POST" action="{{ url_for('send_reminder_route') }}">
+            <input type="text" name="topic" placeholder="Meeting Topic" required>
+            <input type="text" name="meeting_time" placeholder="Meeting Time e.g. 06:00 PM" required>
+            <button type="submit">Send Reminder Now</button>
+        </form>
+    </div>
+    """, members=members)
 
-                    <h3>🏆 Top Attendees</h3>
-                    <table>
-                        <tr><th>Name</th><th>Total Minutes</th></tr>
-                        {% for t in analytics.top_rows %}
-                        <tr>
-                            <td>{{ t[0] }}</td>
-                            <td>{{ t[1] }}</td>
-                        </tr>
-                        {% endfor %}
-                        {% if not analytics.top_rows %}
-                        <tr><td colspan="2">No data yet.</td></tr>
-                        {% endif %}
-                    </table>
-                </div>
-            </div>
+    return render_page("Members Dashboard", content)
 
-            <div class="card">
-                <h2>📂 Recent Meetings</h2>
-                <table>
-                    <tr>
-                        <th>ID</th>
-                        <th>Topic</th>
-                        <th>Date</th>
-                        <th>Start</th>
-                        <th>End</th>
-                        <th>Total Min</th>
-                        <th>CSV</th>
-                        <th>PDF</th>
-                        <th>View</th>
-                        <th>Delete</th>
-                    </tr>
-                    {% for mt in meetings %}
-                    <tr>
-                        <td>{{ mt[0] }}</td>
-                        <td>{{ mt[2] }}</td>
-                        <td>{{ mt[3] }}</td>
-                        <td>{{ mt[4] }}</td>
-                        <td>{{ mt[5] }}</td>
-                        <td>{{ mt[6] }}</td>
-                        <td><a href="{{ url_for('download_report', filename=mt[7]) }}" target="_blank">CSV</a></td>
-                        <td><a href="{{ url_for('download_report', filename=mt[8]) }}" target="_blank">PDF</a></td>
-                        <td><a href="{{ url_for('meeting_detail', meeting_pk=mt[0]) }}">Open</a></td>
-                        <td>
-                            <form method="POST" action="{{ url_for('delete_meeting_route', meeting_pk=mt[0]) }}">
-                                <button type="submit">Delete</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                    {% if not meetings %}
-                    <tr><td colspan="10">No meetings saved yet.</td></tr>
-                    {% endif %}
-                </table>
-            </div>
-        </body>
-        </html>
-        """
-        return render_template_string(
-            html,
-            live_rows=live_rows,
-            members=members,
-            meetings=meetings,
-            analytics=analytics,
-            present_count=present_count,
-            absent_count=absent_count,
-        )
-    except Exception as e:
-        return f"<h2>Dashboard Error:</h2><pre>{str(e)}</pre>"
+
+@app.route("/dashboard/analytics")
+def dashboard_analytics():
+    analytics = get_dashboard_analytics(HOST_NAME_HINT)
+    present_count = analytics["status_counts"].get("PRESENT", 0)
+    absent_count = analytics["status_counts"].get("ABSENT", 0)
+
+    content = render_template_string("""
+    <div class="card">
+        <h2>📈 Analytics Summary</h2>
+        <div class="grid">
+            <div class="metric"><b>Total Meetings</b><br>{{ analytics.total_meetings }}</div>
+            <div class="metric"><b>Active Members</b><br>{{ analytics.active_members }}</div>
+            <div class="metric"><b>Present Records</b><br>{{ present_count }}</div>
+            <div class="metric"><b>Absent Records</b><br>{{ absent_count }}</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🏆 Top Attendees</h2>
+        <table>
+            <tr><th>Name</th><th>Total Minutes</th></tr>
+            {% for t in analytics.top_rows %}
+            <tr>
+                <td>{{ t[0] }}</td>
+                <td>{{ t[1] }}</td>
+            </tr>
+            {% endfor %}
+            {% if not analytics.top_rows %}
+            <tr><td colspan="2">No data yet.</td></tr>
+            {% endif %}
+        </table>
+    </div>
+    """, analytics=analytics, present_count=present_count, absent_count=absent_count)
+
+    return render_page("Analytics Dashboard", content)
+
+
+@app.route("/dashboard/meetings")
+def dashboard_meetings():
+    meetings = get_recent_meetings(limit=30)
+
+    content = render_template_string("""
+    <div class="card">
+        <h2>📂 Recent Meetings</h2>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Topic</th>
+                <th>Date</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Total Min</th>
+                <th>CSV</th>
+                <th>PDF</th>
+                <th>View</th>
+                <th>Delete</th>
+            </tr>
+            {% for mt in meetings %}
+            <tr>
+                <td>{{ mt[0] }}</td>
+                <td>{{ mt[2] }}</td>
+                <td>{{ mt[3] }}</td>
+                <td>{{ mt[4] }}</td>
+                <td>{{ mt[5] }}</td>
+                <td>{{ mt[6] }}</td>
+                <td><a href="{{ url_for('download_report', filename=mt[7]) }}" target="_blank">CSV</a></td>
+                <td><a href="{{ url_for('download_report', filename=mt[8]) }}" target="_blank">PDF</a></td>
+                <td><a href="{{ url_for('meeting_detail', meeting_pk=mt[0]) }}">Open</a></td>
+                <td>
+                    <form method="POST" action="{{ url_for('delete_meeting_route', meeting_pk=mt[0]) }}">
+                        <button type="submit">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not meetings %}
+            <tr><td colspan="10">No meetings saved yet.</td></tr>
+            {% endif %}
+        </table>
+    </div>
+    """, meetings=meetings)
+
+    return render_page("Meetings Dashboard", content)
 
 
 @app.route("/meeting/<int:meeting_pk>")
@@ -430,7 +469,7 @@ def meeting_detail(meeting_pk):
     rows = get_attendance_for_meeting(meeting_pk)
     html = """
     <h2>Meeting Attendance Detail</h2>
-    <p><a href="{{ url_for('dashboard') }}">Back to Dashboard</a></p>
+    <p><a href="{{ url_for('dashboard_meetings') }}">Back to Meetings</a></p>
     <table border="1" cellpadding="8" cellspacing="0">
         <tr>
             <th>Name</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th><th>Member</th><th>Host</th>
@@ -469,14 +508,14 @@ def add_member_route():
     else:
         flash("❌ Name is required.")
 
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("dashboard_members"))
 
 
 @app.route("/members/remove/<int:member_id>", methods=["POST"])
 def remove_member_route(member_id):
     remove_member(member_id)
     flash("🗑 Member removed.")
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("dashboard_members"))
 
 
 @app.route("/members/toggle/<int:member_id>", methods=["POST"])
@@ -484,7 +523,7 @@ def toggle_member_route(member_id):
     active = int(request.form.get("active", "1"))
     set_member_active(member_id, active)
     flash("✅ Member status updated.")
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("dashboard_members"))
 
 
 @app.route("/meetings/delete/<int:meeting_pk>", methods=["POST"])
@@ -498,7 +537,7 @@ def delete_meeting_route(meeting_pk):
                 if os.path.exists(path):
                     os.remove(path)
     flash("🗑 Meeting data deleted.")
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("dashboard_meetings"))
 
 
 @app.route("/send-reminder", methods=["POST"])
@@ -508,10 +547,13 @@ def send_reminder_route():
 
     if not topic or not meeting_time:
         flash("❌ Topic and meeting time are required.")
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("dashboard_members"))
 
     members = get_members(active_only=True)
-    count = 0
+    total_active_members = len(members)
+    success_count = 0
+    failed_count = 0
+    failed_emails = []
 
     for _, name, email, _, _ in members:
         if email:
@@ -523,12 +565,25 @@ def send_reminder_route():
                 f"Meeting Time: {meeting_time}\n\n"
                 f"Please join on time."
             )
-            send_email_with_attachment_wrapper(subject, body, [], email)
-            count += 1
+            result = send_email_with_attachment_wrapper(subject, body, [], email)
+            if result.get("success"):
+                success_count += 1
+            else:
+                failed_count += 1
+                failed_emails.append(email)
+        else:
+            failed_count += 1
+            failed_emails.append(f"{name} (no email)")
 
-    send_whatsapp_report(f"📩 Reminder sent for meeting '{topic}' at {meeting_time}")
-    flash(f"✅ Reminder sent to {count} active members by email.")
-    return redirect(url_for("dashboard"))
+    send_whatsapp_report(f"📩 Reminder processed for meeting '{topic}' at {meeting_time}")
+
+    flash(f"👥 Total active members: {total_active_members}")
+    flash(f"✅ Sent successfully: {success_count}")
+    flash(f"❌ Failed: {failed_count}")
+    if failed_emails:
+        flash("Failed emails: " + ", ".join(failed_emails))
+
+    return redirect(url_for("dashboard_members"))
 
 
 @app.route("/zoom/webhook", methods=["POST"])

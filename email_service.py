@@ -14,8 +14,11 @@ from config import (
 
 def send_email_with_attachment(subject, body, attachments=None, to_email=None):
     if not EMAIL_ENABLED:
-        print("📧 Email is disabled.")
-        return False
+        return {
+            "success": False,
+            "receiver": to_email or EMAIL_RECEIVER,
+            "error": "Email is disabled in config."
+        }
 
     attachments = attachments or []
     receiver = to_email or EMAIL_RECEIVER
@@ -30,7 +33,6 @@ def send_email_with_attachment(subject, body, attachments=None, to_email=None):
         if not file_path:
             continue
         if not os.path.exists(file_path):
-            print(f"⚠️ Attachment not found: {file_path}")
             continue
 
         with open(file_path, "rb") as f:
@@ -51,8 +53,16 @@ def send_email_with_attachment(subject, body, attachments=None, to_email=None):
             server.send_message(msg)
 
         print(f"📧 ✅ Email sent to {receiver}")
-        return True
+        return {
+            "success": True,
+            "receiver": receiver,
+            "error": ""
+        }
 
     except Exception as e:
         print(f"📧 ❌ Email failed for {receiver}: {e}")
-        return False
+        return {
+            "success": False,
+            "receiver": receiver,
+            "error": str(e)
+        }

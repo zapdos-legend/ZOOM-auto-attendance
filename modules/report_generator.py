@@ -54,22 +54,6 @@ def generate_reports(rows, meeting_meta):
     threshold = round((PRESENT_PERCENTAGE / 100.0) * total_meeting_minutes, 2)
 
     elements.append(Paragraph(f"<b>Total Meeting Duration:</b> {round(total_meeting_minutes, 2)} minutes", styles["Normal"]))
-    elements.append(Spacer(1, 8))
-
-    note = f"""
-    <b>📌 Attendance Criteria</b><br/>
-    ✅ Present = Duration ≥ {PRESENT_PERCENTAGE}% of total meeting duration<br/>
-    ❌ Absent = Duration &lt; {PRESENT_PERCENTAGE}% of total meeting duration<br/><br/>
-    <b>🎯 Present Threshold For This Meeting:</b> {threshold} minutes
-    """
-
-    note_table = Table([[Paragraph(note, styles["Normal"])]], colWidths=[500])
-    note_table.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 1.5, colors.black),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
-        ("PADDING", (0, 0), (-1, -1), 8),
-    ]))
-    elements.append(note_table)
     elements.append(Spacer(1, 12))
 
     table_data = [["Name", "Join", "Leave", "Duration", "Rejoins", "Status"]]
@@ -99,6 +83,22 @@ def generate_reports(rows, meeting_meta):
 
     table.setStyle(style)
     elements.append(table)
+    elements.append(Spacer(1, 12))
+
+    note = f"""
+    <b>📌 Attendance Criteria</b><br/>
+    ✅ Present = Duration ≥ {PRESENT_PERCENTAGE}% of total meeting duration<br/>
+    ❌ Absent = Duration &lt; {PRESENT_PERCENTAGE}% of total meeting duration<br/><br/>
+    <b>🎯 Present Threshold For This Meeting:</b> {threshold} minutes
+    """
+
+    note_table = Table([[Paragraph(note, styles["Normal"])]], colWidths=[500])
+    note_table.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 1.5, colors.black),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
+        ("PADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(note_table)
 
     doc.build(elements)
     return csv_file, pdf_file
