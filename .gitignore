@@ -1,6 +1,20 @@
+# Python cache
 __pycache__/
+
+# Reports & runtime data
 attendance_reports/
-data/live_status.json
+data/
+*.db
+*.sqlite3
+
+# Local tools / temp files
 PyWhatKit_DB.txt
 ngrok.exe
+
+# Secrets
 .env
+
+# OS / editor junk (recommended)
+.DS_Store
+Thumbs.db
+.vscode/
