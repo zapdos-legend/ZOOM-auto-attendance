@@ -1,7 +1,9 @@
 import sqlite3
-from config import DB_FILE
+import os
+from config import DB_FILE, DATA_DIR
 
 def get_conn():
+    os.makedirs(DATA_DIR, exist_ok=True)
     return sqlite3.connect(DB_FILE)
 
 def init_db():
@@ -24,15 +26,22 @@ def init_db():
 def add_member(name, email, whatsapp):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO members (name, email, whatsapp) VALUES (?, ?, ?)", (name, email, whatsapp))
+
+    cur.execute(
+        "INSERT INTO members (name, email, whatsapp) VALUES (?, ?, ?)",
+        (name, email, whatsapp)
+    )
+
     conn.commit()
     conn.close()
 
 def get_members():
     conn = get_conn()
     cur = conn.cursor()
+
     cur.execute("SELECT * FROM members WHERE active=1")
     rows = cur.fetchall()
+
     conn.close()
 
     members = []
@@ -43,4 +52,5 @@ def get_members():
             "email": r[2],
             "whatsapp": r[3]
         })
+
     return members

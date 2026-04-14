@@ -1,0 +1,19 @@
+[33md56b09a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m FINAL WhatsApp Part C fix
+[33m72d288b[m Switch email sending from SMTP to Resend API
+[33m75775b0[m updated gitignore properly
+[33m1b211a5[m Upgrade dashboard pages and reminder summary
+[33m3930d3c[m Fix dashboard form refresh issue
+[33m50d2809[m Final full Part C upgraded code
+[33md11c6b1[m Final dashboard fix
+[33mf2921cb[m Part C cloud-ready full core
+[33m93cf377[m Fix Zoom HMAC validation
+[33mc9826f7[m Full app.py update with Zoom validation
+[33m7e922f7[m Final fix email config mismatch
+[33m29252b6[m Fix notifier import error
+[33m0538976[m Final fix: DB + Render port
+[33mda74523[m Fix Render port
+[33m45fd711[m Fix missing DB functions
+[33m89a5209[m Final fix DB folder issue
+[33m8125137[m Fix requirements for Render deployment
+[33m599e098[m Upload Part C project
+[33me70da7a[m Initial commit
