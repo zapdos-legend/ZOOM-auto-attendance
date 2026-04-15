@@ -5,13 +5,12 @@ import hmac
 import hashlib
 import sqlite3
 import threading
-from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify, redirect, url_for, send_from_directory, flash, render_template_string
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
 # =========================================================
 # CONFIG
@@ -26,7 +25,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(REPORT_DIR, exist_ok=True)
 
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "12345")
-TIMEZONE_NAME = os.environ.get("TIMEZONE_NAME", "Asia/Kolkata")
 PRESENT_PERCENTAGE = int(os.environ.get("PRESENT_PERCENTAGE", "75"))
 INACTIVITY_CONFIRM_SECONDS = int(os.environ.get("INACTIVITY_CONFIRM_SECONDS", "120"))
 ZOOM_SECRET_TOKEN = os.environ.get("ZOOM_SECRET_TOKEN", "your_zoom_secret_token")
@@ -34,7 +32,6 @@ HOST_NAME_HINT = os.environ.get("HOST_NAME_HINT", "Akshay").strip().lower()
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
-
 FINALIZE_TIMERS = {}
 
 
@@ -49,12 +46,13 @@ def parse_zoom_time(value):
     if not value:
         return None
     try:
+        if isinstance(value, datetime):
+            return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        value = str(value)
         if value.endswith("Z"):
             return datetime.fromisoformat(value.replace("Z", "+00:00"))
         dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+        return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         return None
 
@@ -90,8 +88,7 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS members (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
@@ -100,11 +97,9 @@ def init_db():
             active INTEGER DEFAULT 1,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
-        """
-    )
+    """)
 
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS meetings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             zoom_meeting_id TEXT,
@@ -117,11 +112,9 @@ def init_db():
             pdf_file TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
-        """
-    )
+    """)
 
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             meeting_pk INTEGER NOT NULL,
@@ -136,8 +129,7 @@ def init_db():
             is_host INTEGER DEFAULT 0,
             FOREIGN KEY (meeting_pk) REFERENCES meetings(id) ON DELETE CASCADE
         )
-        """
-    )
+    """)
 
     conn.commit()
     conn.close()
@@ -159,21 +151,19 @@ def add_or_update_member(name, email, whatsapp):
     name = (name or "").strip()
     email = (email or "").strip()
     whatsapp = (whatsapp or "").strip()
+
     if not name:
         raise ValueError("Name is required.")
 
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(
-        """
+    cur.execute("""
         INSERT INTO members (name, email, whatsapp, active)
         VALUES (?, ?, ?, 1)
         ON CONFLICT(name) DO UPDATE SET
             email = excluded.email,
             whatsapp = excluded.whatsapp
-        """,
-        (name, email, whatsapp),
-    )
+    """, (name, email, whatsapp))
     conn.commit()
     conn.close()
 
@@ -198,64 +188,50 @@ def save_meeting_and_attendance(meeting_meta, rows, csv_file, pdf_file):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute(
-        """
+    cur.execute("""
         INSERT INTO meetings (
             zoom_meeting_id, topic, meeting_date, start_time, end_time,
             total_minutes, csv_file, pdf_file
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            meeting_meta["zoom_meeting_id"],
-            meeting_meta["topic"],
-            meeting_meta["meeting_date"],
-            meeting_meta["start_time"],
-            meeting_meta["end_time"],
-            meeting_meta["total_minutes"],
-            os.path.basename(csv_file),
-            os.path.basename(pdf_file),
-        ),
-    )
+    """, (
+        meeting_meta["zoom_meeting_id"],
+        meeting_meta["topic"],
+        meeting_meta["meeting_date"],
+        meeting_meta["start_time"],
+        meeting_meta["end_time"],
+        meeting_meta["total_minutes"],
+        os.path.basename(csv_file),
+        os.path.basename(pdf_file),
+    ))
     meeting_pk = cur.lastrowid
 
     for row in rows:
-        cur.execute(
-            """
+        cur.execute("""
             INSERT INTO attendance (
                 meeting_pk, participant_name, participant_email, join_time, leave_time,
                 duration_minutes, rejoins, status, is_member, is_host
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                meeting_pk,
-                row["name"],
-                row.get("email", ""),
-                row["join_time_str"],
-                row["leave_time_str"],
-                row["duration_minutes"],
-                row["rejoins"],
-                row["status"],
-                row["is_member"],
-                row["is_host"],
-            ),
-        )
+        """, (
+            meeting_pk,
+            row["name"],
+            row.get("email", ""),
+            row["join_time_str"],
+            row["leave_time_str"],
+            row["duration_minutes"],
+            row["rejoins"],
+            row["status"],
+            row["is_member"],
+            row["is_host"],
+        ))
 
     conn.commit()
     conn.close()
-    return meeting_pk
 
 
 def get_recent_meetings(limit=50):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT * FROM meetings
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        (limit,),
-    )
+    cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT ?", (limit,))
     rows = cur.fetchall()
     conn.close()
     return rows
@@ -273,14 +249,11 @@ def get_meeting(meeting_id):
 def get_attendance_rows(meeting_id):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(
-        """
+    cur.execute("""
         SELECT * FROM attendance
         WHERE meeting_pk = ?
-        ORDER BY is_host DESC, is_member DESC, duration_minutes DESC, participant_name ASC
-        """,
-        (meeting_id,),
-    )
+        ORDER BY is_host DESC, duration_minutes DESC, participant_name ASC
+    """, (meeting_id,))
     rows = cur.fetchall()
     conn.close()
     return rows
@@ -321,66 +294,65 @@ def get_analytics():
     cur.execute("SELECT COUNT(*) AS c FROM members WHERE active = 1")
     active_members = cur.fetchone()["c"]
 
-    cur.execute(
-        """
+    cur.execute("""
         SELECT status, COUNT(*) AS c
         FROM attendance
-        WHERE is_member = 1
+        WHERE is_member = 1 AND is_host = 0
         GROUP BY status
-        """
-    )
+    """)
     status_counts = {row["status"]: row["c"] for row in cur.fetchall()}
 
     present_count = status_counts.get("PRESENT", 0)
+    late_count = status_counts.get("LATE", 0)
     absent_count = status_counts.get("ABSENT", 0)
-    total_marked = present_count + absent_count
-    attendance_rate = round((present_count / total_marked) * 100, 2) if total_marked else 0.0
 
-    cur.execute(
-        """
+    total_member_marks = present_count + late_count + absent_count
+    attendance_rate = round(((present_count + late_count) / total_member_marks) * 100, 2) if total_member_marks else 0.0
+
+    cur.execute("""
         SELECT participant_name, ROUND(SUM(duration_minutes), 2) AS total_duration
         FROM attendance
         WHERE is_host = 0
         GROUP BY participant_name
         ORDER BY total_duration DESC
         LIMIT 10
-        """
-    )
+    """)
     top_attendees = cur.fetchall()
 
-    cur.execute(
-        """
+    cur.execute("""
         SELECT
             participant_name,
             SUM(CASE WHEN status = 'PRESENT' THEN 1 ELSE 0 END) AS present_count,
+            SUM(CASE WHEN status = 'LATE' THEN 1 ELSE 0 END) AS late_count,
             SUM(CASE WHEN status = 'ABSENT' THEN 1 ELSE 0 END) AS absent_count,
             ROUND(SUM(duration_minutes), 2) AS total_duration,
             ROUND(AVG(duration_minutes), 2) AS avg_duration,
-            ROUND(100.0 * SUM(CASE WHEN status='PRESENT' THEN 1 ELSE 0 END) / COUNT(*), 2) AS attendance_percentage
+            ROUND(
+                100.0 * SUM(CASE WHEN status IN ('PRESENT','LATE') THEN 1 ELSE 0 END) / COUNT(*),
+                2
+            ) AS attendance_percentage
         FROM attendance
-        WHERE is_member = 1
+        WHERE is_member = 1 AND is_host = 0
         GROUP BY participant_name
         ORDER BY total_duration DESC
-        """
-    )
+    """)
     member_stats = cur.fetchall()
 
-    cur.execute(
-        """
+    cur.execute("""
         SELECT
             m.id,
             m.topic,
             m.meeting_date,
             ROUND(m.total_minutes, 2) AS total_minutes,
-            SUM(CASE WHEN a.status='PRESENT' AND a.is_member=1 THEN 1 ELSE 0 END) AS present_count,
-            SUM(CASE WHEN a.status='ABSENT' AND a.is_member=1 THEN 1 ELSE 0 END) AS absent_count
+            SUM(CASE WHEN a.status='PRESENT' AND a.is_member=1 AND a.is_host=0 THEN 1 ELSE 0 END) AS present_count,
+            SUM(CASE WHEN a.status='LATE' AND a.is_member=1 AND a.is_host=0 THEN 1 ELSE 0 END) AS late_count,
+            SUM(CASE WHEN a.status='ABSENT' AND a.is_member=1 AND a.is_host=0 THEN 1 ELSE 0 END) AS absent_count
         FROM meetings m
         LEFT JOIN attendance a ON a.meeting_pk = m.id
         GROUP BY m.id
         ORDER BY m.id DESC
         LIMIT 10
-        """
-    )
+    """)
     recent_stats = cur.fetchall()
 
     conn.close()
@@ -389,6 +361,7 @@ def get_analytics():
         "total_members": total_members,
         "active_members": active_members,
         "present_count": present_count,
+        "late_count": late_count,
         "absent_count": absent_count,
         "attendance_rate": attendance_rate,
         "top_attendees": top_attendees,
@@ -443,7 +416,7 @@ def member_lookup():
 
 
 # =========================================================
-# WEBHOOK SECURITY
+# ZOOM SECURITY
 # =========================================================
 def verify_zoom_signature():
     if not ZOOM_SECRET_TOKEN:
@@ -490,7 +463,7 @@ def ensure_live_meeting(zoom_meeting_id, topic, event_time):
         state = default_live_state()
         state["meeting"]["zoom_meeting_id"] = str(zoom_meeting_id)
         state["meeting"]["topic"] = topic or "Untitled Meeting"
-        state["meeting"]["started_at"] = event_time.isoformat() if event_time else now_utc().isoformat()
+        state["meeting"]["started_at"] = (event_time or now_utc()).isoformat()
         state["meeting"]["ended_at"] = ""
         state["meeting"]["finalized"] = False
         save_live_state(state)
@@ -507,9 +480,9 @@ def update_participant_join(name, email, event_time):
         participants[key] = {
             "name": key,
             "email": email or "",
-            "first_join": event_time.isoformat() if event_time else now_utc().isoformat(),
+            "first_join": (event_time or now_utc()).isoformat(),
             "last_leave": "",
-            "current_join": event_time.isoformat() if event_time else now_utc().isoformat(),
+            "current_join": (event_time or now_utc()).isoformat(),
             "total_seconds": 0,
             "rejoins": 0,
             "status": "LIVE",
@@ -518,7 +491,7 @@ def update_participant_join(name, email, event_time):
     else:
         p = participants[key]
         if not p.get("current_join"):
-            p["current_join"] = event_time.isoformat() if event_time else now_utc().isoformat()
+            p["current_join"] = (event_time or now_utc()).isoformat()
             p["rejoins"] = int(p.get("rejoins", 0)) + 1
         p["status"] = "LIVE"
         if email and not p.get("email"):
@@ -532,26 +505,14 @@ def update_participant_leave(name, event_time):
     participants = state["participants"]
     key = (name or "Unknown").strip()
 
-    if key not in participants:
-        participants[key] = {
-            "name": key,
-            "email": "",
-            "first_join": "",
-            "last_leave": event_time.isoformat() if event_time else now_utc().isoformat(),
-            "current_join": "",
-            "total_seconds": 0,
-            "rejoins": 0,
-            "status": "LEFT",
-            "is_host": HOST_NAME_HINT in key.lower(),
-        }
-    else:
+    if key in participants:
         p = participants[key]
         current_join = parse_zoom_time(p.get("current_join", "")) if p.get("current_join") else None
         if current_join and event_time:
             session_seconds = max(0, int((event_time - current_join).total_seconds()))
             p["total_seconds"] = int(p.get("total_seconds", 0)) + session_seconds
         p["current_join"] = ""
-        p["last_leave"] = event_time.isoformat() if event_time else now_utc().isoformat()
+        p["last_leave"] = (event_time or now_utc()).isoformat()
         p["status"] = "LEFT"
 
     save_live_state(state)
@@ -579,14 +540,11 @@ def finalize_meeting(zoom_meeting_id):
     if meeting.get("finalized"):
         return
 
-    started_at = parse_zoom_time(meeting.get("started_at", ""))
+    started_at = parse_zoom_time(meeting.get("started_at", "")) or now_utc()
     ended_at = parse_zoom_time(meeting.get("ended_at", "")) or now_utc()
-    if not started_at:
-        started_at = ended_at
 
     lookup = member_lookup()
     rows = []
-
     max_participant_minutes = 0.0
 
     for _, p in state["participants"].items():
@@ -608,8 +566,8 @@ def finalize_meeting(zoom_meeting_id):
         rows.append({
             "name": p["name"],
             "email": p.get("email", "") or (member["email"] if member else ""),
-            "join_time_str": fmt_dt(parse_zoom_time(p.get("first_join", ""))) if p.get("first_join") else "",
-            "leave_time_str": fmt_dt(parse_zoom_time(p.get("last_leave", ""))) if p.get("last_leave") else "",
+            "join_time_str": fmt_time(parse_zoom_time(p.get("first_join", ""))) if p.get("first_join") else "-",
+            "leave_time_str": fmt_time(parse_zoom_time(p.get("last_leave", ""))) if p.get("last_leave") else "-",
             "duration_minutes": duration_minutes,
             "rejoins": int(p.get("rejoins", 0)),
             "status": "PENDING",
@@ -617,8 +575,8 @@ def finalize_meeting(zoom_meeting_id):
             "is_host": 1 if p.get("is_host") else 0,
         })
 
-    actual_meeting_minutes = round(max(0, (ended_at - started_at).total_seconds()) / 60.0, 2)
-    total_meeting_minutes = max(actual_meeting_minutes, max_participant_minutes)
+    actual_minutes = round(max(0, (ended_at - started_at).total_seconds()) / 60.0, 2)
+    total_meeting_minutes = round(max(actual_minutes, max_participant_minutes), 2)
     threshold_minutes = round((PRESENT_PERCENTAGE / 100.0) * total_meeting_minutes, 2)
 
     active_members = get_members(active_only=True)
@@ -629,8 +587,8 @@ def finalize_meeting(zoom_meeting_id):
             rows.append({
                 "name": m["name"],
                 "email": m["email"] or "",
-                "join_time_str": "",
-                "leave_time_str": "",
+                "join_time_str": "-",
+                "leave_time_str": "-",
                 "duration_minutes": 0.0,
                 "rejoins": 0,
                 "status": "ABSENT",
@@ -641,10 +599,21 @@ def finalize_meeting(zoom_meeting_id):
     for row in rows:
         if row["is_host"] == 1:
             row["status"] = "HOST"
+        elif row["is_member"] == 1:
+            if row["duration_minutes"] <= 0:
+                row["status"] = "ABSENT"
+            elif row["duration_minutes"] >= threshold_minutes:
+                row["status"] = "PRESENT"
+            else:
+                row["status"] = "LATE"
         else:
-            row["status"] = "PRESENT" if row["duration_minutes"] >= threshold_minutes else "ABSENT"
+            row["status"] = "PRESENT" if row["duration_minutes"] >= threshold_minutes else "LATE"
 
-    rows.sort(key=lambda x: (x["is_host"] == 0, x["status"] != "PRESENT", -x["duration_minutes"], x["name"].lower()))
+    rows.sort(key=lambda x: (
+        x["is_host"] == 0,
+        -x["duration_minutes"],
+        x["name"].lower()
+    ))
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_topic = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in meeting.get("topic", "meeting"))[:40]
@@ -657,12 +626,12 @@ def finalize_meeting(zoom_meeting_id):
         "meeting_date": fmt_date(started_at),
         "start_time": fmt_time(started_at),
         "end_time": fmt_time(ended_at),
-        "total_minutes": round(total_meeting_minutes, 2),
+        "total_minutes": total_meeting_minutes,
+        "threshold_minutes": threshold_minutes,
     }
 
-    generate_csv_report(csv_file, meeting_meta, rows, threshold_minutes)
-    generate_pdf_report(pdf_file, meeting_meta, rows, threshold_minutes)
-
+    generate_csv_report(csv_file, meeting_meta, rows)
+    generate_pdf_report(pdf_file, meeting_meta, rows)
     save_meeting_and_attendance(meeting_meta, rows, csv_file, pdf_file)
 
     state["meeting"]["finalized"] = True
@@ -673,88 +642,98 @@ def finalize_meeting(zoom_meeting_id):
 # =========================================================
 # REPORTS
 # =========================================================
-def generate_csv_report(file_path, meeting_meta, rows, threshold_minutes):
+def generate_csv_report(file_path, meeting_meta, rows):
     with open(file_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Meeting Topic", meeting_meta["topic"]])
+        writer.writerow(["Topic", meeting_meta["topic"]])
         writer.writerow(["Meeting ID", meeting_meta["zoom_meeting_id"]])
         writer.writerow(["Date", meeting_meta["meeting_date"]])
         writer.writerow(["Start Time", meeting_meta["start_time"]])
         writer.writerow(["End Time", meeting_meta["end_time"]])
-        writer.writerow(["Total Duration (Minutes)", meeting_meta["total_minutes"]])
-        writer.writerow(["Present Threshold (Minutes)", threshold_minutes])
+        writer.writerow(["Total Meeting Duration", meeting_meta["total_minutes"]])
+        writer.writerow(["Present Threshold", meeting_meta["threshold_minutes"]])
         writer.writerow([])
 
-        writer.writerow([
-            "Name", "Email", "Join Time", "Leave Time", "Duration Minutes",
-            "Rejoins", "Status", "Is Member", "Is Host"
-        ])
+        writer.writerow(["Name", "Join", "Leave", "Duration", "Rejoins", "Status"])
 
         for row in rows:
             writer.writerow([
                 row["name"],
-                row.get("email", ""),
                 row["join_time_str"],
                 row["leave_time_str"],
                 row["duration_minutes"],
                 row["rejoins"],
                 row["status"],
-                row["is_member"],
-                row["is_host"],
             ])
 
 
-def generate_pdf_report(file_path, meeting_meta, rows, threshold_minutes):
+def generate_pdf_report(file_path, meeting_meta, rows):
     doc = SimpleDocTemplate(file_path, pagesize=A4)
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph("Zoom Attendance Report", styles["Title"]))
-    story.append(Spacer(1, 10))
-    story.append(Paragraph(f"Topic: {meeting_meta['topic']}", styles["Normal"]))
-    story.append(Paragraph(f"Meeting ID: {meeting_meta['zoom_meeting_id']}", styles["Normal"]))
-    story.append(Paragraph(f"Date: {meeting_meta['meeting_date']}", styles["Normal"]))
-    story.append(Paragraph(f"Start Time: {meeting_meta['start_time']}", styles["Normal"]))
-    story.append(Paragraph(f"End Time: {meeting_meta['end_time']}", styles["Normal"]))
-    story.append(Paragraph(f"Total Duration: {meeting_meta['total_minutes']} minutes", styles["Normal"]))
-    story.append(Paragraph(f"Present Threshold: {threshold_minutes} minutes ({PRESENT_PERCENTAGE}%)", styles["Normal"]))
+    story.append(Paragraph("Attendance Report", styles["Title"]))
     story.append(Spacer(1, 12))
 
-    data = [[
-        "Name", "Email", "Join", "Leave", "Minutes", "Rejoins", "Status"
-    ]]
+    story.append(Paragraph(f"<b>Topic:</b> {meeting_meta['topic']}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Meeting ID:</b> {meeting_meta['zoom_meeting_id']}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Date:</b> {meeting_meta['meeting_date']}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Start Time:</b> {meeting_meta['start_time']}", styles["Normal"]))
+    story.append(Paragraph(f"<b>End Time:</b> {meeting_meta['end_time']}", styles["Normal"]))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(f"<b>Total Meeting Duration:</b> {meeting_meta['total_minutes']} minutes", styles["Normal"]))
+    story.append(Spacer(1, 10))
+
+    table_data = [["Name", "Join", "Leave", "Duration", "Rejoins", "Status"]]
     for row in rows:
-        data.append([
+        table_data.append([
             row["name"],
-            row.get("email", "")[:20],
-            row["join_time_str"][-8:] if row["join_time_str"] else "",
-            row["leave_time_str"][-8:] if row["leave_time_str"] else "",
+            row["join_time_str"],
+            row["leave_time_str"],
             str(row["duration_minutes"]),
             str(row["rejoins"]),
             row["status"],
         ])
 
-    table = Table(data, repeatRows=1)
+    table = Table(table_data, repeatRows=1)
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("ALIGN", (4, 1), (6, -1), "CENTER"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("GRID", (0, 0), (-1, -1), 0.7, colors.black),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
     story.append(table)
     story.append(Spacer(1, 14))
 
     present_count = sum(1 for r in rows if r["status"] == "PRESENT")
+    late_count = sum(1 for r in rows if r["status"] == "LATE")
     absent_count = sum(1 for r in rows if r["status"] == "ABSENT")
-    story.append(Paragraph(f"Present Count: {present_count}", styles["Normal"]))
-    story.append(Paragraph(f"Absent Count: {absent_count}", styles["Normal"]))
-    story.append(Spacer(1, 8))
-    story.append(Paragraph(
-        "Note: Total meeting duration is calculated as the greater of actual meeting time and maximum participant duration.",
-        styles["Italic"]
-    ))
+
+    note_box_data = [[Paragraph(
+        f"""
+        <b>■ Attendance Criteria</b><br/>
+        ■ Present = Duration ≥ {PRESENT_PERCENTAGE}% of total meeting duration<br/>
+        ■ Late = Duration &lt; {PRESENT_PERCENTAGE}% of total meeting duration<br/>
+        ■ Absent = Did not join the meeting (for added members only)<br/><br/>
+        <b>■ Present Threshold For This Meeting:</b> {meeting_meta['threshold_minutes']} minutes
+        """,
+        styles["Normal"]
+    )]]
+
+    note_box = Table(note_box_data, colWidths=[470])
+    note_box.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 1.5, colors.black),
+        ("PADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+
+    story.append(Paragraph(f"<b>Present Count:</b> {present_count}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Late Count:</b> {late_count}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Absent Count:</b> {absent_count}", styles["Normal"]))
+    story.append(Spacer(1, 10))
+    story.append(note_box)
 
     doc.build(story)
 
@@ -767,6 +746,9 @@ BASE_HTML = """
 <html>
 <head>
     <title>{{ title }}</title>
+    {% if auto_refresh %}
+    <meta http-equiv="refresh" content="{{ auto_refresh }}">
+    {% endif %}
     <style>
         body { font-family: Arial, sans-serif; background:#f5f7fb; margin:0; padding:0; color:#1f2937; }
         .top { background:#111827; color:white; padding:18px 24px; }
@@ -774,7 +756,7 @@ BASE_HTML = """
         .nav { margin-top:10px; }
         .nav a { color:#c7d2fe; text-decoration:none; margin-right:16px; font-weight:600; }
         .container { padding:20px; max-width:1200px; margin:auto; }
-        .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; margin-bottom:20px; }
+        .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:20px; }
         .card { background:white; border-radius:16px; padding:18px; box-shadow:0 4px 18px rgba(0,0,0,0.08); margin-bottom:20px; }
         .metric .label { color:#6b7280; font-size:13px; margin-bottom:8px; }
         .metric .value { font-size:28px; font-weight:700; color:#111827; }
@@ -784,12 +766,10 @@ BASE_HTML = """
         .btn { display:inline-block; text-decoration:none; border:none; background:#2563eb; color:white; padding:8px 12px; border-radius:10px; cursor:pointer; font-size:13px; }
         .btn-secondary { background:#6b7280; }
         .btn-danger { background:#dc2626; }
-        input, select { width:100%; box-sizing:border-box; padding:10px; margin-bottom:10px; border:1px solid #d1d5db; border-radius:10px; }
+        input { width:100%; box-sizing:border-box; padding:10px; margin-bottom:10px; border:1px solid #d1d5db; border-radius:10px; }
         .row { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:10px; align-items:end; }
         .tiny { color:#6b7280; font-size:12px; }
         .flash { background:#eef2ff; padding:12px; border-radius:10px; margin-bottom:14px; }
-        .ok { color:#15803d; font-weight:700; }
-        .bad { color:#b91c1c; font-weight:700; }
     </style>
 </head>
 <body>
@@ -817,8 +797,8 @@ BASE_HTML = """
 """
 
 
-def render_page(title, content):
-    return render_template_string(BASE_HTML, title=title, content=content)
+def render_page(title, content, auto_refresh=None):
+    return render_template_string(BASE_HTML, title=title, content=content, auto_refresh=auto_refresh)
 
 
 # =========================================================
@@ -835,12 +815,13 @@ def dashboard_live():
     meeting = state["meeting"]
     participants = list(state["participants"].values())
 
-    rows = []
+    live_rows = []
     live_count = 0
     left_count = 0
     max_minutes = 0.0
     host_name = "-"
 
+    processed = []
     for p in participants:
         total_seconds = int(p.get("total_seconds", 0))
         if p.get("current_join"):
@@ -848,21 +829,32 @@ def dashboard_live():
             if cj:
                 total_seconds += max(0, int((now_utc() - cj).total_seconds()))
         minutes = round(total_seconds / 60.0, 2)
-        max_minutes = max(max_minutes, minutes)
-        if p.get("status") == "LIVE":
+        processed.append({
+            "name": p.get("name", ""),
+            "status": p.get("status", ""),
+            "minutes": minutes,
+            "rejoins": p.get("rejoins", 0),
+            "is_host": p.get("is_host", False),
+        })
+
+    processed.sort(key=lambda x: (-x["minutes"], x["name"].lower()))
+
+    for p in processed:
+        max_minutes = max(max_minutes, p["minutes"])
+        if p["status"] == "LIVE":
             live_count += 1
         else:
             left_count += 1
-        if p.get("is_host"):
-            host_name = p.get("name", "-")
+        if p["is_host"]:
+            host_name = p["name"]
 
-        rows.append(f"""
+        live_rows.append(f"""
             <tr>
-                <td>{p.get('name','')}</td>
-                <td>{p.get('status','')}</td>
-                <td>{minutes}</td>
-                <td>{p.get('rejoins',0)}</td>
-                <td>{"Yes" if p.get('is_host') else "No"}</td>
+                <td>{p['name']}</td>
+                <td>{p['status']}</td>
+                <td>{p['minutes']}</td>
+                <td>{p['rejoins']}</td>
+                <td>{"Yes" if p['is_host'] else "No"}</td>
             </tr>
         """)
 
@@ -878,6 +870,7 @@ def dashboard_live():
 
     <div class="card">
         <h2>Live Participants</h2>
+        <p class="tiny">Auto refresh every 2 seconds. Sorted by highest duration first.</p>
         <table>
             <tr>
                 <th>Name</th>
@@ -886,11 +879,11 @@ def dashboard_live():
                 <th>Rejoins</th>
                 <th>Host</th>
             </tr>
-            {''.join(rows) if rows else '<tr><td colspan="5">No participant data yet.</td></tr>'}
+            {''.join(live_rows) if live_rows else '<tr><td colspan="5">No participant data yet.</td></tr>'}
         </table>
     </div>
     """
-    return render_page("Live Dashboard", content)
+    return render_page("Live Dashboard", content, auto_refresh=2)
 
 
 @app.route("/dashboard/members")
@@ -914,15 +907,11 @@ def dashboard_members():
         """)
 
     active_members = sum(1 for m in members if m["active"] == 1)
-    with_whatsapp = sum(1 for m in members if (m["whatsapp"] or "").strip())
-    without_whatsapp = len(members) - with_whatsapp
 
     content = f"""
     <div class="grid">
         <div class="card metric"><div class="label">Total Members</div><div class="value">{len(members)}</div></div>
         <div class="card metric"><div class="label">Active Members</div><div class="value">{active_members}</div></div>
-        <div class="card metric"><div class="label">Members With WhatsApp</div><div class="value">{with_whatsapp}</div></div>
-        <div class="card metric"><div class="label">Members Without WhatsApp</div><div class="value">{without_whatsapp}</div></div>
     </div>
 
     <div class="card">
@@ -935,7 +924,6 @@ def dashboard_members():
                 <div><button class="btn" type="submit">Add / Update Member</button></div>
             </div>
         </form>
-        <p class="tiny">Reminder module is intentionally disabled right now. Core attendance, analytics, meeting history, CSV and PDF are the focus.</p>
         <table>
             <tr>
                 <th>ID</th>
@@ -982,7 +970,7 @@ def member_delete(member_id):
 
 @app.route("/send-reminder", methods=["POST", "GET"])
 def send_reminder_disabled():
-    flash("ℹ️ Reminder module is disabled for now. Core attendance and analytics are active.", "ok")
+    flash("ℹ️ Reminder module is disabled for now.", "ok")
     return redirect(url_for("dashboard_members"))
 
 
@@ -997,13 +985,13 @@ def dashboard_analytics():
     member_stat_rows = []
     for row in a["member_stats"]:
         member_stat_rows.append(
-            f"<tr><td>{row['participant_name']}</td><td>{row['present_count']}</td><td>{row['absent_count']}</td><td>{row['total_duration']}</td><td>{row['avg_duration']}</td><td>{row['attendance_percentage']}%</td></tr>"
+            f"<tr><td>{row['participant_name']}</td><td>{row['present_count']}</td><td>{row['late_count']}</td><td>{row['absent_count']}</td><td>{row['total_duration']}</td><td>{row['avg_duration']}</td><td>{row['attendance_percentage']}%</td></tr>"
         )
 
     recent_rows = []
     for row in a["recent_stats"]:
         recent_rows.append(
-            f"<tr><td>{row['topic']}</td><td>{row['meeting_date']}</td><td>{row['total_minutes']}</td><td>{row['present_count'] or 0}</td><td>{row['absent_count'] or 0}</td></tr>"
+            f"<tr><td>{row['topic']}</td><td>{row['meeting_date']}</td><td>{row['total_minutes']}</td><td>{row['present_count'] or 0}</td><td>{row['late_count'] or 0}</td><td>{row['absent_count'] or 0}</td></tr>"
         )
 
     content = f"""
@@ -1012,6 +1000,7 @@ def dashboard_analytics():
         <div class="card metric"><div class="label">Total Members</div><div class="value">{a['total_members']}</div></div>
         <div class="card metric"><div class="label">Active Members</div><div class="value">{a['active_members']}</div></div>
         <div class="card metric"><div class="label">Present Count</div><div class="value">{a['present_count']}</div></div>
+        <div class="card metric"><div class="label">Late Count</div><div class="value">{a['late_count']}</div></div>
         <div class="card metric"><div class="label">Absent Count</div><div class="value">{a['absent_count']}</div></div>
         <div class="card metric"><div class="label">Attendance Rate</div><div class="value">{a['attendance_rate']}%</div></div>
     </div>
@@ -1026,11 +1015,12 @@ def dashboard_analytics():
 
     <div class="card">
         <h2>Member Performance Summary</h2>
+        <p class="tiny">This section shows each added member's meeting performance: how many times they were Present, Late, Absent, their total duration, average duration, and overall attendance percentage.</p>
         <table>
             <tr>
-                <th>Name</th><th>Present</th><th>Absent</th><th>Total Duration</th><th>Avg Duration</th><th>Attendance %</th>
+                <th>Name</th><th>Present</th><th>Late</th><th>Absent</th><th>Total Duration</th><th>Avg Duration</th><th>Attendance %</th>
             </tr>
-            {''.join(member_stat_rows) if member_stat_rows else '<tr><td colspan="6">No member analytics yet.</td></tr>'}
+            {''.join(member_stat_rows) if member_stat_rows else '<tr><td colspan="7">No member analytics yet.</td></tr>'}
         </table>
     </div>
 
@@ -1038,9 +1028,9 @@ def dashboard_analytics():
         <h2>Recent Meeting Summary</h2>
         <table>
             <tr>
-                <th>Topic</th><th>Date</th><th>Total Minutes</th><th>Present</th><th>Absent</th>
+                <th>Topic</th><th>Date</th><th>Total Minutes</th><th>Present</th><th>Late</th><th>Absent</th>
             </tr>
-            {''.join(recent_rows) if recent_rows else '<tr><td colspan="5">No meetings yet.</td></tr>'}
+            {''.join(recent_rows) if recent_rows else '<tr><td colspan="6">No meetings yet.</td></tr>'}
         </table>
     </div>
     """
@@ -1096,9 +1086,8 @@ def meeting_detail(meeting_id):
         tr.append(f"""
             <tr>
                 <td>{r['participant_name']}</td>
-                <td>{r['participant_email'] or ''}</td>
-                <td>{r['join_time'] or ''}</td>
-                <td>{r['leave_time'] or ''}</td>
+                <td>{r['join_time'] or '-'}</td>
+                <td>{r['leave_time'] or '-'}</td>
                 <td>{r['duration_minutes']}</td>
                 <td>{r['rejoins']}</td>
                 <td>{r['status']}</td>
@@ -1121,9 +1110,9 @@ def meeting_detail(meeting_id):
     <div class="card">
         <table>
             <tr>
-                <th>Name</th><th>Email</th><th>Join Time</th><th>Leave Time</th><th>Minutes</th><th>Rejoins</th><th>Status</th><th>Member</th><th>Host</th>
+                <th>Name</th><th>Join Time</th><th>Leave Time</th><th>Minutes</th><th>Rejoins</th><th>Status</th><th>Member</th><th>Host</th>
             </tr>
-            {''.join(tr) if tr else '<tr><td colspan="9">No attendance rows.</td></tr>'}
+            {''.join(tr) if tr else '<tr><td colspan="8">No attendance rows.</td></tr>'}
         </table>
     </div>
     """
@@ -1157,28 +1146,28 @@ def zoom_webhook():
         return jsonify(zoom_url_validation(payload))
 
     obj = payload.get("payload", {}).get("object", {})
-    participant = payload.get("payload", {}).get("object", {}).get("participant", {})
+    participant = obj.get("participant", {})
 
     zoom_meeting_id = obj.get("id") or obj.get("uuid") or ""
     topic = obj.get("topic", "Untitled Meeting")
-    event_time = parse_zoom_time(payload.get("event_ts", "")) or parse_zoom_time(obj.get("start_time", "")) or now_utc()
+    event_time = now_utc()
 
     if event == "meeting.participant_joined":
         ensure_live_meeting(zoom_meeting_id, topic, event_time)
         pname = participant.get("user_name") or participant.get("participant_user_name") or "Unknown"
         pemail = participant.get("email", "")
-        update_participant_join(pname, pemail, now_utc())
+        update_participant_join(pname, pemail, event_time)
         return jsonify({"message": "join processed"})
 
     if event == "meeting.participant_left":
         ensure_live_meeting(zoom_meeting_id, topic, event_time)
         pname = participant.get("user_name") or participant.get("participant_user_name") or "Unknown"
-        update_participant_leave(pname, now_utc())
+        update_participant_leave(pname, event_time)
         return jsonify({"message": "leave processed"})
 
     if event == "meeting.ended":
         state = ensure_live_meeting(zoom_meeting_id, topic, event_time)
-        state["meeting"]["ended_at"] = now_utc().isoformat()
+        state["meeting"]["ended_at"] = event_time.isoformat()
         save_live_state(state)
         schedule_finalize(str(zoom_meeting_id))
         return jsonify({"message": "meeting end received, finalization scheduled"})
