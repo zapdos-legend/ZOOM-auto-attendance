@@ -3,14 +3,21 @@ import csv
 import json
 import hmac
 import hashlib
-import sqlite3
 import threading
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 from flask import Flask, request, jsonify, redirect, url_for, send_from_directory, flash, render_template_string
+
+import sqlite3
+import psycopg
+from psycopg.rows import dict_row
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
 
 # =========================================================
 # CONFIG
@@ -18,17 +25,26 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 REPORT_DIR = os.path.join(BASE_DIR, "attendance_reports")
-DB_FILE = os.path.join(DATA_DIR, "zoom_attendance.db")
 LIVE_STATE_FILE = os.path.join(DATA_DIR, "live_state.json")
+SQLITE_DB_FILE = os.path.join(DATA_DIR, "zoom_attendance.db")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(REPORT_DIR, exist_ok=True)
 
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
+
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "12345")
+TIMEZONE_NAME = os.environ.get("TIMEZONE_NAME", "Asia/Kolkata")
+APP_TZ = ZoneInfo(TIMEZONE_NAME)
+
 PRESENT_PERCENTAGE = int(os.environ.get("PRESENT_PERCENTAGE", "75"))
 INACTIVITY_CONFIRM_SECONDS = int(os.environ.get("INACTIVITY_CONFIRM_SECONDS", "120"))
 ZOOM_SECRET_TOKEN = os.environ.get("ZOOM_SECRET_TOKEN", "your_zoom_secret_token")
 HOST_NAME_HINT = os.environ.get("HOST_NAME_HINT", "Akshay").strip().lower()
+
+# summary rule requested by user
+LATE_COUNT_AS_PRESENT_PERCENTAGE = 30
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -36,10 +52,36 @@ FINALIZE_TIMERS = {}
 
 
 # =========================================================
-# TIME HELPERS
+# DB HELPERS
 # =========================================================
+def get_sqlite_conn():
+    conn = sqlite3.connect(SQLITE_DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def get_pg_conn():
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+
+def get_conn():
+    return get_pg_conn() if USE_POSTGRES else get_sqlite_conn()
+
+
+def is_pg():
+    return USE_POSTGRES
+
+
 def now_utc():
     return datetime.now(timezone.utc)
+
+
+def to_local(dt):
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(APP_TZ)
 
 
 def parse_zoom_time(value):
@@ -47,92 +89,140 @@ def parse_zoom_time(value):
         return None
     try:
         if isinstance(value, datetime):
-            return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc)
         value = str(value)
         if value.endswith("Z"):
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
         dt = datetime.fromisoformat(value)
-        return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
     except Exception:
         return None
 
 
 def fmt_dt(dt):
-    if not dt:
-        return ""
-    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    dt = to_local(dt)
+    return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else ""
 
 
 def fmt_date(dt):
-    if not dt:
-        return ""
-    return dt.astimezone().strftime("%Y-%m-%d")
+    dt = to_local(dt)
+    return dt.strftime("%Y-%m-%d") if dt else ""
 
 
 def fmt_time(dt):
-    if not dt:
-        return ""
-    return dt.astimezone().strftime("%I:%M:%S %p")
+    dt = to_local(dt)
+    return dt.strftime("%I:%M:%S %p") if dt else ""
 
 
 # =========================================================
-# DB
+# DB INIT
 # =========================================================
-def get_conn():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS members (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            email TEXT,
-            whatsapp TEXT,
-            active INTEGER DEFAULT 1,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS meetings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            zoom_meeting_id TEXT,
-            topic TEXT,
-            meeting_date TEXT,
-            start_time TEXT,
-            end_time TEXT,
-            total_minutes REAL,
-            csv_file TEXT,
-            pdf_file TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS attendance (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            meeting_pk INTEGER NOT NULL,
-            participant_name TEXT NOT NULL,
-            participant_email TEXT,
-            join_time TEXT,
-            leave_time TEXT,
-            duration_minutes REAL,
-            rejoins INTEGER,
-            status TEXT,
-            is_member INTEGER DEFAULT 0,
-            is_host INTEGER DEFAULT 0,
-            FOREIGN KEY (meeting_pk) REFERENCES meetings(id) ON DELETE CASCADE
-        )
-    """)
+    if is_pg():
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS members (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                email TEXT,
+                whatsapp TEXT,
+                active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS meetings (
+                id SERIAL PRIMARY KEY,
+                zoom_meeting_id TEXT,
+                topic TEXT,
+                meeting_date TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                total_minutes DOUBLE PRECISION,
+                csv_file TEXT,
+                pdf_file TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS attendance (
+                id SERIAL PRIMARY KEY,
+                meeting_pk INTEGER NOT NULL,
+                participant_name TEXT NOT NULL,
+                participant_email TEXT,
+                join_time TEXT,
+                leave_time TEXT,
+                duration_minutes DOUBLE PRECISION,
+                rejoins INTEGER,
+                status TEXT,
+                is_member INTEGER DEFAULT 0,
+                is_host INTEGER DEFAULT 0,
+                FOREIGN KEY (meeting_pk) REFERENCES meetings(id) ON DELETE CASCADE
+            )
+        """)
+    else:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                email TEXT,
+                whatsapp TEXT,
+                active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS meetings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                zoom_meeting_id TEXT,
+                topic TEXT,
+                meeting_date TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                total_minutes REAL,
+                csv_file TEXT,
+                pdf_file TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS attendance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_pk INTEGER NOT NULL,
+                participant_name TEXT NOT NULL,
+                participant_email TEXT,
+                join_time TEXT,
+                leave_time TEXT,
+                duration_minutes REAL,
+                rejoins INTEGER,
+                status TEXT,
+                is_member INTEGER DEFAULT 0,
+                is_host INTEGER DEFAULT 0,
+                FOREIGN KEY (meeting_pk) REFERENCES meetings(id) ON DELETE CASCADE
+            )
+        """)
 
     conn.commit()
     conn.close()
+
+
+# =========================================================
+# MEMBER HELPERS
+# =========================================================
+def rows_to_dicts(rows):
+    out = []
+    for r in rows:
+        if isinstance(r, dict):
+            out.append(r)
+        else:
+            out.append(dict(r))
+    return out
 
 
 def get_members(active_only=False):
@@ -142,7 +232,7 @@ def get_members(active_only=False):
         cur.execute("SELECT * FROM members WHERE active = 1 ORDER BY name")
     else:
         cur.execute("SELECT * FROM members ORDER BY name")
-    rows = cur.fetchall()
+    rows = rows_to_dicts(cur.fetchall())
     conn.close()
     return rows
 
@@ -157,13 +247,24 @@ def add_or_update_member(name, email, whatsapp):
 
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO members (name, email, whatsapp, active)
-        VALUES (?, ?, ?, 1)
-        ON CONFLICT(name) DO UPDATE SET
-            email = excluded.email,
-            whatsapp = excluded.whatsapp
-    """, (name, email, whatsapp))
+
+    if is_pg():
+        cur.execute("""
+            INSERT INTO members (name, email, whatsapp, active)
+            VALUES (%s, %s, %s, 1)
+            ON CONFLICT(name) DO UPDATE SET
+                email = EXCLUDED.email,
+                whatsapp = EXCLUDED.whatsapp
+        """, (name, email, whatsapp))
+    else:
+        cur.execute("""
+            INSERT INTO members (name, email, whatsapp, active)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(name) DO UPDATE SET
+                email = excluded.email,
+                whatsapp = excluded.whatsapp
+        """, (name, email, whatsapp))
+
     conn.commit()
     conn.close()
 
@@ -171,7 +272,10 @@ def add_or_update_member(name, email, whatsapp):
 def toggle_member(member_id):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("UPDATE members SET active = CASE WHEN active = 1 THEN 0 ELSE 1 END WHERE id = ?", (member_id,))
+    if is_pg():
+        cur.execute("UPDATE members SET active = CASE WHEN active = 1 THEN 0 ELSE 1 END WHERE id = %s", (member_id,))
+    else:
+        cur.execute("UPDATE members SET active = CASE WHEN active = 1 THEN 0 ELSE 1 END WHERE id = ?", (member_id,))
     conn.commit()
     conn.close()
 
@@ -179,50 +283,94 @@ def toggle_member(member_id):
 def delete_member(member_id):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM members WHERE id = ?", (member_id,))
+    if is_pg():
+        cur.execute("DELETE FROM members WHERE id = %s", (member_id,))
+    else:
+        cur.execute("DELETE FROM members WHERE id = ?", (member_id,))
     conn.commit()
     conn.close()
 
 
+# =========================================================
+# MEETING / ATTENDANCE DB
+# =========================================================
 def save_meeting_and_attendance(meeting_meta, rows, csv_file, pdf_file):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("""
-        INSERT INTO meetings (
-            zoom_meeting_id, topic, meeting_date, start_time, end_time,
-            total_minutes, csv_file, pdf_file
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        meeting_meta["zoom_meeting_id"],
-        meeting_meta["topic"],
-        meeting_meta["meeting_date"],
-        meeting_meta["start_time"],
-        meeting_meta["end_time"],
-        meeting_meta["total_minutes"],
-        os.path.basename(csv_file),
-        os.path.basename(pdf_file),
-    ))
-    meeting_pk = cur.lastrowid
+    if is_pg():
+        cur.execute("""
+            INSERT INTO meetings (
+                zoom_meeting_id, topic, meeting_date, start_time, end_time,
+                total_minutes, csv_file, pdf_file
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            meeting_meta["zoom_meeting_id"],
+            meeting_meta["topic"],
+            meeting_meta["meeting_date"],
+            meeting_meta["start_time"],
+            meeting_meta["end_time"],
+            meeting_meta["total_minutes"],
+            os.path.basename(csv_file),
+            os.path.basename(pdf_file),
+        ))
+        meeting_pk = cur.fetchone()["id"]
+    else:
+        cur.execute("""
+            INSERT INTO meetings (
+                zoom_meeting_id, topic, meeting_date, start_time, end_time,
+                total_minutes, csv_file, pdf_file
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            meeting_meta["zoom_meeting_id"],
+            meeting_meta["topic"],
+            meeting_meta["meeting_date"],
+            meeting_meta["start_time"],
+            meeting_meta["end_time"],
+            meeting_meta["total_minutes"],
+            os.path.basename(csv_file),
+            os.path.basename(pdf_file),
+        ))
+        meeting_pk = cur.lastrowid
 
     for row in rows:
-        cur.execute("""
-            INSERT INTO attendance (
-                meeting_pk, participant_name, participant_email, join_time, leave_time,
-                duration_minutes, rejoins, status, is_member, is_host
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            meeting_pk,
-            row["name"],
-            row.get("email", ""),
-            row["join_time_str"],
-            row["leave_time_str"],
-            row["duration_minutes"],
-            row["rejoins"],
-            row["status"],
-            row["is_member"],
-            row["is_host"],
-        ))
+        if is_pg():
+            cur.execute("""
+                INSERT INTO attendance (
+                    meeting_pk, participant_name, participant_email, join_time, leave_time,
+                    duration_minutes, rejoins, status, is_member, is_host
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                meeting_pk,
+                row["name"],
+                row.get("email", ""),
+                row["join_time_str"],
+                row["leave_time_str"],
+                row["duration_minutes"],
+                row["rejoins"],
+                row["status"],
+                row["is_member"],
+                row["is_host"],
+            ))
+        else:
+            cur.execute("""
+                INSERT INTO attendance (
+                    meeting_pk, participant_name, participant_email, join_time, leave_time,
+                    duration_minutes, rejoins, status, is_member, is_host
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                meeting_pk,
+                row["name"],
+                row.get("email", ""),
+                row["join_time_str"],
+                row["leave_time_str"],
+                row["duration_minutes"],
+                row["rejoins"],
+                row["status"],
+                row["is_member"],
+                row["is_host"],
+            ))
 
     conn.commit()
     conn.close()
@@ -231,8 +379,11 @@ def save_meeting_and_attendance(meeting_meta, rows, csv_file, pdf_file):
 def get_recent_meetings(limit=50):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT ?", (limit,))
-    rows = cur.fetchall()
+    if is_pg():
+        cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT %s", (limit,))
+    else:
+        cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT ?", (limit,))
+    rows = rows_to_dicts(cur.fetchall())
     conn.close()
     return rows
 
@@ -240,21 +391,31 @@ def get_recent_meetings(limit=50):
 def get_meeting(meeting_id):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+    if is_pg():
+        cur.execute("SELECT * FROM meetings WHERE id = %s", (meeting_id,))
+    else:
+        cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
     row = cur.fetchone()
     conn.close()
-    return row
+    return dict(row) if row else None
 
 
 def get_attendance_rows(meeting_id):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT * FROM attendance
-        WHERE meeting_pk = ?
-        ORDER BY is_host DESC, duration_minutes DESC, participant_name ASC
-    """, (meeting_id,))
-    rows = cur.fetchall()
+    if is_pg():
+        cur.execute("""
+            SELECT * FROM attendance
+            WHERE meeting_pk = %s
+            ORDER BY is_host DESC, duration_minutes DESC, participant_name ASC
+        """, (meeting_id,))
+    else:
+        cur.execute("""
+            SELECT * FROM attendance
+            WHERE meeting_pk = ?
+            ORDER BY is_host DESC, duration_minutes DESC, participant_name ASC
+        """, (meeting_id,))
+    rows = rows_to_dicts(cur.fetchall())
     conn.close()
     return rows
 
@@ -266,12 +427,16 @@ def delete_meeting(meeting_id):
 
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM attendance WHERE meeting_pk = ?", (meeting_id,))
-    cur.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+    if is_pg():
+        cur.execute("DELETE FROM attendance WHERE meeting_pk = %s", (meeting_id,))
+        cur.execute("DELETE FROM meetings WHERE id = %s", (meeting_id,))
+    else:
+        cur.execute("DELETE FROM attendance WHERE meeting_pk = ?", (meeting_id,))
+        cur.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
     conn.commit()
     conn.close()
 
-    for fname in [meeting["csv_file"], meeting["pdf_file"]]:
+    for fname in [meeting.get("csv_file"), meeting.get("pdf_file")]:
         if fname:
             path = os.path.join(REPORT_DIR, fname)
             if os.path.exists(path):
@@ -281,6 +446,9 @@ def delete_meeting(meeting_id):
                     pass
 
 
+# =========================================================
+# ANALYTICS
+# =========================================================
 def get_analytics():
     conn = get_conn()
     cur = conn.cursor()
@@ -300,7 +468,7 @@ def get_analytics():
         WHERE is_member = 1 AND is_host = 0
         GROUP BY status
     """)
-    status_counts = {row["status"]: row["c"] for row in cur.fetchall()}
+    status_counts = {row["status"]: row["c"] for row in rows_to_dicts(cur.fetchall())}
 
     present_count = status_counts.get("PRESENT", 0)
     late_count = status_counts.get("LATE", 0)
@@ -310,6 +478,13 @@ def get_analytics():
     attendance_rate = round(((present_count + late_count) / total_member_marks) * 100, 2) if total_member_marks else 0.0
 
     cur.execute("""
+        SELECT participant_name, ROUND(SUM(duration_minutes)::numeric, 2) AS total_duration
+        FROM attendance
+        WHERE is_host = 0
+        GROUP BY participant_name
+        ORDER BY total_duration DESC
+        LIMIT 10
+    """ if is_pg() else """
         SELECT participant_name, ROUND(SUM(duration_minutes), 2) AS total_duration
         FROM attendance
         WHERE is_host = 0
@@ -317,9 +492,25 @@ def get_analytics():
         ORDER BY total_duration DESC
         LIMIT 10
     """)
-    top_attendees = cur.fetchall()
+    top_attendees = rows_to_dicts(cur.fetchall())
 
     cur.execute("""
+        SELECT
+            participant_name,
+            SUM(CASE WHEN status = 'PRESENT' THEN 1 ELSE 0 END) AS present_count,
+            SUM(CASE WHEN status = 'LATE' THEN 1 ELSE 0 END) AS late_count,
+            SUM(CASE WHEN status = 'ABSENT' THEN 1 ELSE 0 END) AS absent_count,
+            ROUND(SUM(duration_minutes)::numeric, 2) AS total_duration,
+            ROUND(AVG(duration_minutes)::numeric, 2) AS avg_duration,
+            ROUND(
+                100.0 * SUM(CASE WHEN status IN ('PRESENT','LATE') THEN 1 ELSE 0 END) / COUNT(*),
+                2
+            ) AS attendance_percentage
+        FROM attendance
+        WHERE is_member = 1 AND is_host = 0
+        GROUP BY participant_name
+        ORDER BY total_duration DESC
+    """ if is_pg() else """
         SELECT
             participant_name,
             SUM(CASE WHEN status = 'PRESENT' THEN 1 ELSE 0 END) AS present_count,
@@ -336,9 +527,23 @@ def get_analytics():
         GROUP BY participant_name
         ORDER BY total_duration DESC
     """)
-    member_stats = cur.fetchall()
+    member_stats = rows_to_dicts(cur.fetchall())
 
     cur.execute("""
+        SELECT
+            m.id,
+            m.topic,
+            m.meeting_date,
+            ROUND(m.total_minutes::numeric, 2) AS total_minutes,
+            SUM(CASE WHEN a.status='PRESENT' AND a.is_member=1 AND a.is_host=0 THEN 1 ELSE 0 END) AS present_count,
+            SUM(CASE WHEN a.status='LATE' AND a.is_member=1 AND a.is_host=0 THEN 1 ELSE 0 END) AS late_count,
+            SUM(CASE WHEN a.status='ABSENT' AND a.is_member=1 AND a.is_host=0 THEN 1 ELSE 0 END) AS absent_count
+        FROM meetings m
+        LEFT JOIN attendance a ON a.meeting_pk = m.id
+        GROUP BY m.id
+        ORDER BY m.id DESC
+        LIMIT 10
+    """ if is_pg() else """
         SELECT
             m.id,
             m.topic,
@@ -353,7 +558,7 @@ def get_analytics():
         ORDER BY m.id DESC
         LIMIT 10
     """)
-    recent_stats = cur.fetchall()
+    recent_stats = rows_to_dicts(cur.fetchall())
 
     conn.close()
     return {
@@ -409,10 +614,7 @@ def reset_live_state():
 
 def member_lookup():
     rows = get_members(active_only=True)
-    lookup = {}
-    for row in rows:
-        lookup[row["name"].strip().lower()] = row
-    return lookup
+    return {row["name"].strip().lower(): row for row in rows}
 
 
 # =========================================================
@@ -573,11 +775,13 @@ def finalize_meeting(zoom_meeting_id):
             "status": "PENDING",
             "is_member": 1 if member else 0,
             "is_host": 1 if p.get("is_host") else 0,
+            "is_unknown": 0 if member else 1,
         })
 
     actual_minutes = round(max(0, (ended_at - started_at).total_seconds()) / 60.0, 2)
     total_meeting_minutes = round(max(actual_minutes, max_participant_minutes), 2)
     threshold_minutes = round((PRESENT_PERCENTAGE / 100.0) * total_meeting_minutes, 2)
+    late_count_as_present_threshold = round((LATE_COUNT_AS_PRESENT_PERCENTAGE / 100.0) * total_meeting_minutes, 2)
 
     active_members = get_members(active_only=True)
     existing_names = {r["name"].strip().lower() for r in rows}
@@ -594,6 +798,7 @@ def finalize_meeting(zoom_meeting_id):
                 "status": "ABSENT",
                 "is_member": 1,
                 "is_host": 0,
+                "is_unknown": 0,
             })
 
     for row in rows:
@@ -609,16 +814,23 @@ def finalize_meeting(zoom_meeting_id):
         else:
             row["status"] = "PRESENT" if row["duration_minutes"] >= threshold_minutes else "LATE"
 
-    rows.sort(key=lambda x: (
-        x["is_host"] == 0,
-        -x["duration_minutes"],
-        x["name"].lower()
-    ))
+    rows.sort(key=lambda x: (x["is_host"] == 0, -x["duration_minutes"], x["name"].lower()))
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now(APP_TZ).strftime("%Y%m%d_%H%M%S")
     safe_topic = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in meeting.get("topic", "meeting"))[:40]
     csv_file = os.path.join(REPORT_DIR, f"{safe_topic}_{stamp}.csv")
     pdf_file = os.path.join(REPORT_DIR, f"{safe_topic}_{stamp}.pdf")
+
+    total_participants = sum(1 for r in rows if r["is_host"] == 0)
+    total_members = sum(1 for r in rows if r["is_member"] == 1 and r["is_host"] == 0)
+    total_present_members = sum(
+        1 for r in rows
+        if r["is_member"] == 1 and r["is_host"] == 0 and (
+            r["status"] == "PRESENT" or (r["status"] == "LATE" and r["duration_minutes"] > late_count_as_present_threshold)
+        )
+    )
+    total_absent_members = sum(1 for r in rows if r["is_member"] == 1 and r["is_host"] == 0 and r["status"] == "ABSENT")
+    total_unknown_participants = sum(1 for r in rows if r["is_unknown"] == 1 and r["is_host"] == 0)
 
     meeting_meta = {
         "zoom_meeting_id": str(meeting.get("zoom_meeting_id", "")),
@@ -628,6 +840,12 @@ def finalize_meeting(zoom_meeting_id):
         "end_time": fmt_time(ended_at),
         "total_minutes": total_meeting_minutes,
         "threshold_minutes": threshold_minutes,
+        "late_count_as_present_threshold": late_count_as_present_threshold,
+        "total_participants": total_participants,
+        "total_members": total_members,
+        "total_present_members": total_present_members,
+        "total_absent_members": total_absent_members,
+        "total_unknown_participants": total_unknown_participants,
     }
 
     generate_csv_report(csv_file, meeting_meta, rows)
@@ -652,8 +870,14 @@ def generate_csv_report(file_path, meeting_meta, rows):
         writer.writerow(["End Time", meeting_meta["end_time"]])
         writer.writerow(["Total Meeting Duration", meeting_meta["total_minutes"]])
         writer.writerow(["Present Threshold", meeting_meta["threshold_minutes"]])
+        writer.writerow(["Late Count As Present Threshold", meeting_meta["late_count_as_present_threshold"]])
+        writer.writerow(["Total Participants", meeting_meta["total_participants"]])
+        writer.writerow(["Total Members", meeting_meta["total_members"]])
+        writer.writerow(["Total Present Members", meeting_meta["total_present_members"]])
+        writer.writerow(["Total Absent Members", meeting_meta["total_absent_members"]])
+        if meeting_meta["total_unknown_participants"] > 0:
+            writer.writerow(["Total Unknown Participants", meeting_meta["total_unknown_participants"]])
         writer.writerow([])
-
         writer.writerow(["Name", "Join", "Leave", "Duration", "Rejoins", "Status"])
 
         for row in rows:
@@ -670,69 +894,99 @@ def generate_csv_report(file_path, meeting_meta, rows):
 def generate_pdf_report(file_path, meeting_meta, rows):
     doc = SimpleDocTemplate(file_path, pagesize=A4)
     styles = getSampleStyleSheet()
+
+    normal = ParagraphStyle("normal_custom", parent=styles["Normal"], fontSize=10, leading=13, alignment=TA_LEFT)
+    small = ParagraphStyle("small_custom", parent=styles["Normal"], fontSize=9, leading=11)
+    center = ParagraphStyle("center_custom", parent=styles["Normal"], fontSize=9, leading=11, alignment=TA_CENTER)
+    title_style = ParagraphStyle("title_custom", parent=styles["Title"], alignment=TA_CENTER)
+
     story = []
 
-    story.append(Paragraph("Attendance Report", styles["Title"]))
+    story.append(Paragraph("Attendance Report", title_style))
     story.append(Spacer(1, 12))
-
-    story.append(Paragraph(f"<b>Topic:</b> {meeting_meta['topic']}", styles["Normal"]))
-    story.append(Paragraph(f"<b>Meeting ID:</b> {meeting_meta['zoom_meeting_id']}", styles["Normal"]))
-    story.append(Paragraph(f"<b>Date:</b> {meeting_meta['meeting_date']}", styles["Normal"]))
-    story.append(Paragraph(f"<b>Start Time:</b> {meeting_meta['start_time']}", styles["Normal"]))
-    story.append(Paragraph(f"<b>End Time:</b> {meeting_meta['end_time']}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Topic:</b> {meeting_meta['topic']}", normal))
+    story.append(Paragraph(f"<b>Meeting ID:</b> {meeting_meta['zoom_meeting_id']}", normal))
+    story.append(Paragraph(f"<b>Date:</b> {meeting_meta['meeting_date']}", normal))
+    story.append(Paragraph(f"<b>Start Time:</b> {meeting_meta['start_time']}", normal))
+    story.append(Paragraph(f"<b>End Time:</b> {meeting_meta['end_time']}", normal))
     story.append(Spacer(1, 6))
-    story.append(Paragraph(f"<b>Total Meeting Duration:</b> {meeting_meta['total_minutes']} minutes", styles["Normal"]))
+    story.append(Paragraph(f"<b>Total Meeting Duration:</b> {meeting_meta['total_minutes']} minutes", normal))
     story.append(Spacer(1, 10))
 
-    table_data = [["Name", "Join", "Leave", "Duration", "Rejoins", "Status"]]
+    def colored_name(row):
+        if row["is_unknown"] == 1 and row["is_host"] == 0:
+            return Paragraph(f'<font color="red">{row["name"]}</font>', center)
+        return Paragraph(row["name"], center)
+
+    def colored_status(status):
+        if status == "PRESENT":
+            return Paragraph('<font color="green"><b>PRESENT</b></font>', center)
+        if status == "LATE":
+            return Paragraph('<font color="orange"><b>LATE</b></font>', center)
+        if status == "ABSENT":
+            return Paragraph('<font color="red"><b>ABSENT</b></font>', center)
+        if status == "HOST":
+            return Paragraph('<b>HOST</b>', center)
+        return Paragraph(status, center)
+
+    table_data = [[
+        Paragraph("<b>Name</b>", center),
+        Paragraph("<b>Join</b>", center),
+        Paragraph("<b>Leave</b>", center),
+        Paragraph("<b>Duration</b>", center),
+        Paragraph("<b>Rejoins</b>", center),
+        Paragraph("<b>Status</b>", center),
+    ]]
+
     for row in rows:
         table_data.append([
-            row["name"],
-            row["join_time_str"],
-            row["leave_time_str"],
-            str(row["duration_minutes"]),
-            str(row["rejoins"]),
-            row["status"],
+            colored_name(row),
+            Paragraph(row["join_time_str"], center),
+            Paragraph(row["leave_time_str"], center),
+            Paragraph(str(row["duration_minutes"]), center),
+            Paragraph(str(row["rejoins"]), center),
+            colored_status(row["status"]),
         ])
 
-    table = Table(table_data, repeatRows=1)
+    table = Table(table_data, repeatRows=1, colWidths=[95, 70, 70, 55, 55, 70])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
         ("GRID", (0, 0), (-1, -1), 0.7, colors.black),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("PADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(table)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 12))
 
-    present_count = sum(1 for r in rows if r["status"] == "PRESENT")
-    late_count = sum(1 for r in rows if r["status"] == "LATE")
-    absent_count = sum(1 for r in rows if r["status"] == "ABSENT")
+    summary_lines = [
+        f"<b>Total Participants:</b> {meeting_meta['total_participants']}",
+        f"<b>Total Members:</b> {meeting_meta['total_members']}",
+        f"<b>Total Present Members:</b> {meeting_meta['total_present_members']}",
+        f"<b>Total Absent Members:</b> {meeting_meta['total_absent_members']}",
+    ]
+    if meeting_meta["total_unknown_participants"] > 0:
+        summary_lines.append(f"<b>Total Unknown Participants:</b> {meeting_meta['total_unknown_participants']}")
 
-    note_box_data = [[Paragraph(
-        f"""
-        <b>■ Attendance Criteria</b><br/>
-        ■ Present = Duration ≥ {PRESENT_PERCENTAGE}% of total meeting duration<br/>
-        ■ Late = Duration &lt; {PRESENT_PERCENTAGE}% of total meeting duration<br/>
-        ■ Absent = Did not join the meeting (for added members only)<br/><br/>
-        <b>■ Present Threshold For This Meeting:</b> {meeting_meta['threshold_minutes']} minutes
-        """,
-        styles["Normal"]
-    )]]
+    for line in summary_lines:
+        story.append(Paragraph(line, normal))
 
-    note_box = Table(note_box_data, colWidths=[470])
+    story.append(Spacer(1, 10))
+
+    note_text = f"""
+    <b>■ Attendance Criteria</b><br/>
+    ■ Present = Duration ≥ {PRESENT_PERCENTAGE}% of total meeting duration<br/>
+    ■ Late = Duration &lt; {PRESENT_PERCENTAGE}% of total meeting duration<br/>
+    ■ Absent = Did not join the meeting (for added members only)<br/><br/>
+    <b>■ Present Threshold For This Meeting:</b> {meeting_meta['threshold_minutes']} minutes<br/>
+    <b>■ Late counted as present in summary if Duration &gt;</b> {meeting_meta['late_count_as_present_threshold']} minutes
+    """
+    note_box = Table([[Paragraph(note_text, small)]], colWidths=[480])
     note_box.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 1.5, colors.black),
+        ("BOX", (0, 0), (-1, -1), 1.4, colors.black),
         ("PADDING", (0, 0), (-1, -1), 8),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
-
-    story.append(Paragraph(f"<b>Present Count:</b> {present_count}", styles["Normal"]))
-    story.append(Paragraph(f"<b>Late Count:</b> {late_count}", styles["Normal"]))
-    story.append(Paragraph(f"<b>Absent Count:</b> {absent_count}", styles["Normal"]))
-    story.append(Spacer(1, 10))
     story.append(note_box)
 
     doc.build(story)
@@ -756,7 +1010,7 @@ BASE_HTML = """
         .nav { margin-top:10px; }
         .nav a { color:#c7d2fe; text-decoration:none; margin-right:16px; font-weight:600; }
         .container { padding:20px; max-width:1200px; margin:auto; }
-        .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:20px; }
+        .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:16px; margin-bottom:20px; }
         .card { background:white; border-radius:16px; padding:18px; box-shadow:0 4px 18px rgba(0,0,0,0.08); margin-bottom:20px; }
         .metric .label { color:#6b7280; font-size:13px; margin-bottom:8px; }
         .metric .value { font-size:28px; font-weight:700; color:#111827; }
@@ -815,13 +1069,12 @@ def dashboard_live():
     meeting = state["meeting"]
     participants = list(state["participants"].values())
 
-    live_rows = []
+    processed = []
     live_count = 0
     left_count = 0
     max_minutes = 0.0
     host_name = "-"
 
-    processed = []
     for p in participants:
         total_seconds = int(p.get("total_seconds", 0))
         if p.get("current_join"):
@@ -839,6 +1092,7 @@ def dashboard_live():
 
     processed.sort(key=lambda x: (-x["minutes"], x["name"].lower()))
 
+    rows = []
     for p in processed:
         max_minutes = max(max_minutes, p["minutes"])
         if p["status"] == "LIVE":
@@ -848,7 +1102,7 @@ def dashboard_live():
         if p["is_host"]:
             host_name = p["name"]
 
-        live_rows.append(f"""
+        rows.append(f"""
             <tr>
                 <td>{p['name']}</td>
                 <td>{p['status']}</td>
@@ -879,7 +1133,7 @@ def dashboard_live():
                 <th>Rejoins</th>
                 <th>Host</th>
             </tr>
-            {''.join(live_rows) if live_rows else '<tr><td colspan="5">No participant data yet.</td></tr>'}
+            {''.join(rows) if rows else '<tr><td colspan="5">No participant data yet.</td></tr>'}
         </table>
     </div>
     """
@@ -1054,7 +1308,7 @@ def dashboard_meetings():
                 <td>{m['meeting_date']}</td>
                 <td>{m['start_time']}</td>
                 <td>{m['end_time']}</td>
-                <td>{round(m['total_minutes'] or 0, 2)}</td>
+                <td>{round(float(m['total_minutes'] or 0), 2)}</td>
                 <td>{csv_btn} {pdf_btn}</td>
                 <td>{open_btn} {delete_btn}</td>
             </tr>
@@ -1104,7 +1358,7 @@ def meeting_detail(meeting_id):
         <p><b>Date:</b> {meeting['meeting_date']}</p>
         <p><b>Start:</b> {meeting['start_time']}</p>
         <p><b>End:</b> {meeting['end_time']}</p>
-        <p><b>Total Duration:</b> {round(meeting['total_minutes'] or 0, 2)} minutes</p>
+        <p><b>Total Duration:</b> {round(float(meeting['total_minutes'] or 0), 2)} minutes</p>
     </div>
 
     <div class="card">
