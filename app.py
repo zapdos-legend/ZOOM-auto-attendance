@@ -1,21 +1,25 @@
-from flask import Flask, request, jsonify, session, redirect
+from flask import Flask, request, jsonify, session, redirect, url_for
 import psycopg
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+from reportlab.platypus import SimpleDocTemplate, Table
+from reportlab.lib.pagesizes import letter
 
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = "secret"
+app.secret_key = "secret-key-change-later"
 
 DB_URL = os.getenv("DATABASE_URL")
+
 
 # ---------------- DB CONNECTION ----------------
 def get_db():
     return psycopg.connect(DB_URL)
 
-# ---------------- TEST DB ROUTE (NEW) ----------------
+
+# ---------------- TEST DB ROUTE ----------------
 @app.route("/test-db")
 def test_db():
     try:
@@ -23,150 +27,386 @@ def test_db():
         cur = conn.cursor()
         cur.execute("SELECT NOW();")
         result = cur.fetchone()
+        cur.close()
+        conn.close()
         return f"DB Connected Successfully: {result}"
     except Exception as e:
-        return f"DB Connection Error: {str(e)}"
+        return f"DB Connection Error: {str(e)}", 500
+
 
 # ---------------- LOGIN ----------------
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if request.form["username"] == os.getenv("ADMIN_USERNAME") and request.form["password"] == os.getenv("ADMIN_PASSWORD"):
-            session["user"] = "admin"
-            return redirect("/dashboard")
-        return "Login Failed"
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
 
-    return '''
+        admin_username = os.getenv("ADMIN_USERNAME", "admin")
+        admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+
+        if username == admin_username and password == admin_password:
+            session["user"] = username
+            return redirect(url_for("dashboard"))
+        return """
+        <h2>Login Failed</h2>
+        <a href="/">Back to Login</a>
+        """
+
+    return """
     <h2>Login</h2>
     <form method="post">
-    <input name="username" placeholder="username"/>
-    <input name="password" type="password"/>
-    <button>Login</button>
+        <input name="username" placeholder="username" />
+        <input name="password" type="password" placeholder="password" />
+        <button type="submit">Login</button>
     </form>
-    '''
+    """
+
+
+# ---------------- LOGOUT ----------------
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 
 # ---------------- DASHBOARD ----------------
 @app.route("/dashboard")
 def dashboard():
     if "user" not in session:
-        return redirect("/")
-    
-    conn = get_db()
-    cur = conn.cursor()
+        return redirect(url_for("login"))
 
-    cur.execute("SELECT * FROM meetings ORDER BY id DESC")
-    meetings = cur.fetchall()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
 
-    html = "<h1>Dashboard</h1>"
+        cur.execute("""
+            SELECT id, topic, date
+            FROM meetings
+            ORDER BY id DESC
+        """)
+        meetings = cur.fetchall()
 
-    html += "<h2>Meetings</h2><table border=1>"
-    html += "<tr><th>#</th><th>Topic</th><th>Date</th><th>Action</th></tr>"
+        cur.close()
+        conn.close()
 
-    for i, m in enumerate(meetings, start=1):
-        html += f"<tr><td>{i}</td><td>{m[1]}</td><td>{m[2]}</td>"
-        html += f"<td><a href='/report/{m[0]}'>View</a></td></tr>"
+        html = """
+        <h1>Dashboard</h1>
+        <p>
+            <a href="/live">Live Dashboard</a> |
+            <a href="/test-db">Test DB</a> |
+            <a href="/logout">Logout</a>
+        </p>
+        <h2>Meetings</h2>
+        <table border="1" cellpadding="6" cellspacing="0">
+            <tr>
+                <th>#</th>
+                <th>Meeting ID</th>
+                <th>Topic</th>
+                <th>Date</th>
+                <th>Action</th>
+            </tr>
+        """
 
-    html += "</table>"
+        if meetings:
+            for display_index, meeting in enumerate(meetings, start=1):
+                meeting_pk = meeting[0]
+                topic = meeting[1] if meeting[1] else "No Topic"
+                date = meeting[2] if meeting[2] else ""
 
-    return html
+                html += f"""
+                <tr>
+                    <td>{display_index}</td>
+                    <td>{meeting_pk}</td>
+                    <td>{topic}</td>
+                    <td>{date}</td>
+                    <td><a href="/report/{meeting_pk}">View</a></td>
+                </tr>
+                """
+        else:
+            html += """
+            <tr>
+                <td colspan="5">No meetings found</td>
+            </tr>
+            """
+
+        html += "</table>"
+        return html
+
+    except Exception as e:
+        return f"<h1>Dashboard Error</h1><pre>{str(e)}</pre>", 500
+
 
 # ---------------- WEBHOOK ----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.json
-    event = data.get("event")
+    try:
+        data = request.get_json(silent=True) or {}
+        event = data.get("event", "")
 
-    conn = get_db()
-    cur = conn.cursor()
+        payload = data.get("payload", {})
+        obj = payload.get("object", {})
+        participant = obj.get("participant", {})
 
-    if event == "meeting.participant_joined":
-        p = data["payload"]["object"]["participant"]
+        meeting_topic = obj.get("topic", "Untitled Meeting")
+        external_meeting_id = str(obj.get("id", "0"))
+        participant_name = participant.get("user_name", "Unknown Participant")
 
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Ensure meeting exists
         cur.execute("""
-        INSERT INTO attendance(meeting_id, name, join_time)
-        VALUES (%s,%s,%s)
-        """, (1, p["user_name"], datetime.now()))
+            SELECT id FROM meetings
+            WHERE topic = %s
+            ORDER BY id DESC
+            LIMIT 1
+        """, (meeting_topic,))
+        existing_meeting = cur.fetchone()
 
-    if event == "meeting.participant_left":
-        p = data["payload"]["object"]["participant"]
+        if existing_meeting:
+            meeting_id = existing_meeting[0]
+        else:
+            cur.execute("""
+                INSERT INTO meetings (topic, date)
+                VALUES (%s, %s)
+                RETURNING id
+            """, (meeting_topic, datetime.now()))
+            meeting_id = cur.fetchone()[0]
 
-        cur.execute("""
-        UPDATE attendance
-        SET leave_time=%s
-        WHERE name=%s AND leave_time IS NULL
-        """, (datetime.now(), p["user_name"]))
+        if event == "meeting.participant_joined":
+            cur.execute("""
+                INSERT INTO attendance (meeting_id, name, join_time, leave_time)
+                VALUES (%s, %s, %s, NULL)
+            """, (meeting_id, participant_name, datetime.now()))
 
-    conn.commit()
-    return jsonify({"status":"ok"})
+        elif event == "meeting.participant_left":
+            cur.execute("""
+                UPDATE attendance
+                SET leave_time = %s
+                WHERE id = (
+                    SELECT id FROM attendance
+                    WHERE meeting_id = %s
+                      AND name = %s
+                      AND leave_time IS NULL
+                    ORDER BY id DESC
+                    LIMIT 1
+                )
+            """, (datetime.now(), meeting_id, participant_name))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "status": "ok",
+            "event": event,
+            "meeting_id": external_meeting_id,
+            "participant": participant_name
+        })
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 # ---------------- REPORT ----------------
 @app.route("/report/<int:meeting_id>")
 def report(meeting_id):
-    conn = get_db()
-    cur = conn.cursor()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
 
-    # ONLY COUNT JOINED USERS
-    cur.execute("""
-    SELECT name FROM attendance
-    WHERE meeting_id=%s AND join_time IS NOT NULL
-    """, (meeting_id,))
+        # Count only actual joined participants
+        cur.execute("""
+            SELECT name, join_time, leave_time
+            FROM attendance
+            WHERE meeting_id = %s
+              AND join_time IS NOT NULL
+            ORDER BY id ASC
+        """, (meeting_id,))
+        rows = cur.fetchall()
 
-    data = cur.fetchall()
-    total = len(data)
+        cur.execute("""
+            SELECT topic, date
+            FROM meetings
+            WHERE id = %s
+        """, (meeting_id,))
+        meeting = cur.fetchone()
 
-    html = f"<h1>Total Participants (Joined Only): {total}</h1>"
+        cur.close()
+        conn.close()
 
-    for d in data:
-        html += f"<div>{d[0]}</div>"
+        topic = meeting[0] if meeting else "Unknown Topic"
+        date = meeting[1] if meeting else ""
 
-    html += f"<br><a href='/pdf/{meeting_id}'>Download PDF</a>"
+        unique_joined = []
+        seen = set()
+        for row in rows:
+            name = row[0]
+            if name not in seen:
+                seen.add(name)
+                unique_joined.append(row)
 
-    return html
+        total_joined = len(seen)
+
+        html = f"""
+        <h1>Attendance Report</h1>
+        <p><strong>Topic:</strong> {topic}</p>
+        <p><strong>Date:</strong> {date}</p>
+        <p><strong>Total Participants (Joined Only):</strong> {total_joined}</p>
+        <p>
+            <a href="/pdf/{meeting_id}">Download PDF</a> |
+            <a href="/dashboard">Back to Dashboard</a>
+        </p>
+        <table border="1" cellpadding="6" cellspacing="0">
+            <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Join Time</th>
+                <th>Leave Time</th>
+            </tr>
+        """
+
+        if rows:
+            for i, row in enumerate(rows, start=1):
+                name = row[0]
+                join_time = row[1] if row[1] else ""
+                leave_time = row[2] if row[2] else ""
+                html += f"""
+                <tr>
+                    <td>{i}</td>
+                    <td>{name}</td>
+                    <td>{join_time}</td>
+                    <td>{leave_time}</td>
+                </tr>
+                """
+        else:
+            html += """
+            <tr>
+                <td colspan="4">No attendance data found</td>
+            </tr>
+            """
+
+        html += "</table>"
+        return html
+
+    except Exception as e:
+        return f"<h1>Report Error</h1><pre>{str(e)}</pre>", 500
+
 
 # ---------------- PDF ----------------
 @app.route("/pdf/<int:meeting_id>")
 def pdf(meeting_id):
-    from reportlab.platypus import SimpleDocTemplate, Table
+    try:
+        conn = get_db()
+        cur = conn.cursor()
 
-    conn = get_db()
-    cur = conn.cursor()
+        cur.execute("""
+            SELECT name, join_time, leave_time
+            FROM attendance
+            WHERE meeting_id = %s
+              AND join_time IS NOT NULL
+            ORDER BY id ASC
+        """, (meeting_id,))
+        rows = cur.fetchall()
 
-    cur.execute("SELECT name FROM attendance WHERE meeting_id=%s", (meeting_id,))
-    data = cur.fetchall()
+        cur.close()
+        conn.close()
 
-    filename = f"report_{meeting_id}.pdf"
+        filename = f"report_{meeting_id}.pdf"
+        pdf_path = os.path.join("/tmp", filename)
 
-    doc = SimpleDocTemplate(filename)
-    table = Table([["Name"]] + data)
-    doc.build([table])
+        table_data = [["Name", "Join Time", "Leave Time"]]
+        for row in rows:
+            table_data.append([
+                str(row[0]) if row[0] else "",
+                str(row[1]) if row[1] else "",
+                str(row[2]) if row[2] else ""
+            ])
 
-    return open(filename, "rb").read()
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        table = Table(table_data)
+        doc.build([table])
+
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+
+        return (
+            pdf_bytes,
+            200,
+            {
+                "Content-Type": "application/pdf",
+                "Content-Disposition": f"inline; filename={filename}"
+            }
+        )
+
+    except Exception as e:
+        return f"<h1>PDF Error</h1><pre>{str(e)}</pre>", 500
+
 
 # ---------------- LIVE DASHBOARD ----------------
 @app.route("/live")
 def live():
-    conn = get_db()
-    cur = conn.cursor()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
 
-    # joined users
-    cur.execute("SELECT name FROM attendance WHERE join_time IS NOT NULL")
-    joined = [i[0] for i in cur.fetchall()]
+        # Joined participants
+        cur.execute("""
+            SELECT DISTINCT name
+            FROM attendance
+            WHERE join_time IS NOT NULL
+            ORDER BY name ASC
+        """)
+        joined = [row[0] for row in cur.fetchall()]
 
-    # all members
-    cur.execute("SELECT name FROM members")
-    all_members = [i[0] for i in cur.fetchall()]
+        # Members table may be empty, but route must not crash
+        cur.execute("""
+            SELECT name
+            FROM members
+            ORDER BY name ASC
+        """)
+        all_members = [row[0] for row in cur.fetchall()]
 
-    not_joined = list(set(all_members) - set(joined))
+        cur.close()
+        conn.close()
 
-    html = "<h2>Joined Participants</h2>"
-    for j in joined:
-        html += f"<div style='color:green'>{j}</div>"
+        not_joined = [name for name in all_members if name not in joined]
 
-    html += "<h2>Not Joined Members</h2>"
-    for n in not_joined:
-        html += f"<div style='color:red'>{n}</div>"
+        html = """
+        <h1>Live Dashboard</h1>
+        <p><a href="/dashboard">Back to Dashboard</a></p>
+        <h2>Joined Participants</h2>
+        """
 
-    return html
+        if joined:
+            html += "<ul>"
+            for name in joined:
+                html += f"<li style='color:green;'>{name}</li>"
+            html += "</ul>"
+        else:
+            html += "<p>No one joined yet</p>"
+
+        html += "<h2>Not Joined Members</h2>"
+
+        if not_joined:
+            html += "<ul>"
+            for name in not_joined:
+                html += f"<li style='color:red;'>{name}</li>"
+            html += "</ul>"
+        else:
+            html += "<p>No members found or all members already joined</p>"
+
+        return html
+
+    except Exception as e:
+        return f"<h1>Live Dashboard Error</h1><pre>{str(e)}</pre>", 500
+
+
+# ---------------- HEALTH ----------------
+@app.route("/health")
+def health():
+    return "OK"
+
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
