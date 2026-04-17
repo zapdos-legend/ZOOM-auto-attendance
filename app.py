@@ -40,6 +40,9 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 
 
+# =========================================================
+# CONFIG
+# =========================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 REPORT_DIR = os.path.join(BASE_DIR, "attendance_reports")
@@ -73,6 +76,9 @@ app.secret_key = FLASK_SECRET_KEY
 FINALIZE_TIMERS = {}
 
 
+# =========================================================
+# DB HELPERS
+# =========================================================
 def get_sqlite_conn():
     conn = sqlite3.connect(SQLITE_DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -93,7 +99,7 @@ def is_pg():
     return USE_POSTGRES
 
 
-def qmark(sql):
+def qmark(sql: str) -> str:
     if is_pg():
         return sql.replace("?", "%s")
     return sql
@@ -167,9 +173,10 @@ def column_exists(conn, table_name, column_name):
             ) AS ok
         """, (table_name, column_name))
         return bool(cur.fetchone()["ok"])
-    cur.execute(f"PRAGMA table_info({table_name})")
-    cols = cur.fetchall()
-    return any((c["name"] if isinstance(c, sqlite3.Row) else c[1]) == column_name for c in cols)
+    else:
+        cur.execute(f"PRAGMA table_info({table_name})")
+        cols = cur.fetchall()
+        return any((c["name"] if isinstance(c, sqlite3.Row) else c[1]) == column_name for c in cols)
 
 
 def add_column_if_missing(conn, table_name, column_name, sql_type):
@@ -180,8 +187,12 @@ def add_column_if_missing(conn, table_name, column_name, sql_type):
     conn.commit()
 
 
+# =========================================================
+# USERS
+# =========================================================
 def seed_default_users(conn):
     cur = conn.cursor()
+
     defaults = [
         (ADMIN_USERNAME, ADMIN_PASSWORD, "admin"),
         (VIEWER_USERNAME, VIEWER_PASSWORD, "viewer"),
@@ -190,150 +201,22 @@ def seed_default_users(conn):
     for username, password, role in defaults:
         if not username or not password:
             continue
+
         cur.execute(qmark("SELECT id FROM users WHERE username = ?"), (username,))
         exists = cur.fetchone()
+
         if not exists:
             cur.execute(
                 qmark("INSERT INTO users (username, password, role, active) VALUES (?, ?, ?, 1)"),
                 (username, password, role),
             )
-    conn.commit()
-
-
-def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    if is_pg():
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS members (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                email TEXT,
-                whatsapp TEXT,
-                active INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        else:
+            cur.execute(
+                qmark("UPDATE users SET password = ?, role = ?, active = 1 WHERE username = ?"),
+                (password, role, username),
             )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS meetings (
-                id SERIAL PRIMARY KEY,
-                zoom_meeting_id TEXT,
-                topic TEXT,
-                meeting_date TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                total_minutes DOUBLE PRECISION,
-                csv_file TEXT,
-                pdf_file TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS attendance (
-                id SERIAL PRIMARY KEY,
-                meeting_pk INTEGER NOT NULL,
-                participant_name TEXT NOT NULL,
-                participant_email TEXT,
-                join_time TEXT,
-                leave_time TEXT,
-                duration_minutes DOUBLE PRECISION,
-                rejoins INTEGER,
-                status TEXT,
-                is_member INTEGER DEFAULT 0,
-                is_host INTEGER DEFAULT 0,
-                is_unknown INTEGER DEFAULT 0
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE,
-                password TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'viewer',
-                active INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    else:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS members (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                email TEXT,
-                whatsapp TEXT,
-                active INTEGER DEFAULT 1,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS meetings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                zoom_meeting_id TEXT,
-                topic TEXT,
-                meeting_date TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                total_minutes REAL,
-                csv_file TEXT,
-                pdf_file TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS attendance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                meeting_pk INTEGER NOT NULL,
-                participant_name TEXT NOT NULL,
-                participant_email TEXT,
-                join_time TEXT,
-                leave_time TEXT,
-                duration_minutes REAL,
-                rejoins INTEGER,
-                status TEXT,
-                is_member INTEGER DEFAULT 0,
-                is_host INTEGER DEFAULT 0,
-                is_unknown INTEGER DEFAULT 0
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'viewer',
-                active INTEGER DEFAULT 1,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
 
     conn.commit()
-
-    add_column_if_missing(conn, "attendance", "is_unknown", "INTEGER DEFAULT 0")
-    add_column_if_missing(conn, "meetings", "csv_content", "TEXT")
-    add_column_if_missing(conn, "meetings", "pdf_content_b64", "TEXT")
-    add_column_if_missing(conn, "meetings", "joined_count", "INTEGER DEFAULT 0")
-    add_column_if_missing(conn, "meetings", "present_member_count", "INTEGER DEFAULT 0")
-    add_column_if_missing(conn, "meetings", "late_member_count", "INTEGER DEFAULT 0")
-    add_column_if_missing(conn, "meetings", "absent_member_count", "INTEGER DEFAULT 0")
-    add_column_if_missing(conn, "meetings", "unknown_count", "INTEGER DEFAULT 0")
-    add_column_if_missing(conn, "meetings", "attendance_percentage", "DOUBLE PRECISION" if is_pg() else "REAL")
-
-    conn.commit()
-    seed_default_users(conn)
-    conn.close()
 
 
 def authenticate_user(username, password):
@@ -411,6 +294,167 @@ def delete_user_account(user_id):
     conn.close()
 
 
+# =========================================================
+# DB INIT
+# =========================================================
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    if is_pg():
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS members (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                email TEXT,
+                whatsapp TEXT,
+                active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS meetings (
+                id SERIAL PRIMARY KEY,
+                zoom_meeting_id TEXT,
+                topic TEXT,
+                meeting_date TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                total_minutes DOUBLE PRECISION,
+                csv_file TEXT,
+                pdf_file TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS attendance (
+                id SERIAL PRIMARY KEY,
+                meeting_pk INTEGER NOT NULL,
+                participant_name TEXT NOT NULL,
+                participant_email TEXT,
+                join_time TEXT,
+                leave_time TEXT,
+                duration_minutes DOUBLE PRECISION,
+                rejoins INTEGER,
+                status TEXT,
+                is_member INTEGER DEFAULT 0,
+                is_host INTEGER DEFAULT 0,
+                is_unknown INTEGER DEFAULT 0
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'viewer',
+                active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    else:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                email TEXT,
+                whatsapp TEXT,
+                active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS meetings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                zoom_meeting_id TEXT,
+                topic TEXT,
+                meeting_date TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                total_minutes REAL,
+                csv_file TEXT,
+                pdf_file TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS attendance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_pk INTEGER NOT NULL,
+                participant_name TEXT NOT NULL,
+                participant_email TEXT,
+                join_time TEXT,
+                leave_time TEXT,
+                duration_minutes REAL,
+                rejoins INTEGER,
+                status TEXT,
+                is_member INTEGER DEFAULT 0,
+                is_host INTEGER DEFAULT 0,
+                is_unknown INTEGER DEFAULT 0
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'viewer',
+                active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+    conn.commit()
+
+    add_column_if_missing(conn, "attendance", "is_unknown", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "meetings", "csv_content", "TEXT")
+    add_column_if_missing(conn, "meetings", "pdf_content_b64", "TEXT")
+    add_column_if_missing(conn, "meetings", "joined_count", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "meetings", "present_member_count", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "meetings", "late_member_count", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "meetings", "absent_member_count", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "meetings", "unknown_count", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "meetings", "attendance_percentage", "DOUBLE PRECISION" if is_pg() else "REAL")
+
+    # users table migration fixes
+    add_column_if_missing(conn, "users", "password", "TEXT")
+    add_column_if_missing(conn, "users", "role", "TEXT DEFAULT 'viewer'")
+    add_column_if_missing(conn, "users", "active", "INTEGER DEFAULT 1")
+    add_column_if_missing(
+        conn,
+        "users",
+        "created_at",
+        "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if is_pg() else "TEXT DEFAULT CURRENT_TIMESTAMP",
+    )
+
+    conn.commit()
+    seed_default_users(conn)
+    conn.close()
+
+
+# =========================================================
+# AUTH
+# =========================================================
 def current_user():
     return {
         "username": session.get("username", ""),
@@ -442,6 +486,9 @@ def admin_required(fn):
     return wrapper
 
 
+# =========================================================
+# SETTINGS
+# =========================================================
 def get_setting(key, default=""):
     conn = get_conn()
     cur = conn.cursor()
@@ -492,6 +539,9 @@ def current_inactivity_confirm_seconds():
     return int(get_setting("inactivity_confirm_seconds", str(INACTIVITY_CONFIRM_SECONDS)))
 
 
+# =========================================================
+# MEMBERS
+# =========================================================
 def get_members(active_only=False, search=""):
     conn = get_conn()
     cur = conn.cursor()
@@ -516,6 +566,7 @@ def add_or_update_member(name, email, whatsapp):
     name = (name or "").strip()
     email = (email or "").strip()
     whatsapp = (whatsapp or "").strip()
+
     if not name:
         raise ValueError("Name is required.")
 
@@ -538,6 +589,7 @@ def add_or_update_member(name, email, whatsapp):
                 email = excluded.email,
                 whatsapp = excluded.whatsapp
         """, (name, email, whatsapp))
+
     conn.commit()
     conn.close()
 
@@ -572,6 +624,9 @@ def import_members_from_csv(file_storage):
     return imported
 
 
+# =========================================================
+# REPORT / ATTENDANCE HELPERS
+# =========================================================
 def save_meeting_and_attendance(meeting_meta, rows, csv_file, pdf_file):
     with open(csv_file, "r", encoding="utf-8") as f:
         csv_content = f.read()
@@ -702,33 +757,16 @@ def get_meeting(meeting_id):
     return dict(row) if row else None
 
 
-def get_attendance_rows(meeting_id, member_name="", status="", topic="", date_str=""):
+def get_attendance_rows(meeting_id):
     conn = get_conn()
     cur = conn.cursor()
-
-    sql = """
+    cur.execute(qmark("""
         SELECT a.*, m.topic, m.meeting_date
         FROM attendance a
         JOIN meetings m ON a.meeting_pk = m.id
         WHERE a.meeting_pk = ?
-    """
-    params = [meeting_id]
-
-    if member_name.strip():
-        sql += " AND LOWER(a.participant_name) LIKE LOWER(?)" if not is_pg() else " AND LOWER(a.participant_name) LIKE LOWER(%s)"
-        params.append(f"%{member_name.strip()}%")
-    if status.strip():
-        sql += " AND a.status = ?" if not is_pg() else " AND a.status = %s"
-        params.append(status.strip().upper())
-    if topic.strip():
-        sql += " AND LOWER(m.topic) LIKE LOWER(?)" if not is_pg() else " AND LOWER(m.topic) LIKE LOWER(%s)"
-        params.append(f"%{topic.strip()}%")
-    if date_str.strip():
-        sql += " AND m.meeting_date = ?" if not is_pg() else " AND m.meeting_date = %s"
-        params.append(date_str.strip())
-
-    sql += " ORDER BY a.is_host DESC, a.duration_minutes DESC, a.participant_name ASC"
-    cur.execute(sql, tuple(params))
+        ORDER BY a.is_host DESC, a.duration_minutes DESC, a.participant_name ASC
+    """), (meeting_id,))
     rows = rows_to_dicts(cur.fetchall())
     conn.close()
     return rows
@@ -746,18 +784,25 @@ def delete_meeting(meeting_id):
 def load_report_from_db(meeting_id, file_type):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(qmark("SELECT csv_file, pdf_file, csv_content, pdf_content_b64 FROM meetings WHERE id = ?"), (meeting_id,))
+    cur.execute(qmark("""
+        SELECT csv_file, pdf_file, csv_content, pdf_content_b64
+        FROM meetings
+        WHERE id = ?
+    """), (meeting_id,))
     row = cur.fetchone()
     conn.close()
     if not row:
         return None
+
     row = dict(row)
+
     if file_type == "csv":
         return {
             "filename": row.get("csv_file") or f"meeting_{meeting_id}.csv",
             "content": (row.get("csv_content") or "").encode("utf-8"),
             "mimetype": "text/csv",
         }
+
     b64 = row.get("pdf_content_b64") or ""
     if not b64:
         return None
@@ -768,6 +813,9 @@ def load_report_from_db(meeting_id, file_type):
     }
 
 
+# =========================================================
+# ANALYTICS
+# =========================================================
 def get_analytics():
     conn = get_conn()
     cur = conn.cursor()
@@ -897,6 +945,9 @@ def get_analytics():
     }
 
 
+# =========================================================
+# LIVE STATE
+# =========================================================
 def default_live_state():
     return {
         "meeting": {
@@ -936,6 +987,9 @@ def member_lookup():
     return {row["name"].strip().lower(): row for row in rows}
 
 
+# =========================================================
+# ZOOM SECURITY
+# =========================================================
 def verify_zoom_signature():
     if not ZOOM_SECRET_TOKEN:
         return True
@@ -967,6 +1021,9 @@ def zoom_url_validation(payload):
     return {"plainToken": plain_token, "encryptedToken": encrypted_token}
 
 
+# =========================================================
+# ATTENDANCE LOGIC
+# =========================================================
 def ensure_live_meeting(zoom_meeting_id, topic, event_time):
     state = load_live_state()
     current_id = state["meeting"].get("zoom_meeting_id", "")
@@ -1179,6 +1236,9 @@ def finalize_meeting(zoom_meeting_id):
     reset_live_state()
 
 
+# =========================================================
+# REPORT GENERATION
+# =========================================================
 def generate_csv_report(file_path, meeting_meta, rows):
     with open(file_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -1284,21 +1344,6 @@ def generate_pdf_report(file_path, meeting_meta, rows):
         ("PADDING", (0, 0), (-1, -1), 6),
     ]))
     story.append(table)
-    story.append(Spacer(1, 12))
-
-    summary_lines = [
-        f"<b>Total Participants (Joined Only):</b> {meeting_meta['joined_count']}",
-        f"<b>Total Members:</b> {meeting_meta['total_members']}",
-        f"<b>Total Present Members:</b> {meeting_meta['total_present_members']}",
-        f"<b>Late Member Count:</b> {meeting_meta['late_member_count']}",
-        f"<b>Total Absent Members:</b> {meeting_meta['total_absent_members']}",
-        f"<b>Member Attendance Percentage:</b> {meeting_meta['member_attendance_percentage']}%",
-    ]
-    if meeting_meta["total_unknown_participants"] > 0:
-        summary_lines.append(f"<b>Total Unknown Participants:</b> {meeting_meta['total_unknown_participants']}")
-
-    for line in summary_lines:
-        story.append(Paragraph(line, normal))
 
     doc.build(story)
 
@@ -1308,7 +1353,6 @@ def generate_analytics_pdf_bytes(analytics):
     doc = SimpleDocTemplate(buffer_path, pagesize=landscape(A4), leftMargin=20, rightMargin=20, topMargin=20, bottomMargin=20)
     styles = getSampleStyleSheet()
     story = []
-
     story.append(Paragraph("Analytics Summary", styles["Title"]))
     story.append(Spacer(1, 12))
     story.append(Paragraph(f"Total Meetings: {analytics['total_meetings']}", styles["Normal"]))
@@ -1325,6 +1369,9 @@ def generate_analytics_pdf_bytes(analytics):
         return f.read()
 
 
+# =========================================================
+# UI
+# =========================================================
 BASE_HTML = """
 <!doctype html>
 <html>
@@ -1427,6 +1474,9 @@ def status_badge(status):
     return f'<span class="badge host">{status}</span>'
 
 
+# =========================================================
+# ROUTES
+# =========================================================
 @app.route("/")
 def root():
     if session.get("username"):
@@ -1937,7 +1987,7 @@ def meeting_detail(meeting_id):
     if not meeting:
         return "Meeting not found", 404
 
-    rows = get_attendance_rows(meeting_id=meeting_id)
+    rows = get_attendance_rows(meeting_id)
     joined_only_count = len({r["participant_name"].strip().lower() for r in rows if (r.get("join_time") or "-") != "-"})
 
     tr = []
@@ -2082,6 +2132,9 @@ def zoom_webhook():
     return jsonify({"message": "event ignored", "event": event})
 
 
+# =========================================================
+# STARTUP
+# =========================================================
 def safe_startup():
     try:
         init_db()
@@ -2095,4 +2148,3 @@ safe_startup()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "10000"))
     app.run(host="0.0.0.0", port=port, debug=False)
-    
