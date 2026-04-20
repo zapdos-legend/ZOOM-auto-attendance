@@ -47,7 +47,7 @@ DEFAULT_SETTINGS = {
 
 DB_INITIALIZED = False
 
-# Old DB compatibility
+# Old DB compatibility helpers
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
 
@@ -912,6 +912,16 @@ def compute_trend(rows, period_mode="custom"):
     }
 
 
+def predict_next_attendance(meeting_compare):
+    if not meeting_compare:
+        return 0
+    recent = meeting_compare[:5]
+    totals = [m.get("present", 0) + m.get("late", 0) + m.get("absent", 0) for m in recent]
+    if not totals:
+        return 0
+    return round(sum(totals) / len(totals))
+
+
 def analytics_data(filters):
     period_mode = filters.get("period_mode", "custom")
     from_date, to_date = normalize_period_dates(filters)
@@ -957,6 +967,7 @@ def analytics_data(filters):
 
             cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY full_name")
             members = cur.fetchall()
+
             cur.execute("SELECT id, meeting_uuid, topic, start_time FROM meetings ORDER BY id DESC LIMIT 300")
             meetings = cur.fetchall()
 
@@ -990,6 +1001,7 @@ def analytics_data(filters):
         by_person[key]["meetings"] += 1
         by_person[key]["minutes"] += (r.get("total_seconds") or 0) / 60
         by_person[key]["rejoins"] += (r.get("rejoin_count") or 0)
+
         if r.get("final_status") == "PRESENT":
             by_person[key]["present"] += 1
         elif r.get("final_status") == "LATE":
@@ -1008,8 +1020,10 @@ def analytics_data(filters):
                 "absent": 0,
                 "unknown": 0,
                 "total": 0,
+                "health": 0,
             },
         )
+
         by_meeting[mk]["total"] += 1
         if r.get("final_status") == "PRESENT":
             by_meeting[mk]["present"] += 1
@@ -1017,13 +1031,20 @@ def analytics_data(filters):
             by_meeting[mk]["late"] += 1
         else:
             by_meeting[mk]["absent"] += 1
+
         if not r.get("is_member"):
             by_meeting[mk]["unknown"] += 1
+
+    meeting_compare = list(by_meeting.values())[:30]
+    for m in meeting_compare:
+        total = m["total"] or 1
+        m["health"] = round(((m["present"] + m["late"]) / total) * 100, 2)
 
     top_people = sorted(by_person.values(), key=lambda x: (x["present"], x["minutes"]), reverse=True)[:5]
     low_people = sorted(by_person.values(), key=lambda x: (x["present"], -x["absent"], -x["minutes"]))[:5]
     unknown_board = sorted([v for v in by_person.values() if not v["is_member"]], key=lambda x: x["meetings"], reverse=True)[:10]
     trend = compute_trend(rows, period_mode)
+    prediction = predict_next_attendance(meeting_compare)
 
     return {
         "filters": filters,
@@ -1039,11 +1060,12 @@ def analytics_data(filters):
             "member_rows": member_rows,
             "avg_minutes": avg_minutes,
             "avg_rejoins": avg_rejoins,
+            "predicted_next_attendance": prediction,
         },
         "top_people": top_people,
         "low_people": low_people,
         "unknown_board": unknown_board,
-        "meeting_compare": list(by_meeting.values())[:30],
+        "meeting_compare": meeting_compare,
         "trend": trend,
     }
 
@@ -1118,6 +1140,7 @@ def export_pdf_bytes(title, rows, summary):
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
     ])
+
     for i in range(1, len(data)):
         status = data[i][5]
         if status == "PRESENT":
@@ -2250,7 +2273,7 @@ def analytics():
             <div class='card stat-card'><h4>Late</h4><div class='metric'>{{ data.summary.late_rows }}</div></div>
             <div class='card stat-card'><h4>Absent</h4><div class='metric'>{{ data.summary.absent_rows }}</div></div>
             <div class='card stat-card'><h4>Unknown</h4><div class='metric'>{{ data.summary.unknown_rows }}</div></div>
-            <div class='card stat-card'><h4>Avg Minutes</h4><div class='metric'>{{ data.summary.avg_minutes }}</div><div class='muted'>Avg rejoin: {{ data.summary.avg_rejoins }}</div></div>
+            <div class='card stat-card'><h4>Predicted Next</h4><div class='metric'>{{ data.summary.predicted_next_attendance }}</div><div class='muted'>simple recent average</div></div>
         </div>
 
         <br>
@@ -2261,8 +2284,8 @@ def analytics():
                 <canvas id='trendChart'></canvas>
             </div>
             <div class='card'>
-                <h3>Unknown Participants Trend</h3>
-                <canvas id='unknownChart'></canvas>
+                <h3>Status Mix</h3>
+                <canvas id='statusChart'></canvas>
             </div>
         </div>
 
@@ -2304,9 +2327,17 @@ def analytics():
             <div class='card'>
                 <h3>Meeting Comparison</h3>
                 <table>
-                    <tr><th>Meeting</th><th>Date</th><th>Present</th><th>Late</th><th>Absent</th><th>Unknown</th></tr>
+                    <tr><th>Meeting</th><th>Date</th><th>Present</th><th>Late</th><th>Absent</th><th>Unknown</th><th>Health</th></tr>
                     {% for m in data.meeting_compare %}
-                    <tr><td>{{ m.topic }}</td><td>{{ fmt_dt(m.start_time) }}</td><td>{{ m.present }}</td><td>{{ m.late }}</td><td>{{ m.absent }}</td><td>{{ m.unknown }}</td></tr>
+                    <tr>
+                        <td>{{ m.topic }}</td>
+                        <td>{{ fmt_dt(m.start_time) }}</td>
+                        <td>{{ m.present }}</td>
+                        <td>{{ m.late }}</td>
+                        <td>{{ m.absent }}</td>
+                        <td>{{ m.unknown }}</td>
+                        <td>{{ m.health }}%</td>
+                    </tr>
                     {% endfor %}
                 </table>
             </div>
@@ -2345,13 +2376,20 @@ def analytics():
             options:{responsive:true}
         });
 
-        new Chart(document.getElementById('unknownChart'), {
-            type:'bar',
+        new Chart(document.getElementById('statusChart'), {
+            type:'doughnut',
             data:{
-                labels: {{ trend.labels|tojson }},
-                datasets:[{label:'Unknown', data: {{ trend.unknown|tojson }} }]
+                labels:['Present','Late','Absent','Unknown'],
+                datasets:[{
+                    data:[
+                        {{ data.summary.present_rows }},
+                        {{ data.summary.late_rows }},
+                        {{ data.summary.absent_rows }},
+                        {{ data.summary.unknown_rows }}
+                    ]
+                }]
             },
-            options:{responsive:true, plugins:{legend:{display:true}}}
+            options:{responsive:true}
         });
         </script>
         """,
