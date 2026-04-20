@@ -201,6 +201,96 @@ def ensure_index(conn, index_name: str, create_sql: str):
             cur.execute(create_sql)
 
 
+def fix_database_compatibility():
+    with db() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema='public'
+                              AND table_name='members'
+                              AND column_name='active'
+                              AND data_type IN ('integer', 'smallint', 'bigint', 'numeric')
+                        ) THEN
+                            ALTER TABLE members
+                            ALTER COLUMN active TYPE BOOLEAN
+                            USING (active::boolean);
+                        END IF;
+                    END$$;
+                    """
+                )
+
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema='public'
+                              AND table_name='users'
+                              AND column_name='is_active'
+                              AND data_type IN ('integer', 'smallint', 'bigint', 'numeric')
+                        ) THEN
+                            ALTER TABLE users
+                            ALTER COLUMN is_active TYPE BOOLEAN
+                            USING (is_active::boolean);
+                        END IF;
+                    END$$;
+                    """
+                )
+
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema='public'
+                              AND table_name='meetings'
+                              AND column_name='start_time'
+                              AND data_type='text'
+                        ) THEN
+                            ALTER TABLE meetings
+                            ALTER COLUMN start_time TYPE TIMESTAMPTZ
+                            USING NULLIF(start_time, '')::timestamptz;
+                        END IF;
+                    END$$;
+                    """
+                )
+
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema='public'
+                              AND table_name='meetings'
+                              AND column_name='end_time'
+                              AND data_type='text'
+                        ) THEN
+                            ALTER TABLE meetings
+                            ALTER COLUMN end_time TYPE TIMESTAMPTZ
+                            USING NULLIF(end_time, '')::timestamptz;
+                        END IF;
+                    END$$;
+                    """
+                )
+
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+
 def get_setting(name, cast=str):
     value = DEFAULT_SETTINGS.get(name)
     with db() as conn:
@@ -1515,6 +1605,7 @@ def startup_once():
     global DB_INITIALIZED
     if not DB_INITIALIZED:
         init_db()
+        fix_database_compatibility()
         DB_INITIALIZED = True
 
 
