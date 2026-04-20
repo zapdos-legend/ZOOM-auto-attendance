@@ -1,70 +1,54 @@
-# ZOOM-auto-attendance
-# Zoom Attendance Platform
+# Final Zoom Attendance Platform
 
-A real-time Zoom attendance tracking and analytics platform built with Flask, Neon/PostgreSQL, and Zoom webhooks.
+This is the cleaned single-codebase version of your Zoom attendance platform.
 
-## Main features
+## What this version solves
 
-- Zoom webhook based join/leave tracking
-- Live dashboard for current meeting
-- Active members not joined yet
-- Meeting-wise attendance reports
-- PDF and CSV report generation
-- Old PDF/CSV fallback from database after restart
-- Analytics dashboard
-- Member search and management
-- Date and topic based meeting filters
-- Login system
-- Role-based access (admin / viewer)
-- CSV import for members
-- Configurable attendance rules
+- one final stable Flask app
+- no missing template dependency
+- one database schema only
+- Zoom webhook join/leave/end handling
+- member vs unknown participant distinction
+- joined-only participant counting
+- live page with active members not yet joined
+- login + role-based access
+- CSV member import
+- configurable attendance rules
+- meeting list + persistent report export from database
+- analytics filters + CSV/PDF export
+- activity log
 
----
+## Files
 
-## Tech stack
+- `app.py` -> full application
+- `requirements.txt` -> dependencies
+- `Procfile` -> Render start command
+- `runtime.txt` -> Python version
+- `.env.example` -> environment variable sample
 
-- Flask
-- PostgreSQL / Neon
-- Render
-- ReportLab
-- Chart.js
-- HTML/CSS
+## Render start command
 
----
+Already covered by Procfile:
 
-## Project structure
+```bash
+gunicorn app:app
+```
 
-- `app.py` → main application
-- `requirements.txt` → Python dependencies
-- `runtime.txt` → Python version for Render
-- `Procfile` → Render start command
-- `.env.example` → environment variables example
+## Important route
 
----
+Set your Zoom webhook URL to:
 
-## Environment variables
-
-Set these in Render:
-
-- `DATABASE_URL`
-- `FLASK_SECRET_KEY`
-- `TIMEZONE_NAME`
-- `ADMIN_USERNAME`
-- `ADMIN_PASSWORD`
-- `VIEWER_USERNAME`
-- `VIEWER_PASSWORD`
-- `PRESENT_PERCENTAGE`
-- `LATE_COUNT_AS_PRESENT_PERCENTAGE`
-- `LATE_THRESHOLD_MINUTES`
-- `INACTIVITY_CONFIRM_SECONDS`
-- `ZOOM_SECRET_TOKEN`
-- `HOST_NAME_HINT`
-
----
+```text
+https://YOUR-RENDER-APP.onrender.com/zoom/webhook
+```
 
 ## Local run
 
-Install dependencies:
-
 ```bash
 pip install -r requirements.txt
+python app.py
+```
+
+## Notes
+
+Reports persist because meetings and attendance stay in PostgreSQL. CSV and PDF are generated from stored data whenever you open/export them, so restart does not remove report capability.
