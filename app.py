@@ -1,10 +1,10 @@
+
 import csv
 import hashlib
 import hmac
 import io
-import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import wraps
 from zoneinfo import ZoneInfo
 
@@ -21,7 +21,6 @@ from flask import (
     url_for,
 )
 from psycopg.rows import dict_row
-from psycopg import sql
 import psycopg
 from dotenv import load_dotenv
 from reportlab.lib import colors
@@ -44,6 +43,8 @@ DEFAULT_SETTINGS = {
     "late_threshold_minutes": os.getenv("LATE_THRESHOLD_MINUTES", "10"),
     "meeting_finalize_seconds": os.getenv("INACTIVITY_CONFIRM_SECONDS", "30"),
 }
+
+DB_INITIALIZED = False
 
 
 def now_local() -> datetime:
@@ -68,13 +69,15 @@ def parse_dt(value):
 def fmt_dt(dt):
     if not dt:
         return "-"
-    return parse_dt(dt).strftime("%d-%m-%Y %H:%M:%S")
+    parsed = parse_dt(dt)
+    return parsed.strftime("%d-%m-%Y %H:%M:%S") if parsed else "-"
 
 
 def fmt_time(dt):
     if not dt:
         return "-"
-    return parse_dt(dt).strftime("%H:%M:%S")
+    parsed = parse_dt(dt)
+    return parsed.strftime("%H:%M:%S") if parsed else "-"
 
 
 def slugify(text: str) -> str:
@@ -88,6 +91,67 @@ def db():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is missing")
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def table_exists(conn, table_name: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = %s
+            ) AS exists_flag
+            """,
+            (table_name,),
+        )
+        row = cur.fetchone()
+        return bool(row and row["exists_flag"])
+
+
+def column_exists(conn, table_name: str, column_name: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = %s
+                  AND column_name = %s
+            ) AS exists_flag
+            """,
+            (table_name, column_name),
+        )
+        row = cur.fetchone()
+        return bool(row and row["exists_flag"])
+
+
+def ensure_column(conn, table_name: str, column_name: str, definition_sql: str):
+    if not column_exists(conn, table_name, column_name):
+        with conn.cursor() as cur:
+            cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition_sql}")
+
+
+def ensure_index(conn, index_name: str, create_sql: str):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_indexes
+                WHERE schemaname = 'public' AND indexname = %s
+            ) AS exists_flag
+            """,
+            (index_name,),
+        )
+        row = cur.fetchone()
+        if not row or not row["exists_flag"]:
+            cur.execute(create_sql)
 
 
 def get_setting(name, cast=str):
@@ -108,74 +172,53 @@ def set_setting(name, value):
                 """
                 INSERT INTO settings(key, value)
                 VALUES (%s, %s)
-                ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value
+                ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()
                 """,
                 (name, str(value)),
             )
         conn.commit()
 
 
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+def sync_special_user(conn, username: str, password: str, role: str):
+    """
+    Ensures the env-configured admin/viewer account always exists and password stays synced.
+    Old users are not removed and continue to work.
+    """
+    if not username or not password:
+        return
 
+    username = username.strip()
+    password_hash = hash_password(password)
 
-def column_exists(cur, table_name: str, column_name: str) -> bool:
-    cur.execute(
-        """
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = %s AND column_name = %s
-        """,
-        (table_name, column_name),
-    )
-    return cur.fetchone() is not None
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE username=%s", (username,))
+        existing = cur.fetchone()
 
-
-def ensure_column(cur, table_name: str, column_name: str, definition: str):
-    if not column_exists(cur, table_name, column_name):
-        cur.execute(
-            sql.SQL("ALTER TABLE {} ADD COLUMN {} {}").format(
-                sql.Identifier(table_name),
-                sql.Identifier(column_name),
-                sql.SQL(definition),
+        if existing:
+            needs_update = (
+                existing["password_hash"] != password_hash
+                or existing["role"] != role
+                or not existing["is_active"]
             )
-        )
-
-
-def ensure_unique_constraint(cur, table_name: str, constraint_name: str, columns: list[str]):
-    cur.execute(
-        """
-        SELECT 1
-        FROM information_schema.table_constraints
-        WHERE table_schema = 'public' AND table_name = %s AND constraint_name = %s
-        """,
-        (table_name, constraint_name),
-    )
-    if cur.fetchone():
-        return
-    cur.execute(
-        sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} UNIQUE ({})").format(
-            sql.Identifier(table_name),
-            sql.Identifier(constraint_name),
-            sql.SQL(", ").join(sql.Identifier(c) for c in columns),
-        )
-    )
-
-
-def ensure_index(cur, index_name: str, table_name: str, columns: list[str]):
-    cur.execute(
-        "SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname=%s",
-        (index_name,),
-    )
-    if cur.fetchone():
-        return
-    cur.execute(
-        sql.SQL("CREATE INDEX {} ON {} ({})").format(
-            sql.Identifier(index_name),
-            sql.Identifier(table_name),
-            sql.SQL(", ").join(sql.Identifier(c) for c in columns),
-        )
-    )
+            if needs_update:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET password_hash=%s,
+                        role=%s,
+                        is_active=TRUE
+                    WHERE username=%s
+                    """,
+                    (password_hash, role, username),
+                )
+        else:
+            cur.execute(
+                """
+                INSERT INTO users(username, password_hash, role, is_active)
+                VALUES (%s, %s, %s, TRUE)
+                """,
+                (username, password_hash, role),
+            )
 
 
 def init_db():
@@ -244,10 +287,10 @@ def init_db():
                 """
                 CREATE TABLE IF NOT EXISTS attendance (
                     id SERIAL PRIMARY KEY,
-                    meeting_uuid TEXT,
-                    participant_name TEXT,
+                    meeting_uuid TEXT NOT NULL,
+                    participant_name TEXT NOT NULL,
                     participant_email TEXT,
-                    participant_key TEXT,
+                    participant_key TEXT NOT NULL,
                     first_join TIMESTAMPTZ,
                     last_leave TIMESTAMPTZ,
                     total_seconds INTEGER NOT NULL DEFAULT 0,
@@ -259,7 +302,8 @@ def init_db():
                     status TEXT DEFAULT 'JOINED',
                     final_status TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(meeting_uuid, participant_key)
                 )
                 """
             )
@@ -275,91 +319,101 @@ def init_db():
                 """
             )
 
-            # Schema hardening for older deployed databases
-            ensure_column(cur, "users", "username", "TEXT")
-            ensure_column(cur, "users", "password_hash", "TEXT")
-            ensure_column(cur, "users", "role", "TEXT NOT NULL DEFAULT 'viewer'")
-            ensure_column(cur, "users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE")
-            ensure_column(cur, "users", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        # Hardening for older deployed schema versions
+        if table_exists(conn, "users"):
+            ensure_column(conn, "users", "role", "TEXT NOT NULL DEFAULT 'viewer'")
+            ensure_column(conn, "users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE")
+            ensure_column(conn, "users", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 
-            ensure_column(cur, "settings", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        if table_exists(conn, "settings"):
+            ensure_column(conn, "settings", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 
-            ensure_column(cur, "members", "full_name", "TEXT")
-            ensure_column(cur, "members", "email", "TEXT")
-            ensure_column(cur, "members", "phone", "TEXT")
-            ensure_column(cur, "members", "tags", "TEXT")
-            ensure_column(cur, "members", "active", "BOOLEAN NOT NULL DEFAULT TRUE")
-            ensure_column(cur, "members", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        if table_exists(conn, "members"):
+            ensure_column(conn, "members", "email", "TEXT")
+            ensure_column(conn, "members", "phone", "TEXT")
+            ensure_column(conn, "members", "tags", "TEXT")
+            ensure_column(conn, "members", "active", "BOOLEAN NOT NULL DEFAULT TRUE")
+            ensure_column(conn, "members", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 
-            ensure_column(cur, "meetings", "meeting_uuid", "TEXT")
-            ensure_column(cur, "meetings", "meeting_id", "TEXT")
-            ensure_column(cur, "meetings", "topic", "TEXT")
-            ensure_column(cur, "meetings", "host_name", "TEXT")
-            ensure_column(cur, "meetings", "start_time", "TIMESTAMPTZ")
-            ensure_column(cur, "meetings", "end_time", "TIMESTAMPTZ")
-            ensure_column(cur, "meetings", "status", "TEXT NOT NULL DEFAULT 'live'")
-            ensure_column(cur, "meetings", "source", "TEXT NOT NULL DEFAULT 'webhook'")
-            ensure_column(cur, "meetings", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
-            ensure_column(cur, "meetings", "finalized_at", "TIMESTAMPTZ")
-            ensure_column(cur, "meetings", "unique_participants", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(cur, "meetings", "member_participants", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(cur, "meetings", "unknown_participants", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(cur, "meetings", "present_count", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(cur, "meetings", "late_count", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(cur, "meetings", "absent_count", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(cur, "meetings", "host_present", "BOOLEAN NOT NULL DEFAULT FALSE")
-            ensure_column(cur, "meetings", "notes", "TEXT")
+        if table_exists(conn, "meetings"):
+            ensure_column(conn, "meetings", "meeting_uuid", "TEXT")
+            ensure_column(conn, "meetings", "meeting_id", "TEXT")
+            ensure_column(conn, "meetings", "topic", "TEXT")
+            ensure_column(conn, "meetings", "host_name", "TEXT")
+            ensure_column(conn, "meetings", "start_time", "TIMESTAMPTZ")
+            ensure_column(conn, "meetings", "end_time", "TIMESTAMPTZ")
+            ensure_column(conn, "meetings", "status", "TEXT NOT NULL DEFAULT 'live'")
+            ensure_column(conn, "meetings", "source", "TEXT NOT NULL DEFAULT 'webhook'")
+            ensure_column(conn, "meetings", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            ensure_column(conn, "meetings", "finalized_at", "TIMESTAMPTZ")
+            ensure_column(conn, "meetings", "unique_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "member_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "unknown_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "present_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "late_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "absent_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "host_present", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "meetings", "notes", "TEXT")
 
-            ensure_column(cur, "attendance", "meeting_uuid", "TEXT")
-            ensure_column(cur, "attendance", "participant_name", "TEXT")
-            ensure_column(cur, "attendance", "participant_email", "TEXT")
-            ensure_column(cur, "attendance", "participant_key", "TEXT")
-            ensure_column(cur, "attendance", "first_join", "TIMESTAMPTZ")
-            ensure_column(cur, "attendance", "last_leave", "TIMESTAMPTZ")
-            ensure_column(cur, "attendance", "total_seconds", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(cur, "attendance", "rejoin_count", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(cur, "attendance", "current_join", "TIMESTAMPTZ")
-            ensure_column(cur, "attendance", "is_member", "BOOLEAN NOT NULL DEFAULT FALSE")
-            ensure_column(cur, "attendance", "member_id", "INTEGER")
-            ensure_column(cur, "attendance", "is_host", "BOOLEAN NOT NULL DEFAULT FALSE")
-            ensure_column(cur, "attendance", "status", "TEXT DEFAULT 'JOINED'")
-            ensure_column(cur, "attendance", "final_status", "TEXT")
-            ensure_column(cur, "attendance", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
-            ensure_column(cur, "attendance", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        if table_exists(conn, "attendance"):
+            ensure_column(conn, "attendance", "meeting_uuid", "TEXT")
+            ensure_column(conn, "attendance", "participant_name", "TEXT")
+            ensure_column(conn, "attendance", "participant_email", "TEXT")
+            ensure_column(conn, "attendance", "participant_key", "TEXT")
+            ensure_column(conn, "attendance", "first_join", "TIMESTAMPTZ")
+            ensure_column(conn, "attendance", "last_leave", "TIMESTAMPTZ")
+            ensure_column(conn, "attendance", "total_seconds", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "attendance", "rejoin_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "attendance", "current_join", "TIMESTAMPTZ")
+            ensure_column(conn, "attendance", "is_member", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "attendance", "member_id", "INTEGER")
+            ensure_column(conn, "attendance", "is_host", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "attendance", "status", "TEXT DEFAULT 'JOINED'")
+            ensure_column(conn, "attendance", "final_status", "TEXT")
+            ensure_column(conn, "attendance", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            ensure_column(conn, "attendance", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 
-            ensure_column(cur, "activity_log", "username", "TEXT")
-            ensure_column(cur, "activity_log", "action", "TEXT")
-            ensure_column(cur, "activity_log", "details", "TEXT")
-            ensure_column(cur, "activity_log", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        if table_exists(conn, "activity_log"):
+            ensure_column(conn, "activity_log", "username", "TEXT")
+            ensure_column(conn, "activity_log", "action", "TEXT")
+            ensure_column(conn, "activity_log", "details", "TEXT")
+            ensure_column(conn, "activity_log", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 
-            ensure_index(cur, "idx_attendance_meeting_uuid", "attendance", ["meeting_uuid"])
-            ensure_index(cur, "idx_attendance_member_id", "attendance", ["member_id"])
-            ensure_index(cur, "idx_meetings_status", "meetings", ["status"])
+        ensure_index(
+            conn,
+            "idx_attendance_meeting_uuid",
+            "CREATE INDEX idx_attendance_meeting_uuid ON attendance(meeting_uuid)",
+        )
+        ensure_index(
+            conn,
+            "idx_attendance_member_id",
+            "CREATE INDEX idx_attendance_member_id ON attendance(member_id)",
+        )
+        ensure_index(
+            conn,
+            "idx_meetings_status",
+            "CREATE INDEX idx_meetings_status ON meetings(status)",
+        )
 
+        with conn.cursor() as cur:
             for key, value in DEFAULT_SETTINGS.items():
                 cur.execute(
-                    "INSERT INTO settings(key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+                    """
+                    INSERT INTO settings(key, value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (key) DO NOTHING
+                    """,
                     (key, value),
                 )
 
-            admin_username = os.getenv("ADMIN_USERNAME", "admin")
-            admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
-            viewer_username = os.getenv("VIEWER_USERNAME", "viewer")
-            viewer_password = os.getenv("VIEWER_PASSWORD", "viewer123")
+        admin_username = os.getenv("ADMIN_USERNAME", "admin").strip()
+        admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+        viewer_username = os.getenv("VIEWER_USERNAME", "viewer").strip()
+        viewer_password = os.getenv("VIEWER_PASSWORD", "viewer123")
 
-            cur.execute("SELECT id FROM users WHERE username=%s", (admin_username,))
-            if not cur.fetchone():
-                cur.execute(
-                    "INSERT INTO users(username, password_hash, role) VALUES (%s, %s, 'admin')",
-                    (admin_username, hash_password(admin_password)),
-                )
+        sync_special_user(conn, admin_username, admin_password, "admin")
+        sync_special_user(conn, viewer_username, viewer_password, "viewer")
 
-            cur.execute("SELECT id FROM users WHERE username=%s", (viewer_username,))
-            if not cur.fetchone():
-                cur.execute(
-                    "INSERT INTO users(username, password_hash, role) VALUES (%s, %s, 'viewer')",
-                    (viewer_username, hash_password(viewer_password)),
-                )
         conn.commit()
 
 
@@ -593,6 +647,7 @@ def finalize_meeting(meeting_uuid, ended_at=None):
                 delay_minutes = None
                 if first_join:
                     delay_minutes = max((first_join - start_time).total_seconds() / 60.0, 0)
+
                 if total >= required_present:
                     final_status = "PRESENT"
                     present_count += 1
@@ -767,7 +822,10 @@ def analytics_data(filters):
             by_person[key]["absent"] += 1
 
         mk = r["meeting_uuid"]
-        by_meeting.setdefault(mk, {"topic": r["topic"], "start_time": r["start_time"], "present": 0, "late": 0, "absent": 0, "unknown": 0})
+        by_meeting.setdefault(
+            mk,
+            {"topic": r["topic"], "start_time": r["start_time"], "present": 0, "late": 0, "absent": 0, "unknown": 0},
+        )
         if r["final_status"] == "PRESENT":
             by_meeting[mk]["present"] += 1
         elif r["final_status"] == "LATE":
@@ -779,7 +837,11 @@ def analytics_data(filters):
 
     top_people = sorted(by_person.values(), key=lambda x: (x["present"], x["minutes"]), reverse=True)[:5]
     low_people = sorted(by_person.values(), key=lambda x: (x["present"], -x["absent"], -x["minutes"]))[:5]
-    unknown_board = sorted([v for k, v in by_person.items() if any(r["participant_name"] == k and not r["is_member"] for r in rows)], key=lambda x: x["meetings"], reverse=True)[:10]
+    unknown_board = sorted(
+        [v for k, v in by_person.items() if any(r["participant_name"] == k and not r["is_member"] for r in rows)],
+        key=lambda x: x["meetings"],
+        reverse=True,
+    )[:10]
 
     return {
         "filters": filters,
@@ -915,12 +977,21 @@ BASE_HTML = """
         .btn.success { background:var(--ok); }
         .btn.warn { background:var(--warn); color:black; }
         .btn.danger { background:var(--danger); }
-        .flash { padding:12px 14px; border-radius:14px; margin-bottom:12px; font-weight:700; }
-        .flash.success { background:#dcfce7; color:#166534; }
-        .flash.error { background:#fee2e2; color:#991b1b; }
+        .flash { padding:12px 14px; border-radius:14px; margin-bottom:12px; font-weight:700; border:1px solid transparent; }
+        .flash.success { background:#dcfce7; color:#166534; border-color:#86efac; }
+        .flash.error { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
         .login-box { max-width:420px; margin:80px auto; }
         .small { font-size:12px; }
         .section-title { margin:0 0 14px 0; }
+        .login-error {
+            background:#fee2e2;
+            color:#991b1b;
+            border:1px solid #fca5a5;
+            border-radius:12px;
+            padding:10px 12px;
+            margin:10px 0 14px 0;
+            font-weight:700;
+        }
     </style>
 </head>
 <body>
@@ -973,42 +1044,67 @@ def page(title, body, active="home"):
 
 @app.before_request
 def startup_once():
-    if app.config.get("_DB_READY"):
-        return
-    init_db()
-    app.config["_DB_READY"] = True
+    global DB_INITIALIZED
+    if not DB_INITIALIZED:
+        init_db()
+        DB_INITIALIZED = True
+
+
+@app.route("/", methods=["GET", "HEAD"])
+def index():
+    if session.get("user_id"):
+        return redirect(url_for("home"))
+    return redirect(url_for("login"))
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    login_error = None
+
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
+
         with db() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM users WHERE username=%s AND is_active=TRUE", (username,))
+                cur.execute(
+                    "SELECT * FROM users WHERE username=%s AND is_active=TRUE",
+                    (username,),
+                )
                 user = cur.fetchone()
+
         if user and user["password_hash"] == hash_password(password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["role"] = user["role"]
             log_activity("login", f"{username} logged in")
             return redirect(url_for("home"))
-        flash("Invalid username or password.", "error")
 
-    body = """
-    <div class='login-box card'>
-        <h2>Login</h2>
-        <p class='muted'>Use your admin or viewer account.</p>
-        <form method='post'>
-            <label>Username</label>
-            <input name='username' required>
-            <label>Password</label>
-            <input type='password' name='password' required>
-            <button type='submit'>Login</button>
-        </form>
-    </div>
-    """
+        login_error = "Invalid username or password"
+        flash("Invalid username or password", "error")
+
+    body = render_template_string(
+        """
+        <div class='login-box card'>
+            <h2>Login</h2>
+            <p class='muted'>Use your admin or viewer account.</p>
+
+            {% if login_error %}
+                <div class='login-error'>{{ login_error }}</div>
+            {% endif %}
+
+            <form method='post'>
+                <label>Username</label>
+                <input name='username' required value='{{ request.form.get("username", "") if request.method == "POST" else "" }}'>
+                <label>Password</label>
+                <input type='password' name='password' required>
+                <button type='submit'>Login</button>
+            </form>
+        </div>
+        """,
+        login_error=login_error,
+        request=request,
+    )
     return render_template_string(BASE_HTML, title="Login", body=body, nav=[], active="")
 
 
@@ -1016,13 +1112,6 @@ def login():
 def logout():
     log_activity("logout", f"{session.get('username')} logged out")
     session.clear()
-    return redirect(url_for("login"))
-
-
-@app.route("/", methods=["GET", "HEAD"])
-def index():
-    if session.get("user_id"):
-        return redirect(url_for("home"))
     return redirect(url_for("login"))
 
 
@@ -1253,7 +1342,10 @@ def members():
     with db() as conn:
         with conn.cursor() as cur:
             if q:
-                cur.execute("SELECT * FROM members WHERE lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s ORDER BY active DESC, full_name", (f"%{q}%", f"%{q}%"))
+                cur.execute(
+                    "SELECT * FROM members WHERE lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s ORDER BY active DESC, full_name",
+                    (f"%{q}%", f"%{q}%"),
+                )
             else:
                 cur.execute("SELECT * FROM members ORDER BY active DESC, full_name")
             rows = cur.fetchall()
@@ -1718,7 +1810,18 @@ def zoom_webhook():
     if event in ("meeting.participant_joined", "meeting.participant_left"):
         meeting = ensure_meeting(obj)
         meeting_uuid = meeting["meeting_uuid"]
-        event_time = parse_dt(participant.get("join_time") or participant.get("leave_time") or payload.get("event_ts") / 1000 if isinstance(payload.get("event_ts"), (int, float)) else now_local())
+
+        event_raw = (
+            participant.get("join_time")
+            or participant.get("leave_time")
+            or (
+                datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME)).isoformat()
+                if isinstance(payload.get("event_ts"), (int, float))
+                else None
+            )
+        )
+        event_time = parse_dt(event_raw) or now_local()
+
         participant_name = participant.get("user_name") or participant.get("participant_user_name") or participant.get("name") or "Unknown Participant"
         participant_email = participant.get("email") or participant.get("user_email") or None
         update_participant(meeting_uuid, participant_name, participant_email, event_time, "join" if event.endswith("joined") else "leave")
