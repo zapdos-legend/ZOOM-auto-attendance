@@ -1,4 +1,3 @@
-
 import csv
 import hashlib
 import hmac
@@ -180,10 +179,6 @@ def set_setting(name, value):
 
 
 def sync_special_user(conn, username: str, password: str, role: str):
-    """
-    Ensures the env-configured admin/viewer account always exists and password stays synced.
-    Old users are not removed and continue to work.
-    """
     if not username or not password:
         return
 
@@ -319,7 +314,6 @@ def init_db():
                 """
             )
 
-        # Hardening for older deployed schema versions
         if table_exists(conn, "users"):
             ensure_column(conn, "users", "role", "TEXT NOT NULL DEFAULT 'viewer'")
             ensure_column(conn, "users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE")
@@ -736,7 +730,7 @@ def refresh_live_meeting_summary(meeting_uuid):
 def read_live_snapshot():
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM meetings WHERE status='live' ORDER BY COALESCE(start_time, created_at) DESC LIMIT 1")
+            cur.execute("SELECT * FROM meetings WHERE status='live' ORDER BY id DESC LIMIT 1")
             meeting = cur.fetchone()
             if not meeting:
                 return None
@@ -787,7 +781,7 @@ def analytics_data(filters):
         FROM attendance a
         JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
         WHERE {' AND '.join(where)}
-        ORDER BY m.start_time DESC, a.participant_name ASC
+        ORDER BY m.id DESC, a.participant_name ASC
     """
 
     with db() as conn:
@@ -797,7 +791,7 @@ def analytics_data(filters):
 
             cur.execute("SELECT * FROM members WHERE active=TRUE ORDER BY full_name")
             members = cur.fetchall()
-            cur.execute("SELECT meeting_uuid, topic, start_time FROM meetings ORDER BY COALESCE(start_time, created_at) DESC LIMIT 200")
+            cur.execute("SELECT meeting_uuid, topic, start_time FROM meetings ORDER BY id DESC LIMIT 200")
             meetings = cur.fetchall()
 
     total_rows = len(rows)
@@ -1133,7 +1127,7 @@ def home():
             late = cur.fetchone()["c"]
             cur.execute("SELECT COUNT(*) AS c FROM attendance WHERE final_status='ABSENT'")
             absent = cur.fetchone()["c"]
-            cur.execute("SELECT * FROM meetings ORDER BY COALESCE(start_time, created_at) DESC LIMIT 5")
+            cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT 5")
             recent_meetings = cur.fetchall()
             cur.execute("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT 8")
             recent_activity = cur.fetchall()
@@ -1675,7 +1669,7 @@ def export_analytics_pdf():
 def meetings():
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM meetings ORDER BY COALESCE(start_time, created_at) DESC LIMIT 200")
+            cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT 200")
             rows = cur.fetchall()
     body = render_template_string(
         """
