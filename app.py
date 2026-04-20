@@ -3,11 +3,13 @@ import hashlib
 import hmac
 import io
 import os
+import time
 from collections import defaultdict
-from datetime import datetime, timedelta, date
+from datetime import date, datetime, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
 
+from dotenv import load_dotenv
 from flask import (
     Flask,
     Response,
@@ -20,9 +22,8 @@ from flask import (
     session,
     url_for,
 )
-from psycopg.rows import dict_row
 import psycopg
-from dotenv import load_dotenv
+from psycopg.rows import dict_row
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
@@ -39,15 +40,15 @@ ZOOM_SECRET_TOKEN = os.getenv("ZOOM_SECRET_TOKEN", "")
 HOST_NAME_HINT = os.getenv("HOST_NAME_HINT", "host").strip().lower()
 
 DEFAULT_SETTINGS = {
-    "present_percentage": os.getenv("PRESENT_PERCENTAGE", "70"),
-    "late_count_as_present_percentage": os.getenv("LATE_COUNT_AS_PRESENT_PERCENTAGE", "40"),
+    "present_percentage": os.getenv("PRESENT_PERCENTAGE", "75"),
+    "late_count_as_present_percentage": os.getenv("LATE_COUNT_AS_PRESENT_PERCENTAGE", "30"),
     "late_threshold_minutes": os.getenv("LATE_THRESHOLD_MINUTES", "10"),
     "meeting_finalize_seconds": os.getenv("INACTIVITY_CONFIRM_SECONDS", "30"),
 }
 
 DB_INITIALIZED = False
+LAST_STALE_CHECK_TS = 0
 
-# Old DB compatibility helpers
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
 
@@ -113,6 +114,10 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
+def is_truthy(value) -> bool:
+    return str(value) in ("1", "True", "true", "t")
+
+
 def table_exists(conn, table_name: str) -> bool:
     with conn.cursor() as cur:
         cur.execute(
@@ -120,7 +125,7 @@ def table_exists(conn, table_name: str) -> bool:
             SELECT EXISTS (
                 SELECT 1
                 FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = %s
+                WHERE table_schema='public' AND table_name=%s
             ) AS exists_flag
             """,
             (table_name,),
@@ -136,15 +141,41 @@ def column_exists(conn, table_name: str, column_name: str) -> bool:
             SELECT EXISTS (
                 SELECT 1
                 FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = %s
-                  AND column_name = %s
+                WHERE table_schema='public' AND table_name=%s AND column_name=%s
             ) AS exists_flag
             """,
             (table_name, column_name),
         )
         row = cur.fetchone()
         return bool(row and row["exists_flag"])
+
+
+def column_data_type(conn, table_name: str, column_name: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name=%s AND column_name=%s
+            """,
+            (table_name, column_name),
+        )
+        row = cur.fetchone()
+        return (row["data_type"] if row else "").lower()
+
+
+def db_true_value(conn, table_name: str, column_name: str):
+    dtype = column_data_type(conn, table_name, column_name)
+    if dtype in ("integer", "smallint", "bigint", "numeric"):
+        return 1
+    return True
+
+
+def db_false_value(conn, table_name: str, column_name: str):
+    dtype = column_data_type(conn, table_name, column_name)
+    if dtype in ("integer", "smallint", "bigint", "numeric"):
+        return 0
+    return False
 
 
 def ensure_column(conn, table_name: str, column_name: str, definition_sql: str):
@@ -160,7 +191,7 @@ def ensure_index(conn, index_name: str, create_sql: str):
             SELECT EXISTS (
                 SELECT 1
                 FROM pg_indexes
-                WHERE schemaname = 'public' AND indexname = %s
+                WHERE schemaname='public' AND indexname=%s
             ) AS exists_flag
             """,
             (index_name,),
@@ -201,6 +232,7 @@ def sync_special_user(conn, username: str, password: str, role: str):
 
     username = username.strip()
     password_hash = hash_password(password)
+    true_val = db_true_value(conn, "users", "is_active")
 
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM users WHERE username=%s", (username,))
@@ -210,27 +242,63 @@ def sync_special_user(conn, username: str, password: str, role: str):
             needs_update = (
                 existing["password_hash"] != password_hash
                 or existing["role"] != role
-                or str(existing["is_active"]) not in ("1", "True", "true", "t")
+                or not is_truthy(existing["is_active"])
             )
             if needs_update:
                 cur.execute(
-                    """
-                    UPDATE users
-                    SET password_hash=%s,
-                        role=%s,
-                        is_active=TRUE
-                    WHERE username=%s
-                    """,
-                    (password_hash, role, username),
+                    "UPDATE users SET password_hash=%s, role=%s, is_active=%s WHERE username=%s",
+                    (password_hash, role, true_val, username),
                 )
         else:
             cur.execute(
-                """
-                INSERT INTO users(username, password_hash, role, is_active)
-                VALUES (%s, %s, %s, TRUE)
-                """,
-                (username, password_hash, role),
+                "INSERT INTO users(username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)",
+                (username, password_hash, role, true_val),
             )
+
+
+def maybe_finalize_stale_live_meetings(force=False):
+    global LAST_STALE_CHECK_TS
+    now_ts = time.time()
+    if not force and now_ts - LAST_STALE_CHECK_TS < 12:
+        return
+    LAST_STALE_CHECK_TS = now_ts
+    finalize_stale_live_meetings()
+
+
+def finalize_stale_live_meetings():
+    finalize_seconds = get_setting("meeting_finalize_seconds", int)
+    threshold_time = now_local() - timedelta(seconds=finalize_seconds)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM meetings WHERE status='live' ORDER BY id DESC")
+            meetings = cur.fetchall()
+
+            for meeting in meetings:
+                meeting_uuid = meeting.get("meeting_uuid")
+                if not meeting_uuid:
+                    continue
+
+                cur.execute(
+                    "SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY updated_at DESC NULLS LAST, id DESC",
+                    (meeting_uuid,),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    continue
+
+                anybody_live = any(r.get("current_join") is not None for r in rows)
+                if anybody_live:
+                    continue
+
+                last_activity = None
+                for r in rows:
+                    candidate = parse_dt(r.get("updated_at")) or parse_dt(r.get("last_leave")) or parse_dt(r.get("first_join"))
+                    if candidate and (last_activity is None or candidate > last_activity):
+                        last_activity = candidate
+
+                if last_activity and last_activity <= threshold_time:
+                    finalize_meeting(meeting_uuid, last_activity)
 
 
 def init_db():
@@ -397,11 +465,7 @@ def init_db():
         with conn.cursor() as cur:
             for key, value in DEFAULT_SETTINGS.items():
                 cur.execute(
-                    """
-                    INSERT INTO settings(key, value)
-                    VALUES (%s, %s)
-                    ON CONFLICT (key) DO NOTHING
-                    """,
+                    "INSERT INTO settings(key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                     (key, value),
                 )
 
@@ -428,29 +492,6 @@ def log_activity(action, details=""):
             conn.commit()
     except Exception:
         pass
-
-
-def login_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if "user_id" not in session:
-            return redirect(url_for("login"))
-        return fn(*args, **kwargs)
-    return wrapper
-
-
-def admin_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if session.get("role") != "admin":
-            flash("Admin access required.", "error")
-            return redirect(url_for("home"))
-        return fn(*args, **kwargs)
-    return wrapper
-
-
-def can_edit_users():
-    return session.get("role") == "admin"
 
 
 def find_member(name: str, email: str | None = None):
@@ -482,79 +523,6 @@ def participant_key(name, email=None):
     return f"name::{(name or '').strip().lower()}"
 
 
-def is_row_active(value) -> bool:
-    return str(value) in ("1", "True", "true", "t")
-
-
-def safe_int(value, default=0):
-    try:
-        return int(value)
-    except Exception:
-        return default
-
-
-def normalize_period_dates(filters):
-    period_mode = filters.get("period_mode", "custom")
-    from_date = filters.get("from_date", "")
-    to_date = filters.get("to_date", "")
-
-    today = today_local()
-
-    if period_mode == "day":
-        from_date = today.isoformat()
-        to_date = today.isoformat()
-    elif period_mode == "week":
-        start = today - timedelta(days=today.weekday())
-        from_date = start.isoformat()
-        to_date = today.isoformat()
-    elif period_mode == "month":
-        start = today.replace(day=1)
-        from_date = start.isoformat()
-        to_date = today.isoformat()
-    elif period_mode == "year":
-        start = today.replace(month=1, day=1)
-        from_date = start.isoformat()
-        to_date = today.isoformat()
-
-    return from_date, to_date
-
-
-def finalize_stale_live_meetings():
-    finalize_seconds = get_setting("meeting_finalize_seconds", int)
-    threshold_time = now_local() - timedelta(seconds=finalize_seconds)
-
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM meetings WHERE status='live' ORDER BY id DESC")
-            meetings = cur.fetchall()
-
-            for meeting in meetings:
-                meeting_uuid = meeting.get("meeting_uuid")
-                if not meeting_uuid:
-                    continue
-
-                cur.execute(
-                    "SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY updated_at DESC NULLS LAST, id DESC",
-                    (meeting_uuid,),
-                )
-                rows = cur.fetchall()
-                if not rows:
-                    continue
-
-                anybody_live = any(r.get("current_join") is not None for r in rows)
-                if anybody_live:
-                    continue
-
-                last_activity = None
-                for r in rows:
-                    candidate = parse_dt(r.get("updated_at")) or parse_dt(r.get("last_leave")) or parse_dt(r.get("first_join"))
-                    if candidate and (last_activity is None or candidate > last_activity):
-                        last_activity = candidate
-
-                if last_activity and last_activity <= threshold_time:
-                    finalize_meeting(meeting_uuid, last_activity)
-
-
 def ensure_meeting(payload_object):
     meeting_uuid = str(payload_object.get("uuid") or payload_object.get("id") or "")
     meeting_id = str(payload_object.get("id") or "")
@@ -583,7 +551,7 @@ def ensure_meeting(payload_object):
 
 
 def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type):
-    is_host = HOST_NAME_HINT and HOST_NAME_HINT in (participant_name or "").strip().lower()
+    is_host = bool(HOST_NAME_HINT and HOST_NAME_HINT in (participant_name or "").strip().lower())
     member = find_member(participant_name, participant_email)
     key = participant_key(participant_name, participant_email)
 
@@ -698,7 +666,6 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
 def classify_row_for_meeting(row, start_time, end_time):
     present_percentage = get_setting("present_percentage", int)
     late_pct = get_setting("late_count_as_present_percentage", int)
-    late_threshold_minutes = get_setting("late_threshold_minutes", int)
 
     total = row["total_seconds"] or 0
     if row["current_join"]:
@@ -708,19 +675,13 @@ def classify_row_for_meeting(row, start_time, end_time):
     required_present = meeting_seconds * present_percentage / 100.0
     required_late = meeting_seconds * late_pct / 100.0
 
-    first_join = parse_dt(row["first_join"])
-    delay_minutes = None
-    if first_join:
-        delay_minutes = max((first_join - start_time).total_seconds() / 60.0, 0)
-
+    if row.get("is_host"):
+        return "HOST", total
     if total >= required_present:
-        final_status = "PRESENT"
-    elif total >= required_late or (delay_minutes is not None and delay_minutes > late_threshold_minutes and total > 0):
-        final_status = "LATE"
-    else:
-        final_status = "ABSENT"
-
-    return final_status, total
+        return "PRESENT", total
+    if total >= required_late:
+        return "LATE", total
+    return "ABSENT", total
 
 
 def finalize_meeting(meeting_uuid, ended_at=None):
@@ -753,7 +714,7 @@ def finalize_meeting(meeting_uuid, ended_at=None):
                     present_count += 1
                 elif final_status == "LATE":
                     late_count += 1
-                else:
+                elif final_status == "ABSENT":
                     absent_count += 1
 
                 if row["is_member"]:
@@ -807,7 +768,6 @@ def finalize_meeting(meeting_uuid, ended_at=None):
             )
             updated = cur.fetchone()
         conn.commit()
-
     return updated
 
 
@@ -835,25 +795,34 @@ def refresh_live_meeting_summary(meeting_uuid):
         conn.commit()
 
 
+def get_live_status_for_row(row, meeting_start):
+    now_dt = now_local()
+    start_dt = parse_dt(meeting_start) or now_dt
+    status, total = classify_row_for_meeting(row, start_dt, now_dt)
+    return status, total
+
+
 def read_live_snapshot():
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM meetings WHERE status='live' ORDER BY id DESC LIMIT 1")
+            cur.execute(
+                """
+                SELECT *
+                FROM meetings
+                WHERE status='live' AND meeting_uuid IS NOT NULL AND meeting_uuid <> ''
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            )
             meeting = cur.fetchone()
+
             if not meeting:
                 return None
 
             meeting_uuid = meeting.get("meeting_uuid")
-            if not meeting_uuid:
-                return {
-                    "meeting": meeting,
-                    "participants": [],
-                    "active_now": [],
-                    "not_joined_members": [],
-                }
-
             cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
             participants = cur.fetchall()
+
             cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY full_name")
             members = cur.fetchall()
 
@@ -867,6 +836,32 @@ def read_live_snapshot():
         "active_now": active_now,
         "not_joined_members": not_joined_members,
     }
+
+
+def normalize_period_dates(filters):
+    period_mode = filters.get("period_mode", "custom")
+    from_date = filters.get("from_date", "")
+    to_date = filters.get("to_date", "")
+
+    today = today_local()
+
+    if period_mode == "day":
+        from_date = today.isoformat()
+        to_date = today.isoformat()
+    elif period_mode == "week":
+        start = today - timedelta(days=today.weekday())
+        from_date = start.isoformat()
+        to_date = today.isoformat()
+    elif period_mode == "month":
+        start = today.replace(day=1)
+        from_date = start.isoformat()
+        to_date = today.isoformat()
+    elif period_mode == "year":
+        start = today.replace(month=1, day=1)
+        from_date = start.isoformat()
+        to_date = today.isoformat()
+
+    return from_date, to_date
 
 
 def compute_trend(rows, period_mode="custom"):
@@ -891,24 +886,19 @@ def compute_trend(rows, period_mode="custom"):
             buckets[label]["present"] += 1
         elif status == "LATE":
             buckets[label]["late"] += 1
-        else:
+        elif status == "ABSENT":
             buckets[label]["absent"] += 1
 
         if not r.get("is_member"):
             buckets[label]["unknown"] += 1
 
     labels = list(buckets.keys())
-    present = [buckets[k]["present"] for k in labels]
-    late = [buckets[k]["late"] for k in labels]
-    absent = [buckets[k]["absent"] for k in labels]
-    unknown = [buckets[k]["unknown"] for k in labels]
-
     return {
         "labels": labels,
-        "present": present,
-        "late": late,
-        "absent": absent,
-        "unknown": unknown,
+        "present": [buckets[k]["present"] for k in labels],
+        "late": [buckets[k]["late"] for k in labels],
+        "absent": [buckets[k]["absent"] for k in labels],
+        "unknown": [buckets[k]["unknown"] for k in labels],
     }
 
 
@@ -917,9 +907,7 @@ def predict_next_attendance(meeting_compare):
         return 0
     recent = meeting_compare[:5]
     totals = [m.get("present", 0) + m.get("late", 0) + m.get("absent", 0) for m in recent]
-    if not totals:
-        return 0
-    return round(sum(totals) / len(totals))
+    return round(sum(totals) / len(totals)) if totals else 0
 
 
 def analytics_data(filters):
@@ -968,7 +956,15 @@ def analytics_data(filters):
             cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY full_name")
             members = cur.fetchall()
 
-            cur.execute("SELECT id, meeting_uuid, topic, start_time FROM meetings ORDER BY id DESC LIMIT 300")
+            cur.execute(
+                """
+                SELECT id, meeting_uuid, topic, start_time
+                FROM meetings
+                WHERE meeting_uuid IS NOT NULL AND meeting_uuid <> ''
+                ORDER BY id DESC
+                LIMIT 300
+                """
+            )
             meetings = cur.fetchall()
 
     total_rows = len(rows)
@@ -1006,13 +1002,14 @@ def analytics_data(filters):
             by_person[key]["present"] += 1
         elif r.get("final_status") == "LATE":
             by_person[key]["late"] += 1
-        else:
+        elif r.get("final_status") == "ABSENT":
             by_person[key]["absent"] += 1
 
         mk = r.get("meeting_uuid") or f"meeting_{r.get('meeting_row_id')}"
         by_meeting.setdefault(
             mk,
             {
+                "meeting_uuid": r.get("meeting_uuid"),
                 "topic": r.get("topic") or "Untitled Meeting",
                 "start_time": r.get("start_time"),
                 "present": 0,
@@ -1029,7 +1026,7 @@ def analytics_data(filters):
             by_meeting[mk]["present"] += 1
         elif r.get("final_status") == "LATE":
             by_meeting[mk]["late"] += 1
-        else:
+        elif r.get("final_status") == "ABSENT":
             by_meeting[mk]["absent"] += 1
 
         if not r.get("is_member"):
@@ -1073,35 +1070,39 @@ def analytics_data(filters):
 def export_csv_bytes(rows):
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow([
-        "Meeting Topic",
-        "Meeting ID",
-        "Meeting Start",
-        "Participant",
-        "Email",
-        "Member",
-        "Host",
-        "First Join",
-        "Last Leave",
-        "Duration (Min)",
-        "Rejoins",
-        "Final Status",
-    ])
+    writer.writerow(
+        [
+            "Meeting Topic",
+            "Meeting ID",
+            "Meeting Start",
+            "Participant",
+            "Email",
+            "Member",
+            "Host",
+            "First Join",
+            "Last Leave",
+            "Duration (Min)",
+            "Rejoins",
+            "Final Status",
+        ]
+    )
     for r in rows:
-        writer.writerow([
-            r.get("topic") or "",
-            r.get("meeting_id") or "",
-            fmt_dt(r.get("start_time")),
-            r.get("participant_name") or "",
-            r.get("participant_email") or "",
-            "Yes" if r.get("is_member") else "No",
-            "Yes" if r.get("is_host") else "No",
-            fmt_dt(r.get("first_join")),
-            fmt_dt(r.get("last_leave")),
-            mins_from_seconds(r.get("total_seconds")),
-            r.get("rejoin_count") or 0,
-            r.get("final_status") or "-",
-        ])
+        writer.writerow(
+            [
+                r.get("topic") or "",
+                r.get("meeting_id") or "",
+                fmt_dt(r.get("start_time")),
+                r.get("participant_name") or "",
+                r.get("participant_email") or "",
+                "Yes" if r.get("is_member") else "No",
+                "Yes" if r.get("is_host") else "No",
+                fmt_dt(r.get("first_join")),
+                fmt_dt(r.get("last_leave")),
+                mins_from_seconds(r.get("total_seconds")),
+                r.get("rejoin_count") or 0,
+                r.get("final_status") or "-",
+            ]
+        )
     return out.getvalue().encode("utf-8")
 
 
@@ -1123,23 +1124,27 @@ def export_pdf_bytes(title, rows, summary):
 
     data = [["Topic", "Participant", "Member", "Duration", "Rejoins", "Status"]]
     for r in rows[:150]:
-        data.append([
-            (r.get("topic") or "")[:20],
-            (r.get("participant_name") or "")[:18],
-            "Yes" if r.get("is_member") else "No",
-            str(mins_from_seconds(r.get("total_seconds"))),
-            str(r.get("rejoin_count") or 0),
-            r.get("final_status") or "-",
-        ])
+        data.append(
+            [
+                (r.get("topic") or "")[:20],
+                (r.get("participant_name") or "")[:18],
+                "Yes" if r.get("is_member") else "No",
+                str(mins_from_seconds(r.get("total_seconds"))),
+                str(r.get("rejoin_count") or 0),
+                r.get("final_status") or "-",
+            ]
+        )
 
     table = Table(data, repeatRows=1)
-    style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-    ])
+    style = TableStyle(
+        [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ]
+    )
 
     for i in range(1, len(data)):
         status = data[i][5]
@@ -1147,7 +1152,7 @@ def export_pdf_bytes(title, rows, summary):
             style.add("TEXTCOLOR", (5, i), (5, i), colors.green)
         elif status == "LATE":
             style.add("TEXTCOLOR", (5, i), (5, i), colors.orange)
-        else:
+        elif status == "ABSENT":
             style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
 
     table.setStyle(style)
@@ -1183,7 +1188,8 @@ BASE_HTML = """
             --nav2:#0f172a;
             --bg1:#eef4ff;
             --bg2:#f8fbff;
-            --white:#ffffff;
+            --card:#ffffff;
+            --card2:rgba(255,255,255,.94);
             --text:#0f172a;
             --muted:#64748b;
             --primary:#2563eb;
@@ -1192,8 +1198,27 @@ BASE_HTML = """
             --warn:#f59e0b;
             --danger:#dc2626;
             --line:#e5e7eb;
+            --soft:#eff6ff;
             --shadow:0 14px 32px rgba(15,23,42,.10);
             --radius:22px;
+        }
+        body.dark{
+            --nav:#020617;
+            --nav2:#0f172a;
+            --bg1:#0b1220;
+            --bg2:#121a2c;
+            --card:#0f172a;
+            --card2:rgba(15,23,42,.92);
+            --text:#e5eefc;
+            --muted:#9fb2d3;
+            --primary:#3b82f6;
+            --primary2:#1d4ed8;
+            --success:#22c55e;
+            --warn:#fbbf24;
+            --danger:#ef4444;
+            --line:#23314a;
+            --soft:#16233b;
+            --shadow:0 14px 32px rgba(2,6,23,.35);
         }
         *{box-sizing:border-box}
         body{
@@ -1201,35 +1226,40 @@ BASE_HTML = """
             font-family:Arial,sans-serif;
             color:var(--text);
             background:linear-gradient(135deg,var(--bg1),var(--bg2));
+            transition:background .25s ease,color .25s ease;
+        }
+        .fade-in{animation:fadeIn .35s ease}
+        @keyframes fadeIn{
+            from{opacity:.0;transform:translateY(6px)}
+            to{opacity:1;transform:none}
         }
         .topbar{
             background:linear-gradient(90deg,var(--nav),var(--nav2));
             color:#fff;
-            padding:14px 22px;
+            padding:14px 20px;
             display:flex;
             justify-content:space-between;
             align-items:center;
             position:sticky;
             top:0;
-            z-index:20;
+            z-index:30;
             box-shadow:0 4px 18px rgba(2,6,23,.22);
         }
-        .brand{
-            font-size:18px;
-            font-weight:800;
-            letter-spacing:.2px;
-        }
-        .wrap{display:flex;min-height:calc(100vh - 58px)}
+        .brand{font-size:17px;font-weight:800;letter-spacing:.2px}
+        .wrap{display:flex;min-height:calc(100vh - 56px)}
         .sidebar{
-            width:250px;
-            background:rgba(255,255,255,.82);
+            width:210px;
+            background:rgba(255,255,255,.72);
             backdrop-filter:blur(10px);
-            padding:18px;
-            border-right:1px solid #dbe5f0;
+            padding:16px 14px;
+            border-right:1px solid rgba(148,163,184,.25);
         }
+        body.dark .sidebar{background:rgba(8,15,30,.72)}
         .sidebar a{
-            display:block;
-            padding:12px 14px;
+            display:flex;
+            align-items:center;
+            gap:8px;
+            padding:12px 12px;
             color:var(--text);
             text-decoration:none;
             border-radius:14px;
@@ -1242,19 +1272,34 @@ BASE_HTML = """
             color:#1d4ed8;
             transform:translateX(2px);
         }
-        .content{flex:1;padding:24px}
+        body.dark .sidebar a:hover, body.dark .sidebar a.active{
+            background:#18365f;
+            color:#bfdbfe;
+        }
+        .content{flex:1;padding:20px}
         .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
         .card{
-            background:rgba(255,255,255,.94);
-            border:1px solid rgba(255,255,255,.85);
+            background:var(--card2);
+            border:1px solid rgba(148,163,184,.16);
             border-radius:var(--radius);
             padding:18px;
             box-shadow:var(--shadow);
+            color:var(--text);
         }
-        .card h3,.card h4{margin:0 0 10px 0}
+        .hero{
+            background:linear-gradient(135deg,#0f172a,#1d4ed8);
+            color:#fff;
+            border-radius:26px;
+            padding:20px;
+            box-shadow:var(--shadow);
+            margin-bottom:18px;
+        }
+        body.dark .hero{background:linear-gradient(135deg,#0b1220,#1d4ed8)}
+        .hero h2,.card h3,.card h4{margin:0 0 10px 0}
         .metric{font-size:30px;font-weight:800;margin-top:8px}
         .muted{color:var(--muted);font-size:13px}
-        .row{display:flex;gap:12px;flex-wrap:wrap}
+        .row{display:flex;gap:10px;flex-wrap:wrap}
+        .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
         .badge{
             display:inline-block;
             padding:6px 10px;
@@ -1267,34 +1312,56 @@ BASE_HTML = """
         .danger{background:#fee2e2;color:#991b1b}
         .info{background:#dbeafe;color:#1d4ed8}
         .gray{background:#e2e8f0;color:#334155}
+        body.dark .ok{background:#123524;color:#86efac}
+        body.dark .warn{background:#4a3414;color:#fde68a}
+        body.dark .danger{background:#4a1d1d;color:#fecaca}
+        body.dark .info{background:#18365f;color:#bfdbfe}
+        body.dark .gray{background:#1f2937;color:#cbd5e1}
+        .table-wrap{
+            width:100%;
+            overflow-x:auto;
+            border-radius:16px;
+            border:1px solid var(--line);
+            background:var(--card);
+        }
         table{
             width:100%;
             border-collapse:collapse;
-            background:#fff;
-            border-radius:14px;
-            overflow:hidden;
+            min-width:720px;
+            background:transparent;
         }
         th,td{
-            padding:10px 12px;
+            padding:11px 12px;
             border-bottom:1px solid var(--line);
             text-align:left;
             font-size:14px;
             vertical-align:top;
         }
         th{
-            background:#eff6ff;
-            position:sticky;
-            top:58px;
-            z-index:1;
+            background:var(--soft);
+            font-weight:800;
+            color:var(--text);
+            position:static;
+        }
+        td.long{
+            word-break:break-word;
+            white-space:normal;
+            min-width:240px;
         }
         input,select,textarea{
             width:100%;
-            padding:10px 12px;
+            padding:11px 12px;
             border-radius:12px;
             border:1px solid #cbd5e1;
             margin-top:6px;
             margin-bottom:10px;
             background:#fff;
+            color:#0f172a;
+        }
+        body.dark input, body.dark select, body.dark textarea{
+            background:#0b1220;
+            color:#e5eefc;
+            border-color:#334155;
         }
         textarea{min-height:90px;resize:vertical}
         button,.btn{
@@ -1306,13 +1373,19 @@ BASE_HTML = """
             cursor:pointer;
             font-weight:800;
             text-decoration:none;
-            display:inline-block;
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            white-space:nowrap;
+            transition:transform .15s ease, box-shadow .15s ease;
             box-shadow:0 8px 18px rgba(37,99,235,.18);
         }
+        button:hover,.btn:hover{transform:translateY(-1px)}
         .btn.secondary{background:linear-gradient(180deg,#334155,#1f2937)}
         .btn.success{background:linear-gradient(180deg,#22c55e,#15803d)}
         .btn.warn{background:linear-gradient(180deg,#fbbf24,#d97706);color:#111827}
         .btn.danger{background:linear-gradient(180deg,#ef4444,#b91c1c)}
+        .btn.small{padding:8px 10px;font-size:12px}
         .flash{
             padding:12px 14px;
             border-radius:14px;
@@ -1322,8 +1395,34 @@ BASE_HTML = """
         }
         .flash.success{background:#dcfce7;color:#166534;border-color:#86efac}
         .flash.error{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
-        .login-box{max-width:430px;margin:80px auto}
-        .section-title{margin:0 0 14px 0}
+        .login-wrap{
+            min-height:100vh;
+            display:grid;
+            place-items:center;
+            padding:20px;
+        }
+        .login-box{
+            width:100%;
+            max-width:980px;
+            display:grid;
+            grid-template-columns:1.1fr .9fr;
+            gap:22px;
+            align-items:stretch;
+        }
+        .login-side{
+            background:linear-gradient(135deg,#0f172a,#1d4ed8);
+            color:#fff;
+            border-radius:28px;
+            padding:30px;
+            box-shadow:var(--shadow);
+        }
+        .login-card{
+            background:var(--card2);
+            border:1px solid rgba(148,163,184,.18);
+            border-radius:28px;
+            padding:28px;
+            box-shadow:var(--shadow);
+        }
         .login-error{
             background:#fee2e2;
             color:#991b1b;
@@ -1343,55 +1442,41 @@ BASE_HTML = """
             word-break:break-word;
             font-family:monospace;
         }
-        .hero{
-            background:linear-gradient(135deg,#0f172a,#1d4ed8);
-            color:#fff;
-            border-radius:26px;
-            padding:22px;
-            box-shadow:var(--shadow);
-            margin-bottom:18px;
-        }
-        .hero h2{margin:0 0 8px 0}
-        .toolbar{
-            display:flex;
-            gap:10px;
-            flex-wrap:wrap;
-            margin-bottom:14px;
-        }
-        .stat-card{
-            position:relative;
-            overflow:hidden;
-        }
+        .stat-card{position:relative;overflow:hidden}
         .stat-card::after{
             content:"";
             position:absolute;
-            right:-18px;
-            top:-18px;
-            width:78px;
-            height:78px;
-            border-radius:50%;
+            right:-18px;top:-18px;
+            width:78px;height:78px;border-radius:50%;
             background:rgba(37,99,235,.08);
         }
-        .small{font-size:12px}
+        .top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+        .kpi-note{font-size:12px;color:var(--muted)}
+        @media (max-width: 920px){
+            .wrap{display:block}
+            .sidebar{width:100%;border-right:none;border-bottom:1px solid rgba(148,163,184,.25)}
+            .login-box{grid-template-columns:1fr}
+        }
     </style>
 </head>
-<body>
+<body class="{{ 'dark' if session.get('theme') == 'dark' else 'light' }}">
 {% if session.get('user_id') %}
 <div class="topbar">
     <div class="brand">Zoom Attendance Platform</div>
-    <div class="row" style="align-items:center">
+    <div class="top-actions">
         <span class="badge info">{{ session.get('username') }} ({{ session.get('role') }})</span>
-        <a class="btn secondary" href="{{ url_for('profile') }}">Profile</a>
-        <a class="btn secondary" href="{{ url_for('logout') }}">Logout</a>
+        <a class="btn secondary small" href="{{ url_for('toggle_theme') }}">🌓 {{ 'Light' if session.get('theme') == 'dark' else 'Dark' }} Mode</a>
+        <a class="btn secondary small" href="{{ url_for('profile') }}">Profile</a>
+        <a class="btn secondary small" href="{{ url_for('logout') }}">Logout</a>
     </div>
 </div>
 <div class="wrap">
-    <div class="sidebar">
+    <div class="sidebar fade-in">
         {% for item in nav %}
             <a href="{{ item.href }}" class="{% if item.key == active %}active{% endif %}">{{ item.label }}</a>
         {% endfor %}
     </div>
-    <div class="content">
+    <div class="content fade-in">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
                 <div class="flash {{ category }}">{{ message }}</div>
@@ -1401,8 +1486,8 @@ BASE_HTML = """
     </div>
 </div>
 {% else %}
-<div class="content">
-{{ body|safe }}
+<div class="login-wrap fade-in">
+    {{ body|safe }}
 </div>
 {% endif %}
 </body>
@@ -1431,18 +1516,13 @@ def startup_once():
     if not DB_INITIALIZED:
         init_db()
         DB_INITIALIZED = True
-    if request.endpoint not in ("static",):
-        try:
-            finalize_stale_live_meetings()
-        except Exception:
-            pass
 
 
 @app.errorhandler(Exception)
 def handle_any_error(e):
     body = render_template_string(
         """
-        <div class="card">
+        <div class="card" style="max-width:1100px;margin:10px auto">
             <h2>Something went wrong</h2>
             <p class="muted">Copy this error and send it to me.</p>
             <div class="debug-box">{{ error_text }}</div>
@@ -1453,6 +1533,13 @@ def handle_any_error(e):
         error_text=str(e),
     )
     return render_template_string(BASE_HTML, title="Error", body=body, nav=[], active=""), 500
+
+
+@app.route("/toggle-theme")
+@login_required
+def toggle_theme():
+    session["theme"] = "light" if session.get("theme") == "dark" else "dark"
+    return redirect(request.referrer or url_for("home"))
 
 
 @app.route("/", methods=["GET", "HEAD"])
@@ -1482,6 +1569,8 @@ def login():
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["role"] = user["role"]
+            if "theme" not in session:
+                session["theme"] = "light"
             log_activity("login", f"{username} logged in")
             return redirect(url_for("home"))
 
@@ -1490,19 +1579,36 @@ def login():
 
     body = render_template_string(
         """
-        <div class='login-box card'>
-            <h2>Login</h2>
-            <p class='muted'>Use your admin or viewer account.</p>
-            {% if login_error %}
-                <div class='login-error'>{{ login_error }}</div>
-            {% endif %}
-            <form method='post'>
-                <label>Username</label>
-                <input name='username' required value='{{ request.form.get("username", "") if request.method == "POST" else "" }}'>
-                <label>Password</label>
-                <input type='password' name='password' required>
-                <button type='submit'>Login</button>
-            </form>
+        <div class="login-box">
+            <div class="login-side">
+                <h1 style="margin:0 0 14px 0">Zoom Attendance Platform</h1>
+                <p style="color:#dbeafe;line-height:1.7">
+                    Track Zoom meeting attendance with live monitoring, member vs non-member distinction,
+                    strong analytics, exportable reports, role-based login, and professional dashboard UI.
+                </p>
+                <div class="row" style="margin-top:20px">
+                    <span class="badge info">Live Tracking</span>
+                    <span class="badge ok">Reports</span>
+                    <span class="badge warn">Analytics</span>
+                    <span class="badge gray">Role Based Access</span>
+                </div>
+            </div>
+            <div class="login-card">
+                <h2 style="margin-top:0">Welcome Back</h2>
+                <p class="muted">Login to continue to your attendance dashboard.</p>
+
+                {% if login_error %}
+                    <div class='login-error'>{{ login_error }}</div>
+                {% endif %}
+
+                <form method='post'>
+                    <label>Username</label>
+                    <input name='username' required value='{{ request.form.get("username", "") if request.method == "POST" else "" }}'>
+                    <label>Password</label>
+                    <input type='password' name='password' required>
+                    <button type='submit' style="width:100%">Login</button>
+                </form>
+            </div>
         </div>
         """,
         login_error=login_error,
@@ -1557,7 +1663,7 @@ def profile():
         """
         <div class="hero">
             <h2>My Profile</h2>
-            <div class="muted" style="color:#cbd5e1">Manage your password safely.</div>
+            <div class="muted" style="color:#cbd5e1">Manage your account and password safely.</div>
         </div>
         <div class="grid">
             <div class="card">
@@ -1586,6 +1692,8 @@ def profile():
 @app.route("/home")
 @login_required
 def home():
+    maybe_finalize_stale_live_meetings()
+
     live_info = read_live_snapshot()
 
     with db() as conn:
@@ -1628,9 +1736,9 @@ def home():
 
         <div class='grid'>
             <div class='card stat-card'><h4>Total Meetings</h4><div class='metric'>{{ total_meetings }}</div></div>
-            <div class='card stat-card'><h4>Active Members</h4><div class='metric'>{{ active_members }}</div><div class='muted'>Total members: {{ total_members }}</div></div>
-            <div class='card stat-card'><h4>Attendance Health</h4><div class='metric'>{{ health }}%</div><div class='muted'>Present + Late across finalized records</div></div>
-            <div class='card stat-card'><h4>Live Status</h4><div class='metric'>{{ 'LIVE' if live_info else 'IDLE' }}</div><div class='muted'>Current monitoring status</div></div>
+            <div class='card stat-card'><h4>Active Members</h4><div class='metric'>{{ active_members }}</div><div class='kpi-note'>Total members: {{ total_members }}</div></div>
+            <div class='card stat-card'><h4>Attendance Health</h4><div class='metric'>{{ health }}%</div><div class='kpi-note'>Present + Late across finalized records</div></div>
+            <div class='card stat-card'><h4>Live Status</h4><div class='metric'>{{ 'LIVE' if live_info else 'IDLE' }}</div><div class='kpi-note'>Current monitoring status</div></div>
         </div>
 
         <br>
@@ -1670,31 +1778,35 @@ def home():
         <div class='grid'>
             <div class='card'>
                 <h3>Recent Meetings</h3>
-                <table>
-                    <tr><th>Date</th><th>Topic</th><th>Status</th><th>Participants</th></tr>
-                    {% for m in recent_meetings %}
-                    <tr>
-                        <td>{{ fmt_dt(m.start_time) }}</td>
-                        <td>{{ m.topic or 'Untitled Meeting' }}</td>
-                        <td>{{ m.status or '-' }}</td>
-                        <td>{{ m.unique_participants or 0 }}</td>
-                    </tr>
-                    {% endfor %}
-                </table>
+                <div class="table-wrap">
+                    <table>
+                        <tr><th>Date</th><th>Topic</th><th>Status</th><th>Participants</th></tr>
+                        {% for m in recent_meetings %}
+                        <tr>
+                            <td>{{ fmt_dt(m.start_time) }}</td>
+                            <td>{{ m.topic or 'Untitled Meeting' }}</td>
+                            <td>{{ m.status or '-' }}</td>
+                            <td>{{ m.unique_participants or 0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
             </div>
 
             <div class='card'>
                 <h3>Recent Activity</h3>
-                <table>
-                    <tr><th>When</th><th>Action</th><th>Details</th></tr>
-                    {% for a in recent_activity %}
-                    <tr>
-                        <td>{{ fmt_dt(a.created_at) }}</td>
-                        <td>{{ a.action }}</td>
-                        <td>{{ a.details }}</td>
-                    </tr>
-                    {% endfor %}
-                </table>
+                <div class="table-wrap">
+                    <table>
+                        <tr><th>When</th><th>Action</th><th>Details</th></tr>
+                        {% for a in recent_activity %}
+                        <tr>
+                            <td>{{ fmt_dt(a.created_at) }}</td>
+                            <td>{{ a.action }}</td>
+                            <td class="long">{{ a.details }}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
             </div>
         </div>
         """,
@@ -1714,7 +1826,9 @@ def home():
 @app.route("/live")
 @login_required
 def live():
+    maybe_finalize_stale_live_meetings()
     info = read_live_snapshot()
+
     if not info:
         body = """
         <div class='hero'>
@@ -1727,24 +1841,36 @@ def live():
 
     meeting = info["meeting"]
     participants = info["participants"]
-    active_now = info["active_now"]
     not_joined = info["not_joined_members"]
-    joined_only_count = len(participants)
-    host_now = "Yes" if any(p.get("is_host") and p.get("current_join") is not None for p in participants) else "No"
+
+    rows_for_live = []
+    start_dt = parse_dt(meeting.get("start_time")) or now_local()
+    for p in participants:
+        live_status, live_total = get_live_status_for_row(p, start_dt)
+        rows_for_live.append(
+            {
+                "participant_name": p.get("participant_name"),
+                "first_join": p.get("first_join"),
+                "last_leave": p.get("last_leave"),
+                "duration_min": mins_from_seconds(live_total),
+                "rejoin_count": p.get("rejoin_count") or 0,
+                "status": live_status,
+            }
+        )
 
     body = render_template_string(
         """
-        <meta http-equiv='refresh' content='15'>
+        <meta http-equiv='refresh' content='2'>
         <div class="hero">
             <h2>Live Dashboard</h2>
-            <div class="muted" style="color:#cbd5e1">Auto refresh every 15 seconds.</div>
+            <div class="muted" style="color:#cbd5e1">Auto refresh every 2 seconds.</div>
         </div>
 
         <div class='grid'>
             <div class='card stat-card'><h4>Topic</h4><div class='metric' style='font-size:22px'>{{ meeting.topic or 'Untitled Meeting' }}</div></div>
             <div class='card stat-card'><h4>Meeting ID</h4><div class='metric'>{{ meeting.meeting_id or '-' }}</div></div>
-            <div class='card stat-card'><h4>Joined Only Count</h4><div class='metric'>{{ joined_only_count }}</div></div>
-            <div class='card stat-card'><h4>Active Now</h4><div class='metric'>{{ active_now|length }}</div><div class='muted'>Host present: {{ host_now }}</div></div>
+            <div class='card stat-card'><h4>Joined Only Count</h4><div class='metric'>{{ live_rows|length }}</div></div>
+            <div class='card stat-card'><h4>Active Now</h4><div class='metric'>{{ active_now }}</div><div class='kpi-note'>Host present: {{ host_now }}</div></div>
         </div>
 
         <br>
@@ -1752,51 +1878,53 @@ def live():
         <div class='grid'>
             <div class='card'>
                 <h3>Live Participants</h3>
-                <table>
-                    <tr><th>Name</th><th>Type</th><th>Status</th><th>Duration (Min)</th><th>Rejoins</th><th>Joined At</th></tr>
-                    {% for p in participants %}
-                    <tr>
-                        <td>{{ p.participant_name }}</td>
-                        <td>
-                            {% if p.is_host %}
-                                <span class='badge info'>Host</span>
-                            {% elif p.is_member %}
-                                <span class='badge ok'>Member</span>
-                            {% else %}
-                                <span class='badge warn'>Unknown</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if p.current_join %}
-                                <span class='badge ok'>Live</span>
-                            {% else %}
-                                <span class='badge danger'>Left</span>
-                            {% endif %}
-                        </td>
-                        <td>{{ mins_from_seconds(p.total_seconds) }}</td>
-                        <td>{{ p.rejoin_count or 0 }}</td>
-                        <td>{{ fmt_dt(p.first_join) }}</td>
-                    </tr>
-                    {% endfor %}
-                </table>
+                <div class="table-wrap">
+                    <table>
+                        <tr>
+                            <th>Name</th>
+                            <th>Join</th>
+                            <th>Leave</th>
+                            <th>Duration (Min)</th>
+                            <th>Rejoins</th>
+                            <th>Status</th>
+                        </tr>
+                        {% for p in live_rows %}
+                        <tr>
+                            <td>{{ p.participant_name }}</td>
+                            <td>{{ fmt_dt(p.first_join) }}</td>
+                            <td>{{ fmt_dt(p.last_leave) if p.last_leave else '-' }}</td>
+                            <td>{{ p.duration_min }}</td>
+                            <td>{{ p.rejoin_count }}</td>
+                            <td>
+                                {% if p.status == 'HOST' %}
+                                    <span class='badge info'>Host</span>
+                                {% elif p.status == 'PRESENT' %}
+                                    <span class='badge ok'>Present</span>
+                                {% elif p.status == 'LATE' %}
+                                    <span class='badge warn'>Late</span>
+                                {% else %}
+                                    <span class='badge danger'>Absent</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
             </div>
 
             <div class='card'>
                 <h3>Active Members Not Yet Joined</h3>
-                {% if not_joined %}
-                <table>
-                    <tr><th>Name</th><th>Email</th><th>Tags</th></tr>
-                    {% for m in not_joined %}
-                    <tr>
-                        <td>{{ m.full_name }}</td>
-                        <td>{{ m.email or '-' }}</td>
-                        <td>{{ m.tags or '-' }}</td>
-                    </tr>
-                    {% endfor %}
-                </table>
-                {% else %}
-                    <div class='muted'>All active members have joined or there are no active members.</div>
-                {% endif %}
+                <div class="table-wrap">
+                    <table>
+                        <tr><th>Name</th><th>Email</th></tr>
+                        {% for m in not_joined %}
+                        <tr>
+                            <td>{{ m.full_name or '-' }}</td>
+                            <td>{{ m.email or '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -1811,19 +1939,17 @@ def live():
         {% endif %}
         """,
         meeting=meeting,
-        participants=participants,
-        active_now=active_now,
+        live_rows=rows_for_live,
+        active_now=sum(1 for p in participants if p.get("current_join")),
+        host_now="Yes" if any(p.get("is_host") and p.get("current_join") is not None for p in participants) else "No",
         not_joined=not_joined,
-        joined_only_count=joined_only_count,
-        host_now=host_now,
         fmt_dt=fmt_dt,
-        mins_from_seconds=mins_from_seconds,
         session=session,
     )
     return page("Live", body, "live")
 
 
-@app.route("/meetings/<meeting_uuid>/finalize")
+@app.route("/meetings/<path:meeting_uuid>/finalize")
 @login_required
 @admin_required
 def manual_finalize_meeting(meeting_uuid):
@@ -1843,13 +1969,14 @@ def members():
             full_name = request.form.get("full_name", "").strip()
             email = request.form.get("email", "").strip() or None
             phone = request.form.get("phone", "").strip() or None
-            tags = request.form.get("tags", "").strip() or None
+
             if full_name:
                 with db() as conn:
+                    true_val = db_true_value(conn, "members", "active")
                     with conn.cursor() as cur:
                         cur.execute(
-                            "INSERT INTO members(full_name, email, phone, tags, active) VALUES (%s,%s,%s,%s,TRUE)",
-                            (full_name, email, phone, tags),
+                            "INSERT INTO members(full_name, email, phone, active) VALUES (%s,%s,%s,%s)",
+                            (full_name, email, phone, true_val),
                         )
                     conn.commit()
                 log_activity("member_add", full_name)
@@ -1860,12 +1987,11 @@ def members():
             full_name = request.form.get("full_name", "").strip()
             email = request.form.get("email", "").strip() or None
             phone = request.form.get("phone", "").strip() or None
-            tags = request.form.get("tags", "").strip() or None
             with db() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE members SET full_name=%s, email=%s, phone=%s, tags=%s WHERE id=%s",
-                        (full_name, email, phone, tags, member_id),
+                        "UPDATE members SET full_name=%s, email=%s, phone=%s WHERE id=%s",
+                        (full_name, email, phone, member_id),
                     )
                 conn.commit()
             log_activity("member_edit", str(member_id))
@@ -1875,10 +2001,11 @@ def members():
             member_id = int(request.form.get("member_id"))
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE members SET active = CASE WHEN CAST(active AS TEXT) IN ('1','true','t','True','TRUE') THEN 0 ELSE 1 END WHERE id=%s",
-                        (member_id,),
-                    )
+                    cur.execute("SELECT active FROM members WHERE id=%s", (member_id,))
+                    row = cur.fetchone()
+                    if row:
+                        next_val = db_false_value(conn, "members", "active") if is_truthy(row["active"]) else db_true_value(conn, "members", "active")
+                        cur.execute("UPDATE members SET active=%s WHERE id=%s", (next_val, member_id))
                 conn.commit()
             log_activity("member_toggle", str(member_id))
             flash("Member status updated.", "success")
@@ -1899,6 +2026,7 @@ def members():
                 stream = io.StringIO(file.stream.read().decode("utf-8"))
                 reader = csv.DictReader(stream)
                 with db() as conn:
+                    true_val = db_true_value(conn, "members", "active")
                     with conn.cursor() as cur:
                         for row in reader:
                             name = (row.get("full_name") or row.get("name") or "").strip()
@@ -1906,10 +2034,9 @@ def members():
                                 continue
                             email = (row.get("email") or "").strip() or None
                             phone = (row.get("phone") or "").strip() or None
-                            tags = (row.get("tags") or "").strip() or None
                             cur.execute(
-                                "INSERT INTO members(full_name, email, phone, tags, active) VALUES (%s,%s,%s,%s,TRUE)",
-                                (name, email, phone, tags),
+                                "INSERT INTO members(full_name, email, phone, active) VALUES (%s,%s,%s,%s)",
+                                (name, email, phone, true_val),
                             )
                             imported += 1
                     conn.commit()
@@ -1951,10 +2078,12 @@ def members():
                 <form method='post'>
                     <input type='hidden' name='action' value='{{ "edit" if edit_member else "add" }}'>
                     {% if edit_member %}<input type='hidden' name='member_id' value='{{ edit_member.id }}'>{% endif %}
-                    <label>Full Name</label><input name='full_name' required value='{{ edit_member.full_name if edit_member else "" }}'>
-                    <label>Email</label><input name='email' value='{{ edit_member.email if edit_member else "" }}'>
-                    <label>Phone</label><input name='phone' value='{{ edit_member.phone if edit_member else "" }}'>
-                    <label>Tags</label><input name='tags' placeholder='team, batch, group' value='{{ edit_member.tags if edit_member else "" }}'>
+                    <label>Full Name</label>
+                    <input name='full_name' required value='{{ edit_member.full_name if edit_member else "" }}'>
+                    <label>Email</label>
+                    <input name='email' value='{{ edit_member.email if edit_member else "" }}'>
+                    <label>Phone</label>
+                    <input name='phone' value='{{ edit_member.phone if edit_member else "" }}'>
                     <button type='submit'>{{ 'Update Member' if edit_member else 'Save Member' }}</button>
                     {% if edit_member %}
                         <a class='btn secondary' href='{{ url_for("members") }}'>Cancel</a>
@@ -1967,7 +2096,7 @@ def members():
 
             <div class='card'>
                 <h3>CSV Import</h3>
-                <div class='muted'>Expected columns: full_name, email, phone, tags</div>
+                <div class='muted'>Expected columns: full_name, email, phone</div>
                 {% if session.get('role') == 'admin' %}
                 <form method='post' enctype='multipart/form-data'>
                     <input type='hidden' name='action' value='import_csv'>
@@ -1981,50 +2110,53 @@ def members():
         <br>
 
         <div class='card'>
+            <h3>Search Members</h3>
             <form method='get'>
-                <label>Search Member</label>
                 <input name='q' value='{{ q }}' placeholder='Search by name or email'>
                 <button type='submit'>Search</button>
             </form>
 
-            <table>
-                <tr>
-                    <th>Name</th><th>Email</th><th>Phone</th><th>Tags</th><th>Status</th>
-                    {% if session.get('role') == 'admin' %}<th>Actions</th>{% endif %}
-                </tr>
-                {% for m in rows %}
+            <br>
+
+            <div class="table-wrap">
+                <table>
                     <tr>
-                        <td>{{ m.full_name }}</td>
-                        <td>{{ m.email or '-' }}</td>
-                        <td>{{ m.phone or '-' }}</td>
-                        <td>{{ m.tags or '-' }}</td>
-                        <td>
-                            {% if m.active|string in ['1', 'True', 'true', 't'] %}
-                                <span class='badge ok'>Active</span>
-                            {% else %}
-                                <span class='badge danger'>Inactive</span>
-                            {% endif %}
-                        </td>
-                        {% if session.get('role') == 'admin' %}
-                        <td>
-                            <div class='row'>
-                                <a class='btn secondary' href='{{ url_for("members", edit_id=m.id) }}'>Edit</a>
-                                <form method='post'>
-                                    <input type='hidden' name='action' value='toggle'>
-                                    <input type='hidden' name='member_id' value='{{ m.id }}'>
-                                    <button type='submit' class='btn warn'>Toggle</button>
-                                </form>
-                                <form method='post' onsubmit='return confirm("Delete this member?")'>
-                                    <input type='hidden' name='action' value='delete'>
-                                    <input type='hidden' name='member_id' value='{{ m.id }}'>
-                                    <button type='submit' class='btn danger'>Delete</button>
-                                </form>
-                            </div>
-                        </td>
-                        {% endif %}
+                        <th>Name</th><th>Email</th><th>Phone</th><th>Status</th>
+                        {% if session.get('role') == 'admin' %}<th>Actions</th>{% endif %}
                     </tr>
-                {% endfor %}
-            </table>
+                    {% for m in rows %}
+                        <tr>
+                            <td>{{ m.full_name or '-' }}</td>
+                            <td>{{ m.email or '-' }}</td>
+                            <td>{{ m.phone or '-' }}</td>
+                            <td>
+                                {% if m.active|string in ['1', 'True', 'true', 't'] %}
+                                    <span class='badge ok'>Active</span>
+                                {% else %}
+                                    <span class='badge danger'>Inactive</span>
+                                {% endif %}
+                            </td>
+                            {% if session.get('role') == 'admin' %}
+                            <td>
+                                <div class='row'>
+                                    <a class='btn secondary small' href='{{ url_for("members", edit_id=m.id) }}'>Edit</a>
+                                    <form method='post'>
+                                        <input type='hidden' name='action' value='toggle'>
+                                        <input type='hidden' name='member_id' value='{{ m.id }}'>
+                                        <button type='submit' class='btn warn small'>Toggle</button>
+                                    </form>
+                                    <form method='post' onsubmit='return confirm("Delete this member?")'>
+                                        <input type='hidden' name='action' value='delete'>
+                                        <input type='hidden' name='member_id' value='{{ m.id }}'>
+                                        <button type='submit' class='btn danger small'>Delete</button>
+                                    </form>
+                                </div>
+                            </td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                </table>
+            </div>
         </div>
         """,
         rows=rows,
@@ -2048,10 +2180,11 @@ def users():
             role = request.form.get("role", "viewer")
             if username and password:
                 with db() as conn:
+                    true_val = db_true_value(conn, "users", "is_active")
                     with conn.cursor() as cur:
                         cur.execute(
-                            "INSERT INTO users(username, password_hash, role, is_active) VALUES (%s,%s,%s,TRUE)",
-                            (username, hash_password(password), role),
+                            "INSERT INTO users(username, password_hash, role, is_active) VALUES (%s,%s,%s,%s)",
+                            (username, hash_password(password), role, true_val),
                         )
                     conn.commit()
                 log_activity("user_add", username)
@@ -2072,10 +2205,14 @@ def users():
             user_id = int(request.form.get("user_id"))
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE users SET is_active = CASE WHEN CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE') THEN 0 ELSE 1 END WHERE id=%s",
-                        (user_id,),
-                    )
+                    cur.execute("SELECT is_active, username FROM users WHERE id=%s", (user_id,))
+                    row = cur.fetchone()
+                    if row:
+                        if row["username"] == session.get("username"):
+                            flash("You cannot disable your own active session.", "error")
+                            return redirect(url_for("users"))
+                        next_val = db_false_value(conn, "users", "is_active") if is_truthy(row["is_active"]) else db_true_value(conn, "users", "is_active")
+                        cur.execute("UPDATE users SET is_active=%s WHERE id=%s", (next_val, user_id))
                 conn.commit()
             log_activity("user_toggle", str(user_id))
             flash("User status updated.", "success")
@@ -2090,6 +2227,21 @@ def users():
                     conn.commit()
                 log_activity("user_password", str(user_id))
                 flash("Password changed.", "success")
+
+        elif action == "delete":
+            user_id = int(request.form.get("user_id"))
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT username FROM users WHERE id=%s", (user_id,))
+                    row = cur.fetchone()
+                    if row:
+                        if row["username"] == session.get("username"):
+                            flash("You cannot delete your own account while logged in.", "error")
+                            return redirect(url_for("users"))
+                        cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
+                conn.commit()
+            log_activity("user_delete", str(user_id))
+            flash("User deleted.", "success")
 
         return redirect(url_for("users"))
 
@@ -2108,7 +2260,7 @@ def users():
         """
         <div class="hero">
             <h2>Users & Roles</h2>
-            <div class="muted" style="color:#cbd5e1">Manage admin/viewer access, reset passwords, and control activity safely.</div>
+            <div class="muted" style="color:#cbd5e1">Manage admin/viewer access, reset passwords, delete users, and control activity safely.</div>
         </div>
 
         <div class='grid'>
@@ -2147,39 +2299,46 @@ def users():
         <br>
 
         <div class='card'>
-            <table>
-                <tr><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr>
-                {% for u in rows %}
-                <tr>
-                    <td>{{ u.username }}</td>
-                    <td>{{ u.role }}</td>
-                    <td>
-                        {% if u.is_active|string in ['1', 'True', 'true', 't'] %}
-                            <span class='badge ok'>Active</span>
-                        {% else %}
-                            <span class='badge danger'>Disabled</span>
-                        {% endif %}
-                    </td>
-                    <td>{{ fmt_dt(u.created_at) }}</td>
-                    <td>
-                        <div class='row'>
-                            <a class='btn secondary' href='{{ url_for("users", edit_id=u.id) }}'>Edit</a>
-                            <form method='post'>
-                                <input type='hidden' name='action' value='toggle'>
-                                <input type='hidden' name='user_id' value='{{ u.id }}'>
-                                <button class='btn warn' type='submit'>Toggle</button>
-                            </form>
-                            <form method='post'>
-                                <input type='hidden' name='action' value='password'>
-                                <input type='hidden' name='user_id' value='{{ u.id }}'>
-                                <input name='new_password' placeholder='new password' required>
-                                <button class='btn secondary' type='submit'>Reset Password</button>
-                            </form>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </table>
+            <div class="table-wrap">
+                <table>
+                    <tr><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+                    {% for u in rows %}
+                    <tr>
+                        <td>{{ u.username }}</td>
+                        <td>{{ u.role }}</td>
+                        <td>
+                            {% if u.is_active|string in ['1', 'True', 'true', 't'] %}
+                                <span class='badge ok'>Active</span>
+                            {% else %}
+                                <span class='badge danger'>Disabled</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ fmt_dt(u.created_at) }}</td>
+                        <td>
+                            <div class='row'>
+                                <a class='btn secondary small' href='{{ url_for("users", edit_id=u.id) }}'>Edit</a>
+                                <form method='post'>
+                                    <input type='hidden' name='action' value='toggle'>
+                                    <input type='hidden' name='user_id' value='{{ u.id }}'>
+                                    <button class='btn warn small' type='submit'>Toggle</button>
+                                </form>
+                                <form method='post'>
+                                    <input type='hidden' name='action' value='password'>
+                                    <input type='hidden' name='user_id' value='{{ u.id }}'>
+                                    <input name='new_password' placeholder='new password' required>
+                                    <button class='btn secondary small' type='submit'>Reset Password</button>
+                                </form>
+                                <form method='post' onsubmit='return confirm("Delete this user?")'>
+                                    <input type='hidden' name='action' value='delete'>
+                                    <input type='hidden' name='user_id' value='{{ u.id }}'>
+                                    <button class='btn danger small' type='submit'>Delete</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
         </div>
         """,
         rows=rows,
@@ -2192,6 +2351,8 @@ def users():
 @app.route("/analytics")
 @login_required
 def analytics():
+    maybe_finalize_stale_live_meetings()
+
     filters = {
         "period_mode": request.args.get("period_mode", "custom"),
         "from_date": request.args.get("from_date", ""),
@@ -2273,7 +2434,7 @@ def analytics():
             <div class='card stat-card'><h4>Late</h4><div class='metric'>{{ data.summary.late_rows }}</div></div>
             <div class='card stat-card'><h4>Absent</h4><div class='metric'>{{ data.summary.absent_rows }}</div></div>
             <div class='card stat-card'><h4>Unknown</h4><div class='metric'>{{ data.summary.unknown_rows }}</div></div>
-            <div class='card stat-card'><h4>Predicted Next</h4><div class='metric'>{{ data.summary.predicted_next_attendance }}</div><div class='muted'>simple recent average</div></div>
+            <div class='card stat-card'><h4>Predicted Next</h4><div class='metric'>{{ data.summary.predicted_next_attendance }}</div><div class='kpi-note'>simple recent average</div></div>
         </div>
 
         <br>
@@ -2294,21 +2455,25 @@ def analytics():
         <div class='grid'>
             <div class='card'>
                 <h3>Top Performers</h3>
-                <table>
-                    <tr><th>Name</th><th>Meetings</th><th>Minutes</th><th>Present</th><th>Rejoins</th></tr>
-                    {% for p in data.top_people %}
-                    <tr><td>{{ p.name }}</td><td>{{ p.meetings }}</td><td>{{ p.minutes|round(2) }}</td><td>{{ p.present }}</td><td>{{ p.rejoins }}</td></tr>
-                    {% endfor %}
-                </table>
+                <div class="table-wrap">
+                    <table>
+                        <tr><th>Name</th><th>Meetings</th><th>Minutes</th><th>Present</th><th>Rejoins</th></tr>
+                        {% for p in data.top_people %}
+                        <tr><td>{{ p.name }}</td><td>{{ p.meetings }}</td><td>{{ p.minutes|round(2) }}</td><td>{{ p.present }}</td><td>{{ p.rejoins }}</td></tr>
+                        {% endfor %}
+                    </table>
+                </div>
             </div>
             <div class='card'>
                 <h3>Low Performers</h3>
-                <table>
-                    <tr><th>Name</th><th>Present</th><th>Late</th><th>Absent</th></tr>
-                    {% for p in data.low_people %}
-                    <tr><td>{{ p.name }}</td><td>{{ p.present }}</td><td>{{ p.late }}</td><td>{{ p.absent }}</td></tr>
-                    {% endfor %}
-                </table>
+                <div class="table-wrap">
+                    <table>
+                        <tr><th>Name</th><th>Present</th><th>Late</th><th>Absent</th></tr>
+                        {% for p in data.low_people %}
+                        <tr><td>{{ p.name }}</td><td>{{ p.present }}</td><td>{{ p.late }}</td><td>{{ p.absent }}</td></tr>
+                        {% endfor %}
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -2317,29 +2482,33 @@ def analytics():
         <div class='grid'>
             <div class='card'>
                 <h3>Unknown Participant Leaderboard</h3>
-                <table>
-                    <tr><th>Name</th><th>Meetings</th><th>Minutes</th><th>Rejoins</th></tr>
-                    {% for p in data.unknown_board %}
-                    <tr><td>{{ p.name }}</td><td>{{ p.meetings }}</td><td>{{ p.minutes|round(2) }}</td><td>{{ p.rejoins }}</td></tr>
-                    {% endfor %}
-                </table>
+                <div class="table-wrap">
+                    <table>
+                        <tr><th>Name</th><th>Meetings</th><th>Minutes</th><th>Rejoins</th></tr>
+                        {% for p in data.unknown_board %}
+                        <tr><td>{{ p.name }}</td><td>{{ p.meetings }}</td><td>{{ p.minutes|round(2) }}</td><td>{{ p.rejoins }}</td></tr>
+                        {% endfor %}
+                    </table>
+                </div>
             </div>
             <div class='card'>
                 <h3>Meeting Comparison</h3>
-                <table>
-                    <tr><th>Meeting</th><th>Date</th><th>Present</th><th>Late</th><th>Absent</th><th>Unknown</th><th>Health</th></tr>
-                    {% for m in data.meeting_compare %}
-                    <tr>
-                        <td>{{ m.topic }}</td>
-                        <td>{{ fmt_dt(m.start_time) }}</td>
-                        <td>{{ m.present }}</td>
-                        <td>{{ m.late }}</td>
-                        <td>{{ m.absent }}</td>
-                        <td>{{ m.unknown }}</td>
-                        <td>{{ m.health }}%</td>
-                    </tr>
-                    {% endfor %}
-                </table>
+                <div class="table-wrap">
+                    <table>
+                        <tr><th>Meeting</th><th>Date</th><th>Present</th><th>Late</th><th>Absent</th><th>Unknown</th><th>Health</th></tr>
+                        {% for m in data.meeting_compare %}
+                        <tr>
+                            <td>{{ m.topic }}</td>
+                            <td>{{ fmt_dt(m.start_time) }}</td>
+                            <td>{{ m.present }}</td>
+                            <td>{{ m.late }}</td>
+                            <td>{{ m.absent }}</td>
+                            <td>{{ m.unknown }}</td>
+                            <td>{{ m.health }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -2347,19 +2516,21 @@ def analytics():
 
         <div class='card'>
             <h3>Filtered Attendance Rows</h3>
-            <table>
-                <tr><th>Topic</th><th>Participant</th><th>Member</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr>
-                {% for r in data.rows[:180] %}
-                <tr>
-                    <td>{{ r.topic }}</td>
-                    <td>{{ r.participant_name }}</td>
-                    <td>{% if r.is_member %}Yes{% else %}No{% endif %}</td>
-                    <td>{{ mins_from_seconds(r.total_seconds) }}</td>
-                    <td>{{ r.rejoin_count or 0 }}</td>
-                    <td>{{ r.final_status }}</td>
-                </tr>
-                {% endfor %}
-            </table>
+            <div class="table-wrap">
+                <table>
+                    <tr><th>Topic</th><th>Participant</th><th>Member</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr>
+                    {% for r in data.rows[:180] %}
+                    <tr>
+                        <td>{{ r.topic }}</td>
+                        <td>{{ r.participant_name }}</td>
+                        <td>{% if r.is_member %}Yes{% else %}No{% endif %}</td>
+                        <td>{{ mins_from_seconds(r.total_seconds) }}</td>
+                        <td>{{ r.rejoin_count or 0 }}</td>
+                        <td>{{ r.final_status }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
         </div>
 
         <script>
@@ -2422,6 +2593,8 @@ def export_analytics_pdf():
 @app.route("/meetings")
 @login_required
 def meetings():
+    maybe_finalize_stale_live_meetings()
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT 250")
@@ -2435,40 +2608,42 @@ def meetings():
         </div>
 
         <div class='card'>
-            <table>
-                <tr>
-                    <th>Date</th>
-                    <th>Topic</th>
-                    <th>Status</th>
-                    <th>Participants</th>
-                    <th>Members</th>
-                    <th>Unknown</th>
-                    <th>Reports</th>
-                </tr>
-                {% for m in rows %}
-                <tr>
-                    <td>{{ fmt_dt(m.start_time) }}</td>
-                    <td>{{ m.topic or 'Untitled Meeting' }}</td>
-                    <td>{{ m.status or '-' }}</td>
-                    <td>{{ m.unique_participants or 0 }}</td>
-                    <td>{{ m.member_participants or 0 }}</td>
-                    <td>{{ m.unknown_participants or 0 }}</td>
-                    <td>
-                        {% if m.meeting_uuid %}
-                            <div class="row">
-                                <a class='btn success' href='{{ url_for("meeting_csv", meeting_uuid=m.meeting_uuid) }}'>CSV</a>
-                                <a class='btn secondary' href='{{ url_for("meeting_pdf", meeting_uuid=m.meeting_uuid) }}'>PDF</a>
-                                {% if session.get('role') == 'admin' and m.status == 'live' %}
-                                    <a class='btn danger' href='{{ url_for("manual_finalize_meeting", meeting_uuid=m.meeting_uuid) }}'>Finalize</a>
-                                {% endif %}
-                            </div>
-                        {% else %}
-                            <span class='badge danger'>No UUID / old record</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </table>
+            <div class="table-wrap">
+                <table>
+                    <tr>
+                        <th>Date</th>
+                        <th>Topic</th>
+                        <th>Status</th>
+                        <th>Participants</th>
+                        <th>Members</th>
+                        <th>Unknown</th>
+                        <th>Reports</th>
+                    </tr>
+                    {% for m in rows %}
+                    <tr>
+                        <td>{{ fmt_dt(m.start_time) }}</td>
+                        <td>{{ m.topic or 'Untitled Meeting' }}</td>
+                        <td>{{ m.status or '-' }}</td>
+                        <td>{{ m.unique_participants or 0 }}</td>
+                        <td>{{ m.member_participants or 0 }}</td>
+                        <td>{{ m.unknown_participants or 0 }}</td>
+                        <td>
+                            {% if m.meeting_uuid %}
+                                <div class="row">
+                                    <a class='btn success small' href='{{ url_for("meeting_csv", meeting_uuid=m.meeting_uuid) }}'>CSV</a>
+                                    <a class='btn secondary small' href='{{ url_for("meeting_pdf", meeting_uuid=m.meeting_uuid) }}'>PDF</a>
+                                    {% if session.get('role') == 'admin' and m.status == 'live' %}
+                                        <a class='btn danger small' href='{{ url_for("manual_finalize_meeting", meeting_uuid=m.meeting_uuid) }}'>Finalize</a>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class='badge danger'>No UUID / old record</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
         </div>
         """,
         rows=rows,
@@ -2478,7 +2653,7 @@ def meetings():
     return page("Meetings", body, "meetings")
 
 
-@app.route("/meetings/<meeting_uuid>/report.csv")
+@app.route("/meetings/<path:meeting_uuid>/report.csv")
 @login_required
 def meeting_csv(meeting_uuid):
     if not meeting_uuid:
@@ -2494,7 +2669,7 @@ def meeting_csv(meeting_uuid):
     )
 
 
-@app.route("/meetings/<meeting_uuid>/report.pdf")
+@app.route("/meetings/<path:meeting_uuid>/report.pdf")
 @login_required
 def meeting_pdf(meeting_uuid):
     if not meeting_uuid:
@@ -2566,17 +2741,19 @@ def activity():
         </div>
 
         <div class='card'>
-            <table>
-                <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
-                {% for a in rows %}
-                <tr>
-                    <td>{{ fmt_dt(a.created_at) }}</td>
-                    <td>{{ a.username or '-' }}</td>
-                    <td>{{ a.action }}</td>
-                    <td>{{ a.details }}</td>
-                </tr>
-                {% endfor %}
-            </table>
+            <div class="table-wrap">
+                <table>
+                    <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
+                    {% for a in rows %}
+                    <tr>
+                        <td>{{ fmt_dt(a.created_at) }}</td>
+                        <td>{{ a.username or '-' }}</td>
+                        <td>{{ a.action }}</td>
+                        <td class="long">{{ a.details }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
         </div>
         """,
         rows=rows,
@@ -2587,10 +2764,7 @@ def activity():
 
 @app.route("/health")
 def health():
-    try:
-        finalize_stale_live_meetings()
-    except Exception:
-        pass
+    maybe_finalize_stale_live_meetings(force=True)
     return jsonify({"ok": True, "time": fmt_dt(now_local())})
 
 
