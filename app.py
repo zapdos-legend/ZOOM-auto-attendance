@@ -734,15 +734,22 @@ def read_live_snapshot():
             meeting = cur.fetchone()
             if not meeting:
                 return None
-            meeting_uuid = meeting["meeting_uuid"]
+            meeting_uuid = meeting.get("meeting_uuid")
+            if not meeting_uuid:
+                return {
+                    "meeting": meeting,
+                    "participants": [],
+                    "active_now": [],
+                    "not_joined_members": [],
+                }
             cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
             participants = cur.fetchall()
             cur.execute("SELECT * FROM members WHERE active=TRUE ORDER BY full_name")
             members = cur.fetchall()
 
-    joined_member_ids = {p["member_id"] for p in participants if p["member_id"] and p["first_join"]}
+    joined_member_ids = {p["member_id"] for p in participants if p.get("member_id") and p.get("first_join")}
     not_joined_members = [m for m in members if m["id"] not in joined_member_ids]
-    active_now = [p for p in participants if p["current_join"] is not None]
+    active_now = [p for p in participants if p.get("current_join") is not None]
     return {
         "meeting": meeting,
         "participants": participants,
@@ -756,10 +763,10 @@ def analytics_data(filters):
     params = []
 
     if filters.get("from_date"):
-        where.append("m.start_time::date >= %s")
+        where.append("CAST(m.start_time AS TEXT)::date >= %s")
         params.append(filters["from_date"])
     if filters.get("to_date"):
-        where.append("m.start_time::date <= %s")
+        where.append("CAST(m.start_time AS TEXT)::date <= %s")
         params.append(filters["to_date"])
     if filters.get("meeting_uuid"):
         where.append("a.meeting_uuid = %s")
@@ -777,7 +784,7 @@ def analytics_data(filters):
 
     sql = f"""
         SELECT
-            a.*, m.topic, m.start_time, m.end_time, m.meeting_id
+            a.*, m.topic, m.start_time, m.end_time, m.meeting_id, m.id AS meeting_row_id
         FROM attendance a
         JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
         WHERE {' AND '.join(where)}
@@ -791,48 +798,55 @@ def analytics_data(filters):
 
             cur.execute("SELECT * FROM members WHERE active=TRUE ORDER BY full_name")
             members = cur.fetchall()
-            cur.execute("SELECT meeting_uuid, topic, start_time FROM meetings ORDER BY id DESC LIMIT 200")
+            cur.execute("SELECT id, meeting_uuid, topic, start_time FROM meetings ORDER BY id DESC LIMIT 200")
             meetings = cur.fetchall()
 
     total_rows = len(rows)
-    present_rows = sum(1 for r in rows if r["final_status"] == "PRESENT")
-    late_rows = sum(1 for r in rows if r["final_status"] == "LATE")
-    absent_rows = sum(1 for r in rows if r["final_status"] == "ABSENT")
-    unknown_rows = sum(1 for r in rows if not r["is_member"])
-    avg_minutes = round(sum((r["total_seconds"] or 0) for r in rows) / 60 / total_rows, 2) if total_rows else 0
+    present_rows = sum(1 for r in rows if r.get("final_status") == "PRESENT")
+    late_rows = sum(1 for r in rows if r.get("final_status") == "LATE")
+    absent_rows = sum(1 for r in rows if r.get("final_status") == "ABSENT")
+    unknown_rows = sum(1 for r in rows if not r.get("is_member"))
+    avg_minutes = round(sum((r.get("total_seconds") or 0) for r in rows) / 60 / total_rows, 2) if total_rows else 0
 
     by_person = {}
     by_meeting = {}
     for r in rows:
-        key = r["participant_name"]
+        key = r.get("participant_name") or "Unknown Participant"
         by_person.setdefault(key, {"name": key, "meetings": 0, "minutes": 0, "present": 0, "late": 0, "absent": 0})
         by_person[key]["meetings"] += 1
-        by_person[key]["minutes"] += (r["total_seconds"] or 0) / 60
-        if r["final_status"] == "PRESENT":
+        by_person[key]["minutes"] += (r.get("total_seconds") or 0) / 60
+        if r.get("final_status") == "PRESENT":
             by_person[key]["present"] += 1
-        elif r["final_status"] == "LATE":
+        elif r.get("final_status") == "LATE":
             by_person[key]["late"] += 1
-        elif r["final_status"] == "ABSENT":
+        elif r.get("final_status") == "ABSENT":
             by_person[key]["absent"] += 1
 
-        mk = r["meeting_uuid"]
+        mk = r.get("meeting_uuid") or f"meeting_{r.get('meeting_row_id')}"
         by_meeting.setdefault(
             mk,
-            {"topic": r["topic"], "start_time": r["start_time"], "present": 0, "late": 0, "absent": 0, "unknown": 0},
+            {
+                "topic": r.get("topic") or "Untitled Meeting",
+                "start_time": r.get("start_time"),
+                "present": 0,
+                "late": 0,
+                "absent": 0,
+                "unknown": 0,
+            },
         )
-        if r["final_status"] == "PRESENT":
+        if r.get("final_status") == "PRESENT":
             by_meeting[mk]["present"] += 1
-        elif r["final_status"] == "LATE":
+        elif r.get("final_status") == "LATE":
             by_meeting[mk]["late"] += 1
-        elif r["final_status"] == "ABSENT":
+        elif r.get("final_status") == "ABSENT":
             by_meeting[mk]["absent"] += 1
-        if not r["is_member"]:
+        if not r.get("is_member"):
             by_meeting[mk]["unknown"] += 1
 
     top_people = sorted(by_person.values(), key=lambda x: (x["present"], x["minutes"]), reverse=True)[:5]
     low_people = sorted(by_person.values(), key=lambda x: (x["present"], -x["absent"], -x["minutes"]))[:5]
     unknown_board = sorted(
-        [v for k, v in by_person.items() if any(r["participant_name"] == k and not r["is_member"] for r in rows)],
+        [v for k, v in by_person.items() if any((rr.get("participant_name") == k and not rr.get("is_member")) for rr in rows)],
         key=lambda x: x["meetings"],
         reverse=True,
     )[:10]
@@ -866,10 +880,18 @@ def export_csv_bytes(rows):
     ])
     for r in rows:
         writer.writerow([
-            r["topic"], r["meeting_id"], fmt_dt(r["start_time"]), r["participant_name"], r["participant_email"] or "",
-            "Yes" if r["is_member"] else "No", "Yes" if r["is_host"] else "No",
-            fmt_dt(r["first_join"]), fmt_dt(r["last_leave"]), round((r["total_seconds"] or 0) / 60, 2),
-            r["rejoin_count"], r["final_status"] or "-"
+            r.get("topic") or "",
+            r.get("meeting_id") or "",
+            fmt_dt(r.get("start_time")),
+            r.get("participant_name") or "",
+            r.get("participant_email") or "",
+            "Yes" if r.get("is_member") else "No",
+            "Yes" if r.get("is_host") else "No",
+            fmt_dt(r.get("first_join")),
+            fmt_dt(r.get("last_leave")),
+            round((r.get("total_seconds") or 0) / 60, 2),
+            r.get("rejoin_count") or 0,
+            r.get("final_status") or "-",
         ])
     return out.getvalue().encode("utf-8")
 
@@ -888,12 +910,12 @@ def export_pdf_bytes(title, rows, summary):
     data = [["Topic", "Participant", "Member", "Duration", "Rejoins", "Status"]]
     for r in rows[:120]:
         data.append([
-            (r["topic"] or "")[:18],
-            (r["participant_name"] or "")[:16],
-            "Yes" if r["is_member"] else "No",
-            str(round((r["total_seconds"] or 0) / 60, 2)),
-            str(r["rejoin_count"]),
-            r["final_status"] or "-",
+            (r.get("topic") or "")[:18],
+            (r.get("participant_name") or "")[:16],
+            "Yes" if r.get("is_member") else "No",
+            str(round((r.get("total_seconds") or 0) / 60, 2)),
+            str(r.get("rejoin_count") or 0),
+            r.get("final_status") or "-",
         ])
     table = Table(data, repeatRows=1)
     style = TableStyle([
@@ -986,6 +1008,16 @@ BASE_HTML = """
             margin:10px 0 14px 0;
             font-weight:700;
         }
+        .debug-box {
+            background:#fff7ed;
+            color:#9a3412;
+            border:1px solid #fdba74;
+            border-radius:12px;
+            padding:14px;
+            white-space:pre-wrap;
+            word-break:break-word;
+            font-family:monospace;
+        }
     </style>
 </head>
 <body>
@@ -1042,6 +1074,23 @@ def startup_once():
     if not DB_INITIALIZED:
         init_db()
         DB_INITIALIZED = True
+
+
+@app.errorhandler(Exception)
+def handle_any_error(e):
+    body = render_template_string(
+        """
+        <div class="card">
+            <h2>Something went wrong</h2>
+            <p class="muted">Copy this error and send it to me.</p>
+            <div class="debug-box">{{ error_text }}</div>
+            <br>
+            <a class="btn" href="{{ url_for('login') }}">Back to Login</a>
+        </div>
+        """,
+        error_text=str(e),
+    )
+    return render_template_string(BASE_HTML, title="Error", body=body, nav=[], active=""), 500
 
 
 @app.route("/", methods=["GET", "HEAD"])
@@ -1129,7 +1178,7 @@ def home():
             absent = cur.fetchone()["c"]
             cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT 5")
             recent_meetings = cur.fetchall()
-            cur.execute("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT 8")
+            cur.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT 8")
             recent_activity = cur.fetchall()
 
     total_classified = present + late + absent
@@ -1225,14 +1274,14 @@ def live():
     active_now = info["active_now"]
     not_joined = info["not_joined_members"]
     joined_only_count = len(participants)
-    host_now = "Yes" if any(p["is_host"] and p["current_join"] is not None for p in participants) else "No"
+    host_now = "Yes" if any(p.get("is_host") and p.get("current_join") is not None for p in participants) else "No"
 
     body = render_template_string(
         """
         <meta http-equiv='refresh' content='15'>
         <h2 class='section-title'>Live Dashboard</h2>
         <div class='grid'>
-            <div class='card'><h4>Topic</h4><div class='metric' style='font-size:22px'>{{ meeting.topic }}</div></div>
+            <div class='card'><h4>Topic</h4><div class='metric' style='font-size:22px'>{{ meeting.topic or 'Untitled Meeting' }}</div></div>
             <div class='card'><h4>Meeting ID</h4><div class='metric'>{{ meeting.meeting_id or '-' }}</div></div>
             <div class='card'><h4>Joined Only Count</h4><div class='metric'>{{ joined_only_count }}</div></div>
             <div class='card'><h4>Active Now</h4><div class='metric'>{{ active_now|length }}</div><div class='muted'>Host present: {{ host_now }}</div></div>
@@ -1249,7 +1298,7 @@ def live():
                             <td>{% if p.is_host %}<span class='badge info'>Host</span>{% elif p.is_member %}<span class='badge ok'>Member</span>{% else %}<span class='badge warn'>Unknown</span>{% endif %}</td>
                             <td>{% if p.current_join %}<span class='badge ok'>Live</span>{% else %}<span class='badge danger'>Left</span>{% endif %}</td>
                             <td>{{ ((p.total_seconds or 0)/60)|round(2) }}</td>
-                            <td>{{ p.rejoin_count }}</td>
+                            <td>{{ p.rejoin_count or 0 }}</td>
                         </tr>
                     {% endfor %}
                 </table>
@@ -1451,7 +1500,7 @@ def users():
 
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM users ORDER BY created_at DESC")
+            cur.execute("SELECT * FROM users ORDER BY id DESC")
             rows = cur.fetchall()
 
     body = render_template_string(
@@ -1536,7 +1585,7 @@ def analytics():
                         <select name='meeting_uuid'>
                             <option value=''>All meetings</option>
                             {% for m in data.meetings %}
-                            <option value='{{ m.meeting_uuid }}' {% if filters.meeting_uuid == m.meeting_uuid %}selected{% endif %}>{{ m.topic }} - {{ fmt_dt(m.start_time) }}</option>
+                            <option value='{{ m.meeting_uuid }}' {% if filters.meeting_uuid == m.meeting_uuid %}selected{% endif %}>{{ m.topic or 'Untitled Meeting' }} - {{ fmt_dt(m.start_time) }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -1624,7 +1673,7 @@ def analytics():
                         <td>{{ r.participant_name }}</td>
                         <td>{% if r.is_member %}Yes{% else %}No{% endif %}</td>
                         <td>{{ ((r.total_seconds or 0)/60)|round(2) }}</td>
-                        <td>{{ r.rejoin_count }}</td>
+                        <td>{{ r.rejoin_count or 0 }}</td>
                         <td>{{ r.final_status }}</td>
                     </tr>
                 {% endfor %}
@@ -1680,7 +1729,7 @@ def meetings():
                 {% for m in rows %}
                 <tr>
                     <td>{{ fmt_dt(m.start_time) }}</td>
-                    <td>{{ m.topic }}</td>
+                    <td>{{ m.topic or 'Untitled Meeting' }}</td>
                     <td>{{ m.status }}</td>
                     <td>{{ m.unique_participants }}</td>
                     <td>{{ m.member_participants }}</td>
@@ -1755,7 +1804,7 @@ def settings():
 def activity():
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT 200")
+            cur.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT 200")
             rows = cur.fetchall()
     body = render_template_string(
         """
