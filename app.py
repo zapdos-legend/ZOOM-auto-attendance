@@ -45,6 +45,10 @@ DEFAULT_SETTINGS = {
 
 DB_INITIALIZED = False
 
+# Old DB compatibility
+ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
+ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
+
 
 def now_local() -> datetime:
     return datetime.now(ZoneInfo(TIMEZONE_NAME))
@@ -193,7 +197,7 @@ def sync_special_user(conn, username: str, password: str, role: str):
             needs_update = (
                 existing["password_hash"] != password_hash
                 or existing["role"] != role
-                or not existing["is_active"]
+                or str(existing["is_active"]) not in ("1", "True", "true", "t")
             )
             if needs_update:
                 cur.execute(
@@ -451,14 +455,14 @@ def find_member(name: str, email: str | None = None):
         with conn.cursor() as cur:
             if norm_email:
                 cur.execute(
-                    "SELECT * FROM members WHERE active=TRUE AND lower(email)=%s LIMIT 1",
+                    f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} AND lower(email)=%s LIMIT 1",
                     (norm_email,),
                 )
                 row = cur.fetchone()
                 if row:
                     return row
             cur.execute(
-                "SELECT * FROM members WHERE active=TRUE AND lower(full_name)=%s LIMIT 1",
+                f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} AND lower(full_name)=%s LIMIT 1",
                 (norm_name,),
             )
             row = cur.fetchone()
@@ -479,6 +483,7 @@ def ensure_meeting(payload_object):
     topic = payload_object.get("topic") or "Zoom Meeting"
     host_name = payload_object.get("host_name") or payload_object.get("host_email") or ""
     start_time = parse_dt(payload_object.get("start_time")) or now_local()
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
@@ -734,6 +739,7 @@ def read_live_snapshot():
             meeting = cur.fetchone()
             if not meeting:
                 return None
+
             meeting_uuid = meeting.get("meeting_uuid")
             if not meeting_uuid:
                 return {
@@ -742,14 +748,16 @@ def read_live_snapshot():
                     "active_now": [],
                     "not_joined_members": [],
                 }
+
             cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
             participants = cur.fetchall()
-            cur.execute("SELECT * FROM members WHERE active=TRUE ORDER BY full_name")
+            cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY full_name")
             members = cur.fetchall()
 
     joined_member_ids = {p["member_id"] for p in participants if p.get("member_id") and p.get("first_join")}
     not_joined_members = [m for m in members if m["id"] not in joined_member_ids]
     active_now = [p for p in participants if p.get("current_join") is not None]
+
     return {
         "meeting": meeting,
         "participants": participants,
@@ -796,7 +804,7 @@ def analytics_data(filters):
             cur.execute(sql, params)
             rows = cur.fetchall()
 
-            cur.execute("SELECT * FROM members WHERE active=TRUE ORDER BY full_name")
+            cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY full_name")
             members = cur.fetchall()
             cur.execute("SELECT id, meeting_uuid, topic, start_time FROM meetings ORDER BY id DESC LIMIT 200")
             meetings = cur.fetchall()
@@ -997,7 +1005,6 @@ BASE_HTML = """
         .flash.success { background:#dcfce7; color:#166534; border-color:#86efac; }
         .flash.error { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
         .login-box { max-width:420px; margin:80px auto; }
-        .small { font-size:12px; }
         .section-title { margin:0 0 14px 0; }
         .login-error {
             background:#fee2e2;
@@ -1111,7 +1118,7 @@ def login():
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT * FROM users WHERE username=%s AND is_active=TRUE",
+                    f"SELECT * FROM users WHERE username=%s AND {ACTIVE_USER_SQL}",
                     (username,),
                 )
                 user = cur.fetchone()
@@ -1162,27 +1169,36 @@ def logout():
 @login_required
 def home():
     live_info = read_live_snapshot()
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS c FROM meetings")
             total_meetings = cur.fetchone()["c"]
+
             cur.execute("SELECT COUNT(*) AS c FROM members")
             total_members = cur.fetchone()["c"]
-            cur.execute("SELECT COUNT(*) AS c FROM members WHERE active=TRUE")
+
+            cur.execute(f"SELECT COUNT(*) AS c FROM members WHERE {ACTIVE_MEMBER_SQL}")
             active_members = cur.fetchone()["c"]
+
             cur.execute("SELECT COUNT(*) AS c FROM attendance WHERE final_status='PRESENT'")
             present = cur.fetchone()["c"]
+
             cur.execute("SELECT COUNT(*) AS c FROM attendance WHERE final_status='LATE'")
             late = cur.fetchone()["c"]
+
             cur.execute("SELECT COUNT(*) AS c FROM attendance WHERE final_status='ABSENT'")
             absent = cur.fetchone()["c"]
+
             cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT 5")
             recent_meetings = cur.fetchall()
+
             cur.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT 8")
             recent_activity = cur.fetchall()
 
     total_classified = present + late + absent
     health = round(((present + late) / total_classified) * 100, 2) if total_classified else 0
+
     body = render_template_string(
         """
         <h2 class='section-title'>Platform Overview</h2>
@@ -1227,7 +1243,7 @@ def home():
                     {% for m in recent_meetings %}
                         <tr>
                             <td>{{ fmt_dt(m.start_time) }}</td>
-                            <td>{{ m.topic }}</td>
+                            <td>{{ m.topic or 'Untitled Meeting' }}</td>
                             <td>{{ m.status }}</td>
                             <td>{{ m.unique_participants }}</td>
                         </tr>
@@ -1352,7 +1368,7 @@ def members():
             member_id = int(request.form.get("member_id"))
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE members SET active = NOT active WHERE id=%s", (member_id,))
+                    cur.execute("UPDATE members SET active = CASE WHEN CAST(active AS TEXT) IN ('1','true','t','True','TRUE') THEN 0 ELSE 1 END WHERE id=%s", (member_id,))
                 conn.commit()
             log_activity("member_toggle", str(member_id))
             flash("Member status updated.", "success")
@@ -1386,11 +1402,11 @@ def members():
         with conn.cursor() as cur:
             if q:
                 cur.execute(
-                    "SELECT * FROM members WHERE lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s ORDER BY active DESC, full_name",
+                    f"SELECT * FROM members WHERE (lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s) ORDER BY id DESC",
                     (f"%{q}%", f"%{q}%"),
                 )
             else:
-                cur.execute("SELECT * FROM members ORDER BY active DESC, full_name")
+                cur.execute("SELECT * FROM members ORDER BY id DESC")
             rows = cur.fetchall()
 
     body = render_template_string(
@@ -1437,7 +1453,13 @@ def members():
                         <td>{{ m.email or '-' }}</td>
                         <td>{{ m.phone or '-' }}</td>
                         <td>{{ m.tags or '-' }}</td>
-                        <td>{% if m.active %}<span class='badge ok'>Active</span>{% else %}<span class='badge danger'>Inactive</span>{% endif %}</td>
+                        <td>
+                            {% if m.active|string in ['1', 'True', 'true', 't'] %}
+                                <span class='badge ok'>Active</span>
+                            {% else %}
+                                <span class='badge danger'>Inactive</span>
+                            {% endif %}
+                        </td>
                         {% if session.get('role') == 'admin' %}
                         <td>
                             <form method='post'>
@@ -1482,7 +1504,7 @@ def users():
             user_id = int(request.form.get("user_id"))
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE users SET is_active = NOT is_active WHERE id=%s", (user_id,))
+                    cur.execute("UPDATE users SET is_active = CASE WHEN CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE') THEN 0 ELSE 1 END WHERE id=%s", (user_id,))
                 conn.commit()
             log_activity("user_toggle", str(user_id))
             flash("User status updated.", "success")
@@ -1531,7 +1553,13 @@ def users():
                 <tr>
                     <td>{{ u.username }}</td>
                     <td>{{ u.role }}</td>
-                    <td>{% if u.is_active %}<span class='badge ok'>Active</span>{% else %}<span class='badge danger'>Disabled</span>{% endif %}</td>
+                    <td>
+                        {% if u.is_active|string in ['1', 'True', 'true', 't'] %}
+                            <span class='badge ok'>Active</span>
+                        {% else %}
+                            <span class='badge danger'>Disabled</span>
+                        {% endif %}
+                    </td>
                     <td>{{ fmt_dt(u.created_at) }}</td>
                     <td>
                         <form method='post'>
@@ -1570,9 +1598,11 @@ def analytics():
         "person_name": request.args.get("person_name", ""),
         "participant_type": request.args.get("participant_type", "all"),
     }
+
     data = analytics_data(filters)
     chart_labels = [p["name"] for p in data["top_people"]]
     chart_values = [round(p["minutes"], 2) for p in data["top_people"]]
+
     body = render_template_string(
         """
         <h2 class='section-title'>Analytics</h2>
@@ -1720,6 +1750,7 @@ def meetings():
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT 200")
             rows = cur.fetchall()
+
     body = render_template_string(
         """
         <h2 class='section-title'>Meetings</h2>
@@ -1806,6 +1837,7 @@ def activity():
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT 200")
             rows = cur.fetchall()
+
     body = render_template_string(
         """
         <h2 class='section-title'>Activity Log</h2>
