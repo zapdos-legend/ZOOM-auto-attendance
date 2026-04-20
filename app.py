@@ -21,6 +21,7 @@ from flask import (
     url_for,
 )
 from psycopg.rows import dict_row
+from psycopg import sql
 import psycopg
 from dotenv import load_dotenv
 from reportlab.lib import colors
@@ -118,6 +119,65 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
+def column_exists(cur, table_name: str, column_name: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s AND column_name = %s
+        """,
+        (table_name, column_name),
+    )
+    return cur.fetchone() is not None
+
+
+def ensure_column(cur, table_name: str, column_name: str, definition: str):
+    if not column_exists(cur, table_name, column_name):
+        cur.execute(
+            sql.SQL("ALTER TABLE {} ADD COLUMN {} {}").format(
+                sql.Identifier(table_name),
+                sql.Identifier(column_name),
+                sql.SQL(definition),
+            )
+        )
+
+
+def ensure_unique_constraint(cur, table_name: str, constraint_name: str, columns: list[str]):
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.table_constraints
+        WHERE table_schema = 'public' AND table_name = %s AND constraint_name = %s
+        """,
+        (table_name, constraint_name),
+    )
+    if cur.fetchone():
+        return
+    cur.execute(
+        sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} UNIQUE ({})").format(
+            sql.Identifier(table_name),
+            sql.Identifier(constraint_name),
+            sql.SQL(", ").join(sql.Identifier(c) for c in columns),
+        )
+    )
+
+
+def ensure_index(cur, index_name: str, table_name: str, columns: list[str]):
+    cur.execute(
+        "SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname=%s",
+        (index_name,),
+    )
+    if cur.fetchone():
+        return
+    cur.execute(
+        sql.SQL("CREATE INDEX {} ON {} ({})").format(
+            sql.Identifier(index_name),
+            sql.Identifier(table_name),
+            sql.SQL(", ").join(sql.Identifier(c) for c in columns),
+        )
+    )
+
+
 def init_db():
     with db() as conn:
         with conn.cursor() as cur:
@@ -184,10 +244,10 @@ def init_db():
                 """
                 CREATE TABLE IF NOT EXISTS attendance (
                     id SERIAL PRIMARY KEY,
-                    meeting_uuid TEXT NOT NULL,
-                    participant_name TEXT NOT NULL,
+                    meeting_uuid TEXT,
+                    participant_name TEXT,
                     participant_email TEXT,
-                    participant_key TEXT NOT NULL,
+                    participant_key TEXT,
                     first_join TIMESTAMPTZ,
                     last_leave TIMESTAMPTZ,
                     total_seconds INTEGER NOT NULL DEFAULT 0,
@@ -199,8 +259,7 @@ def init_db():
                     status TEXT DEFAULT 'JOINED',
                     final_status TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE(meeting_uuid, participant_key)
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """
             )
@@ -215,9 +274,67 @@ def init_db():
                 )
                 """
             )
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_attendance_meeting_uuid ON attendance(meeting_uuid)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_attendance_member_id ON attendance(member_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)")
+
+            # Schema hardening for older deployed databases
+            ensure_column(cur, "users", "username", "TEXT")
+            ensure_column(cur, "users", "password_hash", "TEXT")
+            ensure_column(cur, "users", "role", "TEXT NOT NULL DEFAULT 'viewer'")
+            ensure_column(cur, "users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE")
+            ensure_column(cur, "users", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+            ensure_column(cur, "settings", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+            ensure_column(cur, "members", "full_name", "TEXT")
+            ensure_column(cur, "members", "email", "TEXT")
+            ensure_column(cur, "members", "phone", "TEXT")
+            ensure_column(cur, "members", "tags", "TEXT")
+            ensure_column(cur, "members", "active", "BOOLEAN NOT NULL DEFAULT TRUE")
+            ensure_column(cur, "members", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+            ensure_column(cur, "meetings", "meeting_uuid", "TEXT")
+            ensure_column(cur, "meetings", "meeting_id", "TEXT")
+            ensure_column(cur, "meetings", "topic", "TEXT")
+            ensure_column(cur, "meetings", "host_name", "TEXT")
+            ensure_column(cur, "meetings", "start_time", "TIMESTAMPTZ")
+            ensure_column(cur, "meetings", "end_time", "TIMESTAMPTZ")
+            ensure_column(cur, "meetings", "status", "TEXT NOT NULL DEFAULT 'live'")
+            ensure_column(cur, "meetings", "source", "TEXT NOT NULL DEFAULT 'webhook'")
+            ensure_column(cur, "meetings", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            ensure_column(cur, "meetings", "finalized_at", "TIMESTAMPTZ")
+            ensure_column(cur, "meetings", "unique_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(cur, "meetings", "member_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(cur, "meetings", "unknown_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(cur, "meetings", "present_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(cur, "meetings", "late_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(cur, "meetings", "absent_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(cur, "meetings", "host_present", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(cur, "meetings", "notes", "TEXT")
+
+            ensure_column(cur, "attendance", "meeting_uuid", "TEXT")
+            ensure_column(cur, "attendance", "participant_name", "TEXT")
+            ensure_column(cur, "attendance", "participant_email", "TEXT")
+            ensure_column(cur, "attendance", "participant_key", "TEXT")
+            ensure_column(cur, "attendance", "first_join", "TIMESTAMPTZ")
+            ensure_column(cur, "attendance", "last_leave", "TIMESTAMPTZ")
+            ensure_column(cur, "attendance", "total_seconds", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(cur, "attendance", "rejoin_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(cur, "attendance", "current_join", "TIMESTAMPTZ")
+            ensure_column(cur, "attendance", "is_member", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(cur, "attendance", "member_id", "INTEGER")
+            ensure_column(cur, "attendance", "is_host", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(cur, "attendance", "status", "TEXT DEFAULT 'JOINED'")
+            ensure_column(cur, "attendance", "final_status", "TEXT")
+            ensure_column(cur, "attendance", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            ensure_column(cur, "attendance", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+            ensure_column(cur, "activity_log", "username", "TEXT")
+            ensure_column(cur, "activity_log", "action", "TEXT")
+            ensure_column(cur, "activity_log", "details", "TEXT")
+            ensure_column(cur, "activity_log", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+            ensure_index(cur, "idx_attendance_meeting_uuid", "attendance", ["meeting_uuid"])
+            ensure_index(cur, "idx_attendance_member_id", "attendance", ["member_id"])
+            ensure_index(cur, "idx_meetings_status", "meetings", ["status"])
 
             for key, value in DEFAULT_SETTINGS.items():
                 cur.execute(
@@ -662,11 +779,7 @@ def analytics_data(filters):
 
     top_people = sorted(by_person.values(), key=lambda x: (x["present"], x["minutes"]), reverse=True)[:5]
     low_people = sorted(by_person.values(), key=lambda x: (x["present"], -x["absent"], -x["minutes"]))[:5]
-    unknown_board = sorted(
-        [v for k, v in by_person.items() if any(r["participant_name"] == k and not r["is_member"] for r in rows)],
-        key=lambda x: x["meetings"],
-        reverse=True
-    )[:10]
+    unknown_board = sorted([v for k, v in by_person.items() if any(r["participant_name"] == k and not r["is_member"] for r in rows)], key=lambda x: x["meetings"], reverse=True)[:10]
 
     return {
         "filters": filters,
@@ -860,14 +973,10 @@ def page(title, body, active="home"):
 
 @app.before_request
 def startup_once():
+    if app.config.get("_DB_READY"):
+        return
     init_db()
-
-
-@app.route("/", methods=["GET", "HEAD"])
-def index():
-    if session.get("user_id"):
-        return redirect(url_for("home"))
-    return redirect(url_for("login"))
+    app.config["_DB_READY"] = True
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -907,6 +1016,13 @@ def login():
 def logout():
     log_activity("logout", f"{session.get('username')} logged out")
     session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/", methods=["GET", "HEAD"])
+def index():
+    if session.get("user_id"):
+        return redirect(url_for("home"))
     return redirect(url_for("login"))
 
 
@@ -1137,10 +1253,7 @@ def members():
     with db() as conn:
         with conn.cursor() as cur:
             if q:
-                cur.execute(
-                    "SELECT * FROM members WHERE lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s ORDER BY active DESC, full_name",
-                    (f"%{q}%", f"%{q}%")
-                )
+                cur.execute("SELECT * FROM members WHERE lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s ORDER BY active DESC, full_name", (f"%{q}%", f"%{q}%"))
             else:
                 cur.execute("SELECT * FROM members ORDER BY active DESC, full_name")
             rows = cur.fetchall()
@@ -1605,11 +1718,7 @@ def zoom_webhook():
     if event in ("meeting.participant_joined", "meeting.participant_left"):
         meeting = ensure_meeting(obj)
         meeting_uuid = meeting["meeting_uuid"]
-        event_time = parse_dt(
-            participant.get("join_time")
-            or participant.get("leave_time")
-            or payload.get("event_ts") / 1000 if isinstance(payload.get("event_ts"), (int, float)) else now_local()
-        )
+        event_time = parse_dt(participant.get("join_time") or participant.get("leave_time") or payload.get("event_ts") / 1000 if isinstance(payload.get("event_ts"), (int, float)) else now_local())
         participant_name = participant.get("user_name") or participant.get("participant_user_name") or participant.get("name") or "Unknown Participant"
         participant_email = participant.get("email") or participant.get("user_email") or None
         update_participant(meeting_uuid, participant_name, participant_email, event_time, "join" if event.endswith("joined") else "leave")
