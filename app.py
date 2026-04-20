@@ -31,6 +31,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
+
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 TIMEZONE_NAME = os.getenv("TIMEZONE_NAME", "Asia/Kolkata")
 ZOOM_SECRET_TOKEN = os.getenv("ZOOM_SECRET_TOKEN", "")
@@ -45,7 +46,7 @@ DEFAULT_SETTINGS = {
 
 DB_INITIALIZED = False
 
-# Old DB compatibility
+# Old DB compatibility helpers
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
 
@@ -74,13 +75,6 @@ def fmt_dt(dt):
         return "-"
     parsed = parse_dt(dt)
     return parsed.strftime("%d-%m-%Y %H:%M:%S") if parsed else "-"
-
-
-def fmt_time(dt):
-    if not dt:
-        return "-"
-    parsed = parse_dt(dt)
-    return parsed.strftime("%H:%M:%S") if parsed else "-"
 
 
 def slugify(text: str) -> str:
@@ -377,21 +371,9 @@ def init_db():
             ensure_column(conn, "activity_log", "details", "TEXT")
             ensure_column(conn, "activity_log", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 
-        ensure_index(
-            conn,
-            "idx_attendance_meeting_uuid",
-            "CREATE INDEX idx_attendance_meeting_uuid ON attendance(meeting_uuid)",
-        )
-        ensure_index(
-            conn,
-            "idx_attendance_member_id",
-            "CREATE INDEX idx_attendance_member_id ON attendance(member_id)",
-        )
-        ensure_index(
-            conn,
-            "idx_meetings_status",
-            "CREATE INDEX idx_meetings_status ON meetings(status)",
-        )
+        ensure_index(conn, "idx_attendance_meeting_uuid", "CREATE INDEX idx_attendance_meeting_uuid ON attendance(meeting_uuid)")
+        ensure_index(conn, "idx_attendance_member_id", "CREATE INDEX idx_attendance_member_id ON attendance(member_id)")
+        ensure_index(conn, "idx_meetings_status", "CREATE INDEX idx_meetings_status ON meetings(status)")
 
         with conn.cursor() as cur:
             for key, value in DEFAULT_SETTINGS.items():
@@ -823,6 +805,7 @@ def analytics_data(filters):
         by_person.setdefault(key, {"name": key, "meetings": 0, "minutes": 0, "present": 0, "late": 0, "absent": 0})
         by_person[key]["meetings"] += 1
         by_person[key]["minutes"] += (r.get("total_seconds") or 0) / 60
+
         if r.get("final_status") == "PRESENT":
             by_person[key]["present"] += 1
         elif r.get("final_status") == "LATE":
@@ -842,12 +825,14 @@ def analytics_data(filters):
                 "unknown": 0,
             },
         )
+
         if r.get("final_status") == "PRESENT":
             by_meeting[mk]["present"] += 1
         elif r.get("final_status") == "LATE":
             by_meeting[mk]["late"] += 1
         elif r.get("final_status") == "ABSENT":
             by_meeting[mk]["absent"] += 1
+
         if not r.get("is_member"):
             by_meeting[mk]["unknown"] += 1
 
@@ -910,11 +895,14 @@ def export_pdf_bytes(title, rows, summary):
     styles = getSampleStyleSheet()
     elements = [Paragraph(f"<b>{title}</b>", styles["Title"]), Spacer(1, 12)]
     elements.append(Paragraph(f"Generated: {fmt_dt(now_local())}", styles["Normal"]))
-    elements.append(Paragraph(
-        f"Total: {summary['total_rows']} | Present: {summary['present_rows']} | Late: {summary['late_rows']} | Absent: {summary['absent_rows']} | Unknown: {summary['unknown_rows']}",
-        styles["Normal"],
-    ))
+    elements.append(
+        Paragraph(
+            f"Total: {summary['total_rows']} | Present: {summary['present_rows']} | Late: {summary['late_rows']} | Absent: {summary['absent_rows']} | Unknown: {summary['unknown_rows']}",
+            styles["Normal"],
+        )
+    )
     elements.append(Spacer(1, 12))
+
     data = [["Topic", "Participant", "Member", "Duration", "Rejoins", "Status"]]
     for r in rows[:120]:
         data.append([
@@ -925,6 +913,7 @@ def export_pdf_bytes(title, rows, summary):
             str(r.get("rejoin_count") or 0),
             r.get("final_status") or "-",
         ])
+
     table = Table(data, repeatRows=1)
     style = TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
@@ -933,6 +922,7 @@ def export_pdf_bytes(title, rows, summary):
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
     ])
+
     for i in range(1, len(data)):
         status = data[i][5]
         if status == "PRESENT":
@@ -941,6 +931,7 @@ def export_pdf_bytes(title, rows, summary):
             style.add("TEXTCOLOR", (5, i), (5, i), colors.orange)
         else:
             style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
+
     table.setStyle(style)
     elements.append(table)
     doc.build(elements)
@@ -1216,10 +1207,10 @@ def home():
                     <div><b>{{ recent_meetings[0].topic or 'Untitled Meeting' }}</b></div>
                     <div class='muted'>{{ fmt_dt(recent_meetings[0].start_time) }}</div>
                     <div class='row' style='margin-top:12px'>
-                        <span class='badge ok'>Present {{ recent_meetings[0].present_count }}</span>
-                        <span class='badge warn'>Late {{ recent_meetings[0].late_count }}</span>
-                        <span class='badge danger'>Absent {{ recent_meetings[0].absent_count }}</span>
-                        <span class='badge info'>Unknown {{ recent_meetings[0].unknown_participants }}</span>
+                        <span class='badge ok'>Present {{ recent_meetings[0].present_count or 0 }}</span>
+                        <span class='badge warn'>Late {{ recent_meetings[0].late_count or 0 }}</span>
+                        <span class='badge danger'>Absent {{ recent_meetings[0].absent_count or 0 }}</span>
+                        <span class='badge info'>Unknown {{ recent_meetings[0].unknown_participants or 0 }}</span>
                     </div>
                 {% else %}
                     <div class='muted'>No meetings yet.</div>
@@ -1244,8 +1235,8 @@ def home():
                         <tr>
                             <td>{{ fmt_dt(m.start_time) }}</td>
                             <td>{{ m.topic or 'Untitled Meeting' }}</td>
-                            <td>{{ m.status }}</td>
-                            <td>{{ m.unique_participants }}</td>
+                            <td>{{ m.status or '-' }}</td>
+                            <td>{{ m.unique_participants or 0 }}</td>
                         </tr>
                     {% endfor %}
                 </table>
@@ -1349,6 +1340,7 @@ def live():
 def members():
     if request.method == "POST":
         action = request.form.get("action")
+
         if action == "add" and session.get("role") == "admin":
             full_name = request.form.get("full_name", "").strip()
             email = request.form.get("email", "").strip() or None
@@ -1364,14 +1356,19 @@ def members():
                     conn.commit()
                 log_activity("member_add", full_name)
                 flash("Member added successfully.", "success")
+
         elif action == "toggle" and session.get("role") == "admin":
             member_id = int(request.form.get("member_id"))
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE members SET active = CASE WHEN CAST(active AS TEXT) IN ('1','true','t','True','TRUE') THEN 0 ELSE 1 END WHERE id=%s", (member_id,))
+                    cur.execute(
+                        "UPDATE members SET active = CASE WHEN CAST(active AS TEXT) IN ('1','true','t','True','TRUE') THEN 0 ELSE 1 END WHERE id=%s",
+                        (member_id,),
+                    )
                 conn.commit()
             log_activity("member_toggle", str(member_id))
             flash("Member status updated.", "success")
+
         elif action == "import_csv" and session.get("role") == "admin":
             file = request.files.get("csv_file")
             imported = 0
@@ -1395,6 +1392,7 @@ def members():
                     conn.commit()
                 log_activity("member_import", f"Imported {imported} members")
                 flash(f"Imported {imported} members.", "success")
+
         return redirect(url_for("members"))
 
     q = request.args.get("q", "").strip().lower()
@@ -1402,7 +1400,7 @@ def members():
         with conn.cursor() as cur:
             if q:
                 cur.execute(
-                    f"SELECT * FROM members WHERE (lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s) ORDER BY id DESC",
+                    "SELECT * FROM members WHERE (lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s) ORDER BY id DESC",
                     (f"%{q}%", f"%{q}%"),
                 )
             else:
@@ -1424,7 +1422,9 @@ def members():
                     <label>Tags</label><input name='tags' placeholder='team, batch, group'>
                     <button type='submit'>Save Member</button>
                 </form>
-                {% else %}<div class='muted'>Viewer can only view members.</div>{% endif %}
+                {% else %}
+                    <div class='muted'>Viewer can only view members.</div>
+                {% endif %}
             </div>
             <div class='card'>
                 <h3>CSV Import</h3>
@@ -1486,6 +1486,7 @@ def members():
 def users():
     if request.method == "POST":
         action = request.form.get("action")
+
         if action == "add":
             username = request.form.get("username", "").strip()
             password = request.form.get("password", "")
@@ -1500,14 +1501,19 @@ def users():
                     conn.commit()
                 log_activity("user_add", username)
                 flash("User created.", "success")
+
         elif action == "toggle":
             user_id = int(request.form.get("user_id"))
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE users SET is_active = CASE WHEN CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE') THEN 0 ELSE 1 END WHERE id=%s", (user_id,))
+                    cur.execute(
+                        "UPDATE users SET is_active = CASE WHEN CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE') THEN 0 ELSE 1 END WHERE id=%s",
+                        (user_id,),
+                    )
                 conn.commit()
             log_activity("user_toggle", str(user_id))
             flash("User status updated.", "success")
+
         elif action == "password":
             user_id = int(request.form.get("user_id"))
             new_password = request.form.get("new_password", "")
@@ -1518,6 +1524,7 @@ def users():
                     conn.commit()
                 log_activity("user_password", str(user_id))
                 flash("Password changed.", "success")
+
         return redirect(url_for("users"))
 
     with db() as conn:
@@ -1536,7 +1543,10 @@ def users():
                     <label>Username</label><input name='username' required>
                     <label>Password</label><input name='password' required>
                     <label>Role</label>
-                    <select name='role'><option value='viewer'>viewer</option><option value='admin'>admin</option></select>
+                    <select name='role'>
+                        <option value='viewer'>viewer</option>
+                        <option value='admin'>admin</option>
+                    </select>
                     <button type='submit'>Create</button>
                 </form>
             </div>
@@ -1615,7 +1625,9 @@ def analytics():
                         <select name='meeting_uuid'>
                             <option value=''>All meetings</option>
                             {% for m in data.meetings %}
-                            <option value='{{ m.meeting_uuid }}' {% if filters.meeting_uuid == m.meeting_uuid %}selected{% endif %}>{{ m.topic or 'Untitled Meeting' }} - {{ fmt_dt(m.start_time) }}</option>
+                            <option value='{{ m.meeting_uuid }}' {% if filters.meeting_uuid == m.meeting_uuid %}selected{% endif %}>
+                                {{ m.topic or 'Untitled Meeting' }} - {{ fmt_dt(m.start_time) }}
+                            </option>
                             {% endfor %}
                         </select>
                     </div>
@@ -1756,18 +1768,30 @@ def meetings():
         <h2 class='section-title'>Meetings</h2>
         <div class='card'>
             <table>
-                <tr><th>Date</th><th>Topic</th><th>Status</th><th>Participants</th><th>Members</th><th>Unknown</th><th>Reports</th></tr>
+                <tr>
+                    <th>Date</th>
+                    <th>Topic</th>
+                    <th>Status</th>
+                    <th>Participants</th>
+                    <th>Members</th>
+                    <th>Unknown</th>
+                    <th>Reports</th>
+                </tr>
                 {% for m in rows %}
                 <tr>
                     <td>{{ fmt_dt(m.start_time) }}</td>
                     <td>{{ m.topic or 'Untitled Meeting' }}</td>
-                    <td>{{ m.status }}</td>
-                    <td>{{ m.unique_participants }}</td>
-                    <td>{{ m.member_participants }}</td>
-                    <td>{{ m.unknown_participants }}</td>
+                    <td>{{ m.status or '-' }}</td>
+                    <td>{{ m.unique_participants or 0 }}</td>
+                    <td>{{ m.member_participants or 0 }}</td>
+                    <td>{{ m.unknown_participants or 0 }}</td>
                     <td>
-                        <a class='btn success' href='{{ url_for("meeting_csv", meeting_uuid=m.meeting_uuid) }}'>CSV</a>
-                        <a class='btn secondary' href='{{ url_for("meeting_pdf", meeting_uuid=m.meeting_uuid) }}'>PDF</a>
+                        {% if m.meeting_uuid %}
+                            <a class='btn success' href='{{ url_for("meeting_csv", meeting_uuid=m.meeting_uuid) }}'>CSV</a>
+                            <a class='btn secondary' href='{{ url_for("meeting_pdf", meeting_uuid=m.meeting_uuid) }}'>PDF</a>
+                        {% else %}
+                            <span class='badge danger'>No UUID / old record</span>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -1783,17 +1807,34 @@ def meetings():
 @app.route("/meetings/<meeting_uuid>/report.csv")
 @login_required
 def meeting_csv(meeting_uuid):
+    if not meeting_uuid:
+        flash("Meeting UUID missing for this record.", "error")
+        return redirect(url_for("meetings"))
+
     data = analytics_data({"meeting_uuid": meeting_uuid})
     content = export_csv_bytes(data["rows"])
-    return Response(content, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename={slugify(meeting_uuid)}.csv"})
+    return Response(
+        content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={slugify(meeting_uuid)}.csv"},
+    )
 
 
 @app.route("/meetings/<meeting_uuid>/report.pdf")
 @login_required
 def meeting_pdf(meeting_uuid):
+    if not meeting_uuid:
+        flash("Meeting UUID missing for this record.", "error")
+        return redirect(url_for("meetings"))
+
     data = analytics_data({"meeting_uuid": meeting_uuid})
     pdf = export_pdf_bytes("Meeting Report", data["rows"], data["summary"])
-    return send_file(io.BytesIO(pdf), download_name=f"{slugify(meeting_uuid)}.pdf", mimetype="application/pdf", as_attachment=True)
+    return send_file(
+        io.BytesIO(pdf),
+        download_name=f"{slugify(meeting_uuid)}.pdf",
+        mimetype="application/pdf",
+        as_attachment=True,
+    )
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -1867,7 +1908,11 @@ def zoom_webhook():
 
     if payload.get("event") == "endpoint.url_validation":
         plain = payload.get("payload", {}).get("plainToken", "")
-        encrypted = hmac.new(ZOOM_SECRET_TOKEN.encode("utf-8"), plain.encode("utf-8"), hashlib.sha256).hexdigest() if ZOOM_SECRET_TOKEN else ""
+        encrypted = hmac.new(
+            ZOOM_SECRET_TOKEN.encode("utf-8"),
+            plain.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest() if ZOOM_SECRET_TOKEN else ""
         return jsonify({"plainToken": plain, "encryptedToken": encrypted})
 
     if not verify_zoom_signature(request):
@@ -1897,9 +1942,21 @@ def zoom_webhook():
         )
         event_time = parse_dt(event_raw) or now_local()
 
-        participant_name = participant.get("user_name") or participant.get("participant_user_name") or participant.get("name") or "Unknown Participant"
+        participant_name = (
+            participant.get("user_name")
+            or participant.get("participant_user_name")
+            or participant.get("name")
+            or "Unknown Participant"
+        )
         participant_email = participant.get("email") or participant.get("user_email") or None
-        update_participant(meeting_uuid, participant_name, participant_email, event_time, "join" if event.endswith("joined") else "leave")
+
+        update_participant(
+            meeting_uuid,
+            participant_name,
+            participant_email,
+            event_time,
+            "join" if event.endswith("joined") else "leave",
+        )
         log_activity("zoom_participant_event", f"{event} :: {participant_name}")
         return jsonify({"ok": True})
 
