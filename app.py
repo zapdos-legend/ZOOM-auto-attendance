@@ -330,12 +330,18 @@ def fix_database_compatibility():
                               AND column_name='start_time'
                               AND data_type='text'
                         ) THEN
-                            ALTER TABLE meetings
-                            ALTER COLUMN start_time DROP DEFAULT;
+                            ALTER TABLE meetings ALTER COLUMN start_time DROP DEFAULT;
 
                             ALTER TABLE meetings
                             ALTER COLUMN start_time TYPE TIMESTAMPTZ
-                            USING NULLIF(start_time, '')::timestamptz;
+                            USING (
+                                CASE
+                                    WHEN start_time IS NULL OR btrim(start_time) = '' THEN NULL
+                                    WHEN btrim(start_time) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN start_time::timestamptz
+                                    WHEN btrim(start_time) ~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}' THEN to_timestamp(start_time, 'MM/DD/YYYY HH12:MI:SS AM')
+                                    ELSE NULL
+                                END
+                            );
                         END IF;
                     END$$;
                     """
@@ -353,12 +359,18 @@ def fix_database_compatibility():
                               AND column_name='end_time'
                               AND data_type='text'
                         ) THEN
-                            ALTER TABLE meetings
-                            ALTER COLUMN end_time DROP DEFAULT;
+                            ALTER TABLE meetings ALTER COLUMN end_time DROP DEFAULT;
 
                             ALTER TABLE meetings
                             ALTER COLUMN end_time TYPE TIMESTAMPTZ
-                            USING NULLIF(end_time, '')::timestamptz;
+                            USING (
+                                CASE
+                                    WHEN end_time IS NULL OR btrim(end_time) = '' THEN NULL
+                                    WHEN btrim(end_time) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN end_time::timestamptz
+                                    WHEN btrim(end_time) ~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}' THEN to_timestamp(end_time, 'MM/DD/YYYY HH12:MI:SS AM')
+                                    ELSE NULL
+                                END
+                            );
                         END IF;
                     END$$;
                     """
@@ -368,8 +380,6 @@ def fix_database_compatibility():
             except Exception:
                 conn.rollback()
                 raise
-
-
 def get_setting(name, cast=str):
     value = DEFAULT_SETTINGS.get(name)
     with db() as conn:
