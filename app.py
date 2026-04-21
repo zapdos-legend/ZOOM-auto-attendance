@@ -93,8 +93,73 @@ def fmt_time(dt):
     return parsed.strftime("%H:%M:%S") if parsed else "-"
 
 
+def fmt_time_ampm(dt):
+    parsed = parse_dt(dt)
+    return parsed.strftime("%I:%M:%S %p") if parsed else "-"
+
+
 def mins_from_seconds(value):
     return round((value or 0) / 60, 2)
+
+
+def member_display_name(row):
+    if not row:
+        return "-"
+    return (row.get("full_name") or row.get("name") or "-").strip() or "-"
+
+
+def member_name_sql(conn):
+    has_full_name = column_exists(conn, "members", "full_name")
+    has_name = column_exists(conn, "members", "name")
+    if has_full_name and has_name:
+        return "COALESCE(NULLIF(full_name, ''), NULLIF(name, ''))"
+    if has_full_name:
+        return "full_name"
+    if has_name:
+        return "name"
+    return "NULL"
+
+
+def insert_member_record(cur, conn, full_name, email, phone, active_value):
+    has_full_name = column_exists(conn, "members", "full_name")
+    has_name = column_exists(conn, "members", "name")
+
+    if has_full_name and has_name:
+        cur.execute(
+            "INSERT INTO members(full_name, name, email, phone, active) VALUES (%s,%s,%s,%s,%s)",
+            (full_name, full_name, email, phone, active_value),
+        )
+    elif has_full_name:
+        cur.execute(
+            "INSERT INTO members(full_name, email, phone, active) VALUES (%s,%s,%s,%s)",
+            (full_name, email, phone, active_value),
+        )
+    elif has_name:
+        cur.execute(
+            "INSERT INTO members(name, email, phone, active) VALUES (%s,%s,%s,%s)",
+            (full_name, email, phone, active_value),
+        )
+
+
+def update_member_record(cur, conn, member_id, full_name, email, phone):
+    has_full_name = column_exists(conn, "members", "full_name")
+    has_name = column_exists(conn, "members", "name")
+
+    if has_full_name and has_name:
+        cur.execute(
+            "UPDATE members SET full_name=%s, name=%s, email=%s, phone=%s WHERE id=%s",
+            (full_name, full_name, email, phone, member_id),
+        )
+    elif has_full_name:
+        cur.execute(
+            "UPDATE members SET full_name=%s, email=%s, phone=%s WHERE id=%s",
+            (full_name, email, phone, member_id),
+        )
+    elif has_name:
+        cur.execute(
+            "UPDATE members SET name=%s, email=%s, phone=%s WHERE id=%s",
+            (full_name, email, phone, member_id),
+        )
 
 
 def slugify(text: str) -> str:
@@ -680,6 +745,7 @@ def find_member(name: str, email: str | None = None):
     norm_email = (email or "").strip().lower()
     with db() as conn:
         with conn.cursor() as cur:
+            name_sql = member_name_sql(conn)
             if norm_email:
                 cur.execute(
                     f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} AND lower(email)=%s LIMIT 1",
@@ -689,7 +755,7 @@ def find_member(name: str, email: str | None = None):
                 if row:
                     return row
             cur.execute(
-                f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} AND lower(full_name)=%s LIMIT 1",
+                f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} AND lower(COALESCE({name_sql}, ''))=%s LIMIT 1",
                 (norm_name,),
             )
             row = cur.fetchone()
@@ -1397,6 +1463,234 @@ def analytics_data(filters):
     }
 
 
+def build_meeting_report_data(meeting_uuid):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+            meeting = cur.fetchone()
+            if not meeting:
+                return None
+
+            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
+            attendance_rows = cur.fetchall()
+
+            cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY id")
+            active_members = cur.fetchall()
+
+    start_time = parse_dt(meeting.get("start_time")) or now_local()
+    end_time = parse_dt(meeting.get("end_time"))
+    if not end_time:
+        last_points = []
+        for row in attendance_rows:
+            for key in ("last_leave", "updated_at", "first_join", "current_join"):
+                candidate = parse_dt(row.get(key))
+                if candidate:
+                    last_points.append(candidate)
+        end_time = max(last_points) if last_points else now_local()
+    if end_time < start_time:
+        end_time = start_time
+
+    present_threshold_minutes = round(max((end_time - start_time).total_seconds(), 0) / 60 * get_setting("present_percentage", int) / 100.0, 2)
+    late_summary_threshold_minutes = round(max((end_time - start_time).total_seconds(), 0) / 60 * get_setting("late_count_as_present_percentage", int) / 100.0, 2)
+
+    joined_member_ids = set()
+    joined_actual_count = 0
+    report_rows = []
+    present_members_count = 0
+    absent_members_count = 0
+    unknown_participants_count = 0
+
+    for row in attendance_rows:
+        final_status = row.get("final_status")
+        if not final_status:
+            final_status, total_seconds = classify_row_for_meeting(row, start_time, end_time)
+        else:
+            total_seconds = row.get("total_seconds") or 0
+            if row.get("current_join"):
+                total_seconds += max(int((end_time - parse_dt(row.get("current_join"))).total_seconds()), 0)
+
+        join_seen = bool(row.get("first_join") or row.get("last_leave") or row.get("current_join") or total_seconds > 0)
+        if join_seen:
+            joined_actual_count += 1
+
+        if row.get("member_id"):
+            joined_member_ids.add(row.get("member_id"))
+
+        display_status = "HOST" if row.get("is_host") else final_status
+
+        if row.get("is_member") and final_status == "PRESENT":
+            present_members_count += 1
+        if (not row.get("is_member")) and join_seen:
+            unknown_participants_count += 1
+
+        report_rows.append(
+            {
+                "participant_name": row.get("participant_name") or "-",
+                "join_display": fmt_time_ampm(row.get("first_join")) if row.get("first_join") else "-",
+                "leave_display": fmt_time_ampm(row.get("last_leave")) if row.get("last_leave") else "-",
+                "duration_minutes": mins_from_seconds(total_seconds),
+                "rejoin_count": row.get("rejoin_count") or 0,
+                "status": display_status,
+                "is_unknown_joined": (not row.get("is_member")) and join_seen,
+            }
+        )
+
+    for member in active_members:
+        if member.get("id") not in joined_member_ids:
+            absent_members_count += 1
+            report_rows.append(
+                {
+                    "participant_name": member_display_name(member),
+                    "join_display": "-",
+                    "leave_display": "-",
+                    "duration_minutes": 0.0,
+                    "rejoin_count": 0,
+                    "status": "ABSENT",
+                    "is_unknown_joined": False,
+                }
+            )
+
+    def status_order(item):
+        order = {"HOST": 0, "PRESENT": 1, "LATE": 2, "ABSENT": 3}
+        return (order.get(item["status"], 99), item["participant_name"].lower())
+
+    report_rows = sorted(report_rows, key=status_order)
+
+    summary = {
+        "topic": meeting.get("topic") or "Zoom Meeting",
+        "meeting_id": meeting.get("meeting_id") or "-",
+        "date": fmt_date(start_time),
+        "start_time": fmt_time_ampm(start_time),
+        "end_time": fmt_time_ampm(end_time),
+        "meeting_duration_minutes": mins_from_seconds(int((end_time - start_time).total_seconds())),
+        "total_participants": joined_actual_count,
+        "total_members": len(active_members),
+        "total_present_members": present_members_count,
+        "total_absent_members": absent_members_count,
+        "total_unknown_participants": unknown_participants_count,
+        "present_threshold_minutes": present_threshold_minutes,
+        "late_summary_threshold_minutes": late_summary_threshold_minutes,
+    }
+    return {"meeting": meeting, "rows": report_rows, "summary": summary}
+
+
+def export_meeting_pdf_bytes(title, report_data):
+    meeting = report_data["meeting"]
+    rows = report_data["rows"]
+    summary = report_data["summary"]
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
+    styles = getSampleStyleSheet()
+    elements = []
+
+    title_style = styles["Title"]
+    title_style.alignment = 1
+    elements.append(Paragraph(f"<b>{title}</b>", title_style))
+    elements.append(Spacer(1, 12))
+
+    info_lines = [
+        f"Topic: {summary['topic']}",
+        f"Meeting ID: {summary['meeting_id']}",
+        f"Date: {summary['date']}",
+        f"Start Time: {summary['start_time']}",
+        f"End Time: {summary['end_time']}",
+        f"Total Meeting Duration: {summary['meeting_duration_minutes']} minutes",
+    ]
+    for line in info_lines:
+        elements.append(Paragraph(line, styles["Normal"]))
+
+    elements.append(Spacer(1, 10))
+
+    table_data = [["Name", "Join", "Leave", "Duration", "Rejoins", "Status"]]
+    for row in rows:
+        name_value = row["participant_name"]
+        if row["is_unknown_joined"]:
+            name_value = f'<font color="red">{name_value}</font>'
+        table_data.append(
+            [
+                Paragraph(name_value, styles["Normal"]),
+                row["join_display"],
+                row["leave_display"],
+                str(row["duration_minutes"]),
+                str(row["rejoin_count"]),
+                row["status"],
+            ]
+        )
+
+    table = Table(table_data, repeatRows=1, colWidths=[190, 75, 75, 60, 55, 65])
+    table_style = TableStyle(
+        [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]
+    )
+
+    for i in range(1, len(table_data)):
+        status = rows[i - 1]["status"]
+        if status == "PRESENT":
+            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.green)
+        elif status == "LATE":
+            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.orange)
+        elif status == "ABSENT":
+            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
+        elif status == "HOST":
+            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.HexColor("#1d4ed8"))
+
+    table.setStyle(table_style)
+    elements.append(table)
+    elements.append(Spacer(1, 12))
+
+    summary_lines = [
+        f"Total Participants: {summary['total_participants']}",
+        f"Total Members: {summary['total_members']}",
+        f"Total Present Members: {summary['total_present_members']}",
+        f"Total Absent Members: {summary['total_absent_members']}",
+        f"Total Unknown Participants: {summary['total_unknown_participants']}",
+    ]
+    for line in summary_lines:
+        elements.append(Paragraph(line, styles["Normal"]))
+
+    elements.append(Spacer(1, 10))
+
+    criteria_data = [[
+        Paragraph(
+            "<b>■ Attendance Criteria</b><br/>"
+            "■ Present = Duration ≥ 75% of total meeting duration<br/>"
+            "■ Late = Duration &lt; 75% of total meeting duration<br/>"
+            "■ Absent = Did not join the meeting (for added members only)<br/><br/>"
+            f"<b>■ Present Threshold For This Meeting: {summary['present_threshold_minutes']} minutes</b><br/>"
+            f"<b>■ Late counted as present in summary if Duration &gt; {summary['late_summary_threshold_minutes']} minutes</b>",
+            styles["Normal"],
+        )
+    ]]
+    criteria_table = Table(criteria_data, colWidths=[540])
+    criteria_table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    elements.append(criteria_table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def export_csv_bytes(rows):
     out = io.StringIO()
     writer = csv.writer(out)
@@ -1782,6 +2076,15 @@ BASE_HTML = """
         }
         .top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
         .kpi-note{font-size:12px;color:var(--muted)}
+        .toggle-form{display:inline-flex;align-items:center}
+        .toggle-switch{position:relative;width:92px;height:40px;border:none;border-radius:999px;padding:0;cursor:pointer;box-shadow:none;overflow:hidden;background:linear-gradient(180deg,#ef4444,#dc2626)}
+        .toggle-switch.on{background:linear-gradient(180deg,#22c55e,#16a34a)}
+        .toggle-switch.off{background:linear-gradient(180deg,#ef4444,#dc2626)}
+        .toggle-switch .toggle-knob{position:absolute;top:4px;left:4px;width:32px;height:32px;border-radius:50%;background:#fff;transition:left .2s ease}
+        .toggle-switch.on .toggle-knob{left:56px}
+        .toggle-switch .toggle-icon{position:absolute;top:50%;transform:translateY(-50%);font-size:20px;font-weight:900;line-height:1;color:rgba(0,0,0,.45)}
+        .toggle-switch .toggle-on{left:18px}
+        .toggle-switch .toggle-off{right:18px}
         @media (max-width: 920px){
             .wrap{display:block}
             .sidebar{width:100%;border-right:none;border-bottom:1px solid rgba(148,163,184,.25)}
@@ -2149,6 +2452,8 @@ def home():
         recent_meetings=recent_meetings,
         recent_activity=recent_activity,
         fmt_dt=fmt_dt,
+        fmt_time_ampm=fmt_time_ampm,
+        member_display_name=member_display_name,
         session=session,
     )
     return page("Home", body, "home")
@@ -2207,7 +2512,7 @@ def live():
 
         <br>
 
-        <div class='grid'>
+        <div class='grid' style='grid-template-columns:minmax(0,1.55fr) minmax(300px,0.85fr);align-items:start;'>
             <div class='card'>
                 <h3>Live Participants</h3>
                 <div class="table-wrap">
@@ -2223,8 +2528,8 @@ def live():
                         {% for p in live_rows %}
                         <tr>
                             <td>{{ p.participant_name }}</td>
-                            <td>{{ fmt_dt(p.first_join) }}</td>
-                            <td>{{ fmt_dt(p.last_leave) if p.last_leave else '-' }}</td>
+                            <td>{{ fmt_time_ampm(p.first_join) }}</td>
+                            <td>{{ fmt_time_ampm(p.last_leave) if p.last_leave else '-' }}</td>
                             <td>{{ p.duration_min }}</td>
                             <td>{{ p.rejoin_count }}</td>
                             <td>
@@ -2245,14 +2550,14 @@ def live():
             </div>
 
             <div class='card'>
-                <h3>Active Members Not Yet Joined</h3>
+                <h3>Active Members Who Didn't Joined Yet</h3>
                 <div class="table-wrap">
                     <table>
-                        <tr><th>Name</th><th>Email</th></tr>
+                        <tr><th>Name</th><th>Phone</th></tr>
                         {% for m in not_joined %}
                         <tr>
-                            <td>{{ m.full_name or '-' }}</td>
-                            <td>{{ m.email or '-' }}</td>
+                            <td>{{ member_display_name(m) }}</td>
+                            <td>{{ m.phone or '-' }}</td>
                         </tr>
                         {% endfor %}
                     </table>
@@ -2276,6 +2581,8 @@ def live():
         host_now="Yes" if any(p.get("is_host") and p.get("current_join") is not None for p in participants) else "No",
         not_joined=not_joined,
         fmt_dt=fmt_dt,
+        fmt_time_ampm=fmt_time_ampm,
+        member_display_name=member_display_name,
         session=session,
     )
     return page("Live", body, "live")
@@ -2306,10 +2613,7 @@ def members():
                 with db() as conn:
                     true_val = db_true_value(conn, "members", "active")
                     with conn.cursor() as cur:
-                        cur.execute(
-                            "INSERT INTO members(full_name, email, phone, active) VALUES (%s,%s,%s,%s)",
-                            (full_name, email, phone, true_val),
-                        )
+                        insert_member_record(cur, conn, full_name, email, phone, true_val)
                     conn.commit()
                 log_activity("member_add", full_name)
                 flash("Member added successfully.", "success")
@@ -2321,10 +2625,7 @@ def members():
             phone = request.form.get("phone", "").strip() or None
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE members SET full_name=%s, email=%s, phone=%s WHERE id=%s",
-                        (full_name, email, phone, member_id),
-                    )
+                    update_member_record(cur, conn, member_id, full_name, email, phone)
                 conn.commit()
             log_activity("member_edit", str(member_id))
             flash("Member updated successfully.", "success")
@@ -2366,10 +2667,7 @@ def members():
                                 continue
                             email = (row.get("email") or "").strip() or None
                             phone = (row.get("phone") or "").strip() or None
-                            cur.execute(
-                                "INSERT INTO members(full_name, email, phone, active) VALUES (%s,%s,%s,%s)",
-                                (name, email, phone, true_val),
-                            )
+                            insert_member_record(cur, conn, name, email, phone, true_val)
                             imported += 1
                     conn.commit()
                 log_activity("member_import", f"Imported {imported} members")
@@ -2382,9 +2680,10 @@ def members():
 
     with db() as conn:
         with conn.cursor() as cur:
+            member_name_field = member_name_sql(conn)
             if q:
                 cur.execute(
-                    "SELECT * FROM members WHERE (lower(full_name) LIKE %s OR lower(COALESCE(email,'')) LIKE %s) ORDER BY id DESC",
+                    f"SELECT * FROM members WHERE (lower(COALESCE({member_name_field}, '')) LIKE %s OR lower(COALESCE(email,'')) LIKE %s) ORDER BY id DESC",
                     (f"%{q}%", f"%{q}%"),
                 )
             else:
@@ -2411,7 +2710,7 @@ def members():
                     <input type='hidden' name='action' value='{{ "edit" if edit_member else "add" }}'>
                     {% if edit_member %}<input type='hidden' name='member_id' value='{{ edit_member.id }}'>{% endif %}
                     <label>Full Name</label>
-                    <input name='full_name' required value='{{ edit_member.full_name if edit_member else "" }}'>
+                    <input name='full_name' required value='{{ member_display_name(edit_member) if edit_member else "" }}'>
                     <label>Email</label>
                     <input name='email' value='{{ edit_member.email if edit_member else "" }}'>
                     <label>Phone</label>
@@ -2458,8 +2757,8 @@ def members():
                     </tr>
                     {% for m in rows %}
                         <tr>
-                            <td>{{ m.full_name or '-' }}</td>
-                            <td>{{ m.email or '-' }}</td>
+                            <td>{{ member_display_name(m) }}</td>
+                            <td>{{ m.phone or '-' }}</td>
                             <td>{{ m.phone or '-' }}</td>
                             <td>
                                 {% if m.active|string in ['1', 'True', 'true', 't'] %}
@@ -2472,10 +2771,14 @@ def members():
                             <td>
                                 <div class='row'>
                                     <a class='btn secondary small' href='{{ url_for("members", edit_id=m.id) }}'>Edit</a>
-                                    <form method='post'>
+                                    <form method='post' class='toggle-form'>
                                         <input type='hidden' name='action' value='toggle'>
                                         <input type='hidden' name='member_id' value='{{ m.id }}'>
-                                        <button type='submit' class='btn warn small'>Toggle</button>
+                                        <button type='submit' class='toggle-switch {% if m.active|string in ['1', 'True', 'true', 't'] %}on{% else %}off{% endif %}' aria-label='Toggle member status'>
+                                            <span class='toggle-knob'></span>
+                                            <span class='toggle-icon toggle-on'>✓</span>
+                                            <span class='toggle-icon toggle-off'>✕</span>
+                                        </button>
                                     </form>
                                     <form method='post' onsubmit='return confirm("Delete this member?")'>
                                         <input type='hidden' name='action' value='delete'>
@@ -2494,6 +2797,7 @@ def members():
         rows=rows,
         q=q,
         edit_member=edit_member,
+        member_display_name=member_display_name,
         session=session,
     )
     return page("Members", body, "members")
@@ -2980,6 +3284,8 @@ def meetings():
         """,
         rows=rows,
         fmt_dt=fmt_dt,
+        fmt_time_ampm=fmt_time_ampm,
+        member_display_name=member_display_name,
         session=session,
     )
     return page("Meetings", body, "meetings")
@@ -3008,8 +3314,12 @@ def meeting_pdf(meeting_uuid):
         flash("Meeting UUID missing for this record.", "error")
         return redirect(url_for("meetings"))
 
-    data = analytics_data({"meeting_uuid": meeting_uuid, "period_mode": "custom"})
-    pdf = export_pdf_bytes("Meeting Report", data["rows"], data["summary"])
+    report_data = build_meeting_report_data(meeting_uuid)
+    if not report_data:
+        flash("Meeting report data not found.", "error")
+        return redirect(url_for("meetings"))
+
+    pdf = export_meeting_pdf_bytes("Attendance Report", report_data)
     return send_file(
         io.BytesIO(pdf),
         download_name=f"{slugify(meeting_uuid)}.pdf",
