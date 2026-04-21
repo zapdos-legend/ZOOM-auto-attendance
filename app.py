@@ -4,6 +4,7 @@ import hmac
 import io
 import os
 import time
+from difflib import SequenceMatcher
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from functools import wraps
@@ -1307,6 +1308,157 @@ def predict_next_attendance(meeting_compare):
     return round(sum(totals) / len(totals)) if totals else 0
 
 
+
+
+def clamp_score(value, minimum=0, maximum=100):
+    try:
+        value = float(value)
+    except Exception:
+        value = 0.0
+    return round(max(minimum, min(maximum, value)), 2)
+
+
+def calculate_attendance_score(present_count, late_count, absent_count):
+    total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
+    if total <= 0:
+        return 0.0
+    raw = (int(present_count or 0) * 10) + (int(late_count or 0) * 5) - (int(absent_count or 0) * 10)
+    raw_min = total * -10
+    raw_max = total * 10
+    if raw_max == raw_min:
+        return 0.0
+    normalized = ((raw - raw_min) / (raw_max - raw_min)) * 100.0
+    return clamp_score(normalized)
+
+
+def calculate_engagement_score(minutes_attended, rejoins, meetings_count, present_count, late_count, absent_count, avg_minutes_reference):
+    meetings_count = max(int(meetings_count or 0), 0)
+    if meetings_count <= 0:
+        return 0.0
+    avg_minutes_reference = max(float(avg_minutes_reference or 0), 1.0)
+    minutes_attended = max(float(minutes_attended or 0), 0.0)
+    rejoins = max(float(rejoins or 0), 0.0)
+    attended_ratio = min(minutes_attended / (avg_minutes_reference * meetings_count), 1.25)
+    attended_component = min(attended_ratio / 1.25, 1.0) * 55.0
+    consistency_ratio = ((int(present_count or 0) * 1.0) + (int(late_count or 0) * 0.6)) / meetings_count
+    consistency_component = min(max(consistency_ratio, 0.0), 1.0) * 30.0
+    rejoins_per_meeting = rejoins / meetings_count
+    rejoin_component = max(0.0, 15.0 - min(rejoins_per_meeting * 7.5, 15.0))
+    return clamp_score(attended_component + consistency_component + rejoin_component)
+
+
+def get_risk_level(score):
+    score = clamp_score(score)
+    if score >= 80:
+        return {"label": "Safe", "emoji": "🟢", "css": "ok", "short": "SAFE"}
+    if score >= 50:
+        return {"label": "Warning", "emoji": "🟡", "css": "warn", "short": "WARNING"}
+    return {"label": "Critical", "emoji": "🔴", "css": "danger", "short": "CRITICAL"}
+
+
+def normalize_name_for_match(value):
+    return " ".join("".join(ch.lower() if ch.isalnum() else " " for ch in str(value or "")).split())
+
+
+def suggest_unknown_matches(unknown_board, members, limit=8):
+    suggestions = []
+    member_pool = []
+    for m in members or []:
+        member_name = member_display_name(m)
+        member_norm = normalize_name_for_match(member_name)
+        if member_norm:
+            member_pool.append((member_name, member_norm, m.get("id")))
+
+    for item in unknown_board or []:
+        unknown_name = item.get("name") or ""
+        unknown_norm = normalize_name_for_match(unknown_name)
+        if not unknown_norm:
+            continue
+        best = None
+        best_score = 0.0
+        for member_name, member_norm, member_id in member_pool:
+            ratio = SequenceMatcher(None, unknown_norm, member_norm).ratio()
+            if unknown_norm in member_norm or member_norm in unknown_norm:
+                ratio = max(ratio, 0.86)
+            if ratio > best_score:
+                best_score = ratio
+                best = {"unknown": unknown_name, "member": member_name, "member_id": member_id, "score": round(ratio * 100, 1)}
+        if best and best_score >= 0.65:
+            suggestions.append(best)
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
+def build_heatmap_data(rows, member_ids=None):
+    member_ids = {int(x) for x in (member_ids or []) if str(x).isdigit()}
+    status_priority = {"ABSENT": 0, "LATE": 1, "PRESENT": 2, "HOST": 2}
+    day_map = {}
+    filtered_rows = []
+    for r in rows or []:
+        if member_ids and int(r.get("member_id") or 0) not in member_ids:
+            continue
+        filtered_rows.append(r)
+
+    for r in filtered_rows:
+        dt = parse_dt(r.get("start_time")) or parse_dt(r.get("first_join"))
+        if not dt:
+            continue
+        day_key = dt.date().isoformat()
+        status = r.get("final_status") or ("HOST" if r.get("is_host") else None) or "ABSENT"
+        current = day_map.get(day_key)
+        if current is None or status_priority.get(status, 0) >= status_priority.get(current, 0):
+            day_map[day_key] = status
+
+    if day_map:
+        end_day = max(datetime.fromisoformat(k).date() for k in day_map.keys())
+    else:
+        end_day = today_local()
+    start_day = end_day - timedelta(days=83)
+    cells = []
+    current = start_day
+    while current <= end_day:
+        day_key = current.isoformat()
+        status = day_map.get(day_key)
+        if status == "PRESENT" or status == "HOST":
+            css = "heat-good"
+            title = f"{day_key}: Present"
+        elif status == "LATE":
+            css = "heat-warn"
+            title = f"{day_key}: Late / weak participation"
+        elif status == "ABSENT":
+            css = "heat-bad"
+            title = f"{day_key}: Absent"
+        else:
+            css = "heat-none"
+            title = f"{day_key}: No record"
+        cells.append({"date": day_key, "css": css, "title": title, "day": current.strftime("%d")})
+        current += timedelta(days=1)
+    return cells
+
+
+def build_insight_lines(summary, meeting_compare, leaderboard, risk_table):
+    lines = []
+    if summary.get("attendance_health") is not None:
+        lines.append(f"Attendance health is {summary['attendance_health']}% across the filtered dataset.")
+    if summary.get("risk_members_count", 0) > 0:
+        lines.append(f"{summary['risk_members_count']} member(s) currently fall into Warning or Critical risk level.")
+    if leaderboard:
+        top = leaderboard[0]
+        lines.append(f"Top ranked member is {top['name']} with attendance score {top['attendance_score']} and engagement score {top['engagement_score']}.")
+    if len(meeting_compare) >= 2:
+        latest = meeting_compare[0]
+        previous = meeting_compare[1]
+        delta = round((latest.get('health') or 0) - (previous.get('health') or 0), 2)
+        direction = 'improved' if delta >= 0 else 'dropped'
+        lines.append(f"Latest meeting health {direction} by {abs(delta)} points compared with the previous meeting.")
+    if risk_table:
+        critical = [r for r in risk_table if r['risk']['short'] == 'CRITICAL']
+        if critical:
+            lines.append(f"Critical attention is needed for {', '.join(r['name'] for r in critical[:3])}.")
+    return lines[:6]
+
+
 def build_filter_query(filters):
     query_items = []
     for key, value in filters.items():
@@ -1376,6 +1528,9 @@ def analytics_data(filters):
             rows = cur.fetchall()
 
             member_name_expr = member_name_sql(conn)
+            cur.execute(f"SELECT *, {member_name_expr} AS display_name FROM members ORDER BY COALESCE({member_name_expr}, '')")
+            all_members = cur.fetchall()
+
             cur.execute(f"SELECT *, {member_name_expr} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
             members = cur.fetchall()
 
@@ -1398,6 +1553,7 @@ def analytics_data(filters):
     member_rows = total_rows - unknown_rows
     avg_minutes = round(sum((r.get("total_seconds") or 0) for r in rows) / 60 / total_rows, 2) if total_rows else 0
     avg_rejoins = round(sum((r.get("rejoin_count") or 0) for r in rows) / total_rows, 2) if total_rows else 0
+    attendance_health = round(((present_rows + late_rows) / total_rows) * 100, 2) if total_rows else 0
 
     by_person = {}
     by_meeting = {}
@@ -1409,18 +1565,19 @@ def analytics_data(filters):
             {
                 "name": key,
                 "meetings": 0,
-                "minutes": 0,
+                "minutes": 0.0,
                 "present": 0,
                 "late": 0,
                 "absent": 0,
                 "rejoins": 0,
                 "is_member": bool(r.get("is_member")),
+                "member_id": r.get("member_id"),
+                "is_host": bool(r.get("is_host")),
             },
         )
         by_person[key]["meetings"] += 1
         by_person[key]["minutes"] += (r.get("total_seconds") or 0) / 60
         by_person[key]["rejoins"] += (r.get("rejoin_count") or 0)
-
         if r.get("final_status") == "PRESENT":
             by_person[key]["present"] += 1
         elif r.get("final_status") == "LATE":
@@ -1443,7 +1600,6 @@ def analytics_data(filters):
                 "health": 0,
             },
         )
-
         by_meeting[mk]["total"] += 1
         if r.get("final_status") == "PRESENT":
             by_meeting[mk]["present"] += 1
@@ -1451,7 +1607,6 @@ def analytics_data(filters):
             by_meeting[mk]["late"] += 1
         elif r.get("final_status") == "ABSENT":
             by_meeting[mk]["absent"] += 1
-
         if not r.get("is_member"):
             by_meeting[mk]["unknown"] += 1
 
@@ -1460,13 +1615,9 @@ def analytics_data(filters):
         total = m["total"] or 1
         m["health"] = round(((m["present"] + m["late"]) / total) * 100, 2)
 
-    top_people = sorted(by_person.values(), key=lambda x: (x["present"], x["minutes"]), reverse=True)[:5]
-    low_people = sorted(by_person.values(), key=lambda x: (x["present"], -x["absent"], -x["minutes"]))[:5]
-    unknown_board = sorted([v for v in by_person.values() if not v["is_member"]], key=lambda x: x["meetings"], reverse=True)[:10]
     trend = compute_trend(rows, period_mode)
     prediction = predict_next_attendance(meeting_compare)
 
-    selected_member_ids_set = {int(item) for item in member_ids}
     selected_member_map = {int(m["id"]): member_display_name(m) for m in members if m.get("id") is not None}
 
     chart_rows = []
@@ -1487,23 +1638,21 @@ def analytics_data(filters):
     if filters.get("person_name"):
         chart_where.append("lower(a.participant_name) LIKE %s")
         chart_params.append(f"%{filters['person_name'].strip().lower()}%")
-    if filters.get("participant_type") == "member":
-        pass
-    elif filters.get("participant_type") == "host":
+    if filters.get("participant_type") == "host":
         chart_where.append("a.is_host = TRUE")
 
     chart_sql = f"""
         SELECT a.member_id, a.participant_name, a.total_seconds, a.current_join, a.first_join, a.last_leave,
-               m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
+               a.rejoin_count, a.final_status, a.is_member, m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
         FROM attendance a
         JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
         WHERE {' AND '.join(chart_where)}
         ORDER BY m.id DESC, a.participant_name ASC
     """
 
+    latest_meeting_label = None
     if not member_ids and not filters.get("meeting_uuid") and not from_date and not to_date and not filters.get("person_name") and filters.get("participant_type", "all") in ("all", "member"):
         latest_meeting_uuid = meetings[0]["meeting_uuid"] if meetings else None
-        latest_meeting_label = None
         if latest_meeting_uuid:
             chart_rows = [r for r in rows if r.get("meeting_uuid") == latest_meeting_uuid and r.get("is_member")]
             if not chart_rows:
@@ -1512,7 +1661,7 @@ def analytics_data(filters):
                         cur.execute(
                             """
                             SELECT a.member_id, a.participant_name, a.total_seconds, a.current_join, a.first_join, a.last_leave,
-                                   m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
+                                   a.rejoin_count, a.final_status, a.is_member, m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
                             FROM attendance a
                             JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
                             WHERE a.is_member = TRUE AND a.member_id IS NOT NULL AND a.meeting_uuid = %s
@@ -1530,7 +1679,6 @@ def analytics_data(filters):
             with conn.cursor() as cur:
                 cur.execute(chart_sql, chart_params)
                 chart_rows = cur.fetchall()
-        latest_meeting_label = None
         chart_mode = "filtered_selection"
 
     member_duration_map = defaultdict(float)
@@ -1541,7 +1689,7 @@ def analytics_data(filters):
             continue
         duration_seconds = r.get("total_seconds") or 0
         if r.get("current_join"):
-            chart_end = parse_dt(r.get("last_leave")) or now_local()
+            chart_end = now_local()
             current_join = parse_dt(r.get("current_join"))
             if current_join:
                 duration_seconds += max(int((chart_end - current_join).total_seconds()), 0)
@@ -1573,29 +1721,116 @@ def analytics_data(filters):
         ),
     }
 
+    avg_minutes_reference = avg_minutes if avg_minutes > 0 else max((sum(member_duration_values) / len(member_duration_values)) if member_duration_values else 0, 1)
+
+    enriched_people = []
+    for person in by_person.values():
+        attendance_score = calculate_attendance_score(person["present"], person["late"], person["absent"])
+        engagement_score = calculate_engagement_score(
+            person["minutes"],
+            person["rejoins"],
+            person["meetings"],
+            person["present"],
+            person["late"],
+            person["absent"],
+            avg_minutes_reference,
+        )
+        overall_score = clamp_score((attendance_score * 0.6) + (engagement_score * 0.4))
+        risk = get_risk_level(overall_score)
+        person["attendance_score"] = attendance_score
+        person["engagement_score"] = engagement_score
+        person["overall_score"] = overall_score
+        person["risk"] = risk
+        enriched_people.append(person)
+
+    leaderboard = sorted(
+        [p for p in enriched_people if p.get("is_member")],
+        key=lambda x: (x["overall_score"], x["attendance_score"], x["engagement_score"], x["minutes"]),
+        reverse=True,
+    )
+    risk_table = sorted(
+        [p for p in leaderboard if p["risk"]["short"] in ("CRITICAL", "WARNING")],
+        key=lambda x: (x["risk"]["short"] != "CRITICAL", x["overall_score"], x["minutes"]),
+    )
+    top_people = leaderboard[:5]
+    low_people = sorted(
+        [p for p in leaderboard],
+        key=lambda x: (x["overall_score"], x["attendance_score"], -x["absent"], x["minutes"]),
+    )[:5]
+    unknown_board = sorted([v for v in enriched_people if not v["is_member"]], key=lambda x: x["meetings"], reverse=True)[:10]
+
+    avg_attendance_score = round(sum(p["attendance_score"] for p in leaderboard) / len(leaderboard), 2) if leaderboard else 0
+    avg_engagement_score = round(sum(p["engagement_score"] for p in leaderboard) / len(leaderboard), 2) if leaderboard else 0
+    risk_members_count = sum(1 for p in leaderboard if p["risk"]["short"] in ("CRITICAL", "WARNING"))
+    critical_members = [p for p in leaderboard if p["risk"]["short"] == "CRITICAL"]
+    warning_members = [p for p in leaderboard if p["risk"]["short"] == "WARNING"]
+
+    latest_meeting_summary = meeting_compare[0] if meeting_compare else None
+    previous_meeting_summary = meeting_compare[1] if len(meeting_compare) > 1 else None
+    comparison_delta = None
+    if latest_meeting_summary and previous_meeting_summary:
+        comparison_delta = round((latest_meeting_summary.get("health") or 0) - (previous_meeting_summary.get("health") or 0), 2)
+
+    heatmap = build_heatmap_data(rows, member_ids=member_ids)
+    unknown_match_suggestions = suggest_unknown_matches(unknown_board, members)
+    reminder_suggestion = {
+        "count": len(critical_members) + len(warning_members),
+        "message": f"⚠️ {len(critical_members) + len(warning_members)} members missed or underperformed in the latest filtered view." if (critical_members or warning_members) else "No urgent reminder suggestion right now.",
+        "names": [p["name"] for p in (critical_members + warning_members)[:6]],
+    }
+    insight_lines = build_insight_lines(
+        {
+            "attendance_health": attendance_health,
+            "risk_members_count": risk_members_count,
+        },
+        meeting_compare,
+        leaderboard,
+        risk_table,
+    )
+
+    summary = {
+        "total_rows": total_rows,
+        "present_rows": present_rows,
+        "late_rows": late_rows,
+        "absent_rows": absent_rows,
+        "unknown_rows": unknown_rows,
+        "member_rows": member_rows,
+        "avg_minutes": avg_minutes,
+        "avg_rejoins": avg_rejoins,
+        "predicted_next_attendance": prediction,
+        "attendance_health": attendance_health,
+        "avg_attendance_score": avg_attendance_score,
+        "avg_engagement_score": avg_engagement_score,
+        "risk_members_count": risk_members_count,
+        "critical_members_count": len(critical_members),
+        "warning_members_count": len(warning_members),
+        "safe_members_count": sum(1 for p in leaderboard if p["risk"]["short"] == "SAFE"),
+        "insight_lines": insight_lines,
+    }
+
     return {
         "filters": filters,
         "rows": rows,
         "members": members,
+        "all_members": all_members,
         "meetings": meetings,
-        "summary": {
-            "total_rows": total_rows,
-            "present_rows": present_rows,
-            "late_rows": late_rows,
-            "absent_rows": absent_rows,
-            "unknown_rows": unknown_rows,
-            "member_rows": member_rows,
-            "avg_minutes": avg_minutes,
-            "avg_rejoins": avg_rejoins,
-            "predicted_next_attendance": prediction,
-        },
+        "summary": summary,
         "top_people": top_people,
         "low_people": low_people,
         "unknown_board": unknown_board,
         "meeting_compare": meeting_compare,
         "trend": trend,
         "member_duration_chart": member_duration_chart,
+        "leaderboard": leaderboard[:10],
+        "risk_table": risk_table[:12],
+        "heatmap": heatmap,
+        "unknown_match_suggestions": unknown_match_suggestions,
+        "reminder_suggestion": reminder_suggestion,
+        "latest_meeting_summary": latest_meeting_summary,
+        "previous_meeting_summary": previous_meeting_summary,
+        "comparison_delta": comparison_delta,
     }
+
 
 
 def build_meeting_report_data(meeting_uuid):
@@ -1875,22 +2110,34 @@ def export_csv_bytes(rows):
 
 def export_pdf_bytes(title, rows, summary):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
     styles = getSampleStyleSheet()
     elements = [Paragraph(f"<b>{title}</b>", styles["Title"]), Spacer(1, 12)]
 
     elements.append(Paragraph(f"Generated: {fmt_dt(now_local())}", styles["Normal"]))
     elements.append(
         Paragraph(
-            f"Total: {summary['total_rows']} | Present: {summary['present_rows']} | Late: {summary['late_rows']} | "
-            f"Absent: {summary['absent_rows']} | Unknown: {summary['unknown_rows']} | Avg Minutes: {summary['avg_minutes']}",
+            f"Total: {summary.get('total_rows', 0)} | Present: {summary.get('present_rows', 0)} | Late: {summary.get('late_rows', 0)} | "
+            f"Absent: {summary.get('absent_rows', 0)} | Unknown: {summary.get('unknown_rows', 0)} | Avg Minutes: {summary.get('avg_minutes', 0)}",
+            styles["Normal"],
+        )
+    )
+    elements.append(
+        Paragraph(
+            f"Attendance Health: {summary.get('attendance_health', 0)}% | Avg Attendance Score: {summary.get('avg_attendance_score', 0)} | "
+            f"Avg Engagement Score: {summary.get('avg_engagement_score', 0)} | Risk Members: {summary.get('risk_members_count', 0)}",
             styles["Normal"],
         )
     )
     elements.append(Spacer(1, 12))
 
+    for insight in summary.get("insight_lines", [])[:4]:
+        elements.append(Paragraph(f"• {insight}", styles["Normal"]))
+    if summary.get("insight_lines"):
+        elements.append(Spacer(1, 10))
+
     data = [["Topic", "Participant", "Member", "Duration", "Rejoins", "Status"]]
-    for r in rows[:150]:
+    for r in rows[:140]:
         data.append(
             [
                 (r.get("topic") or "")[:20],
@@ -1898,11 +2145,11 @@ def export_pdf_bytes(title, rows, summary):
                 "Yes" if r.get("is_member") else "No",
                 str(mins_from_seconds(r.get("total_seconds"))),
                 str(r.get("rejoin_count") or 0),
-                r.get("final_status") or "-",
+                r.get("final_status") or ("HOST" if r.get("is_host") else "-"),
             ]
         )
 
-    table = Table(data, repeatRows=1)
+    table = Table(data, repeatRows=1, colWidths=[120, 110, 55, 65, 55, 70])
     style = TableStyle(
         [
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
@@ -1921,12 +2168,37 @@ def export_pdf_bytes(title, rows, summary):
             style.add("TEXTCOLOR", (5, i), (5, i), colors.orange)
         elif status == "ABSENT":
             style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
+        elif status == "HOST":
+            style.add("TEXTCOLOR", (5, i), (5, i), colors.HexColor("#1d4ed8"))
 
     table.setStyle(style)
     elements.append(table)
+    elements.append(Spacer(1, 12))
+
+    criteria_data = [[
+        Paragraph(
+            "<b>Attendance intelligence notes</b><br/>"
+            "• Attendance Score model: Present = +10, Late = +5, Absent = -10, normalized to 0–100<br/>"
+            "• Engagement Score model: duration quality + lower rejoins + consistency, normalized to 0–100<br/>"
+            "• Risk Level: 80–100 Safe, 50–79 Warning, below 50 Critical<br/>"
+            "• Green = healthy, Yellow = caution, Red = poor / critical, Blue = informational.",
+            styles["Normal"],
+        )
+    ]]
+    criteria_table = Table(criteria_data, colWidths=[540])
+    criteria_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 1, colors.black),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(criteria_table)
+
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
+
 
 
 def verify_zoom_signature(req):
@@ -2152,6 +2424,7 @@ BASE_HTML = """
         .btn.success{background:linear-gradient(180deg,#22c55e,#15803d)}
         .btn.warn{background:linear-gradient(180deg,#fbbf24,#d97706);color:#111827}
         .btn.danger{background:linear-gradient(180deg,#ef4444,#b91c1c)}
+        .btn.purple{background:linear-gradient(180deg,#8b5cf6,#6d28d9)}
         .btn.small{padding:8px 10px;font-size:12px}
         .flash{
             padding:12px 14px;
@@ -2228,6 +2501,50 @@ BASE_HTML = """
         .toggle-switch .toggle-icon{position:absolute;top:50%;transform:translateY(-50%);font-size:19px;font-weight:900;line-height:1;color:rgba(255,255,255,.92);text-shadow:0 1px 2px rgba(0,0,0,.22)}
         .toggle-switch .toggle-on{left:16px}
         .toggle-switch .toggle-off{right:16px}
+
+        .purple{background:#ede9fe;color:#6d28d9}
+        body.dark .purple{background:#312e81;color:#ddd6fe}
+        .glass-card{background:rgba(255,255,255,.76);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.35);box-shadow:0 18px 40px rgba(37,99,235,.10)}
+        body.dark .glass-card{background:rgba(15,23,42,.78);border-color:rgba(148,163,184,.18);box-shadow:0 20px 42px rgba(0,0,0,.35)}
+        .premium-hero{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+        .hero-subtext{max-width:760px}
+        .hero-pills{display:flex;gap:8px;flex-wrap:wrap}
+        .section-title{font-size:18px;font-weight:800;margin:6px 0 12px 0;color:var(--text)}
+        .analytics-filter-grid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));align-items:start}
+        .member-multiselect-wrap{grid-column:span 2}
+        .multi-member-box{border:1px solid var(--line);border-radius:16px;background:var(--card);padding:10px 12px;max-height:220px}
+        .premium-scroll{overflow:auto}
+        .multi-member-title{font-weight:700;margin-bottom:10px;color:var(--muted);font-size:13px}
+        .multi-member-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+        .member-check-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:12px;cursor:pointer;transition:.18s ease;background:transparent}
+        .member-check-item:hover{background:rgba(37,99,235,.08)}
+        .member-check-item input{display:none}
+        .member-check-circle{width:18px;height:18px;border-radius:999px;border:2px solid #94a3b8;display:inline-block;position:relative;flex:0 0 auto}
+        .member-check-item input:checked + .member-check-circle{border-color:var(--primary);background:var(--primary)}
+        .member-check-item input:checked + .member-check-circle::after{content:'';position:absolute;inset:4px;border-radius:999px;background:#fff}
+        .member-check-text{font-weight:600;font-size:13px}
+        .kpi-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+        .score-good{box-shadow:0 14px 34px rgba(34,197,94,.12)}
+        .score-warn{box-shadow:0 14px 34px rgba(245,158,11,.12)}
+        .score-bad{box-shadow:0 14px 34px rgba(239,68,68,.12)}
+        .score-neutral{box-shadow:0 14px 34px rgba(59,130,246,.12)}
+        .score-purple{box-shadow:0 14px 34px rgba(139,92,246,.12)}
+        .insight-card{min-height:160px}
+        .insight-list{margin:10px 0 0 18px;padding:0}
+        .insight-list li{margin-bottom:8px}
+        .reminder-callout{padding:12px 14px;border-radius:14px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);font-weight:700;margin-top:8px}
+        .heatmap-grid{display:grid;grid-template-columns:repeat(14,1fr);gap:6px;margin-top:14px}
+        .heat-cell{width:100%;aspect-ratio:1;border-radius:6px;border:1px solid rgba(148,163,184,.18)}
+        .heat-good{background:rgba(34,197,94,.9)}
+        .heat-warn{background:rgba(245,158,11,.9)}
+        .heat-bad{background:rgba(239,68,68,.9)}
+        .heat-none{background:rgba(148,163,184,.18)}
+        .empty-state{padding:28px 16px;text-align:center;border:1px dashed var(--line);border-radius:16px;color:var(--muted);margin-top:12px}
+        .hover-row{transition:background .16s ease, transform .16s ease}
+        .hover-row:hover{background:rgba(37,99,235,.06)}
+        .tooltip{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:999px;background:var(--soft);color:var(--primary);font-size:11px;font-weight:800;cursor:help;position:relative}
+        .tooltip:hover::after{content:attr(data-tip);position:absolute;left:50%;top:-8px;transform:translate(-50%,-100%);min-width:220px;max-width:260px;background:#0f172a;color:#fff;padding:8px 10px;border-radius:10px;font-size:11px;line-height:1.4;z-index:50;box-shadow:var(--shadow)}
+
         @media (max-width: 920px){
             .wrap{display:block}
             .sidebar{width:100%;border-right:none;border-bottom:1px solid rgba(148,163,184,.25)}
@@ -3434,6 +3751,28 @@ def analytics():
     )
     return page("Analytics", body, "analytics")
 
+
+
+@app.route("/analytics/reminder")
+@login_required
+def analytics_reminder():
+    filters = {
+        "period_mode": request.args.get("period_mode", "custom"),
+        "from_date": request.args.get("from_date", ""),
+        "to_date": request.args.get("to_date", ""),
+        "meeting_uuid": request.args.get("meeting_uuid", ""),
+        "member_ids": request.args.getlist("member_ids"),
+        "person_name": request.args.get("person_name", ""),
+        "participant_type": request.args.get("participant_type", "all"),
+    }
+    data = analytics_data(filters)
+    names = data["reminder_suggestion"].get("names") or []
+    if names:
+        flash("Reminder suggestion prepared for: " + ", ".join(names), "success")
+    else:
+        flash("No urgent reminder targets found in the current filtered view.", "success")
+    query = build_filter_query(data["filters"])
+    return redirect(url_for("analytics") + (f"?{query}" if query else ""))
 
 @app.route("/analytics/export.csv")
 @login_required
