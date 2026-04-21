@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
+from urllib.parse import urlencode
 
 from dotenv import load_dotenv
 from flask import (
@@ -1306,11 +1307,34 @@ def predict_next_attendance(meeting_compare):
     return round(sum(totals) / len(totals)) if totals else 0
 
 
+def build_filter_query(filters):
+    query_items = []
+    for key, value in filters.items():
+        if key == "member_ids":
+            for item in value or []:
+                if str(item).strip():
+                    query_items.append(("member_ids", str(item).strip()))
+        else:
+            if value not in (None, ""):
+                query_items.append((key, str(value)))
+    return urlencode(query_items, doseq=True)
+
+
 def analytics_data(filters):
     period_mode = filters.get("period_mode", "custom")
     from_date, to_date = normalize_period_dates(filters)
     filters["from_date"] = from_date
     filters["to_date"] = to_date
+
+    raw_member_ids = filters.get("member_ids") or []
+    if isinstance(raw_member_ids, str):
+        raw_member_ids = [raw_member_ids]
+    member_ids = []
+    for item in raw_member_ids:
+        item_text = str(item).strip()
+        if item_text.isdigit():
+            member_ids.append(int(item_text))
+    filters["member_ids"] = [str(item) for item in member_ids]
 
     where = ["1=1"]
     params = []
@@ -1324,9 +1348,9 @@ def analytics_data(filters):
     if filters.get("meeting_uuid"):
         where.append("a.meeting_uuid = %s")
         params.append(filters["meeting_uuid"])
-    if filters.get("member_id"):
-        where.append("a.member_id = %s")
-        params.append(int(filters["member_id"]))
+    if member_ids:
+        where.append("a.member_id = ANY(%s)")
+        params.append(member_ids)
     if filters.get("person_name"):
         where.append("lower(a.participant_name) LIKE %s")
         params.append(f"%{filters['person_name'].strip().lower()}%")
@@ -1334,6 +1358,8 @@ def analytics_data(filters):
         where.append("a.is_member = TRUE")
     elif filters.get("participant_type") == "unknown":
         where.append("a.is_member = FALSE")
+    elif filters.get("participant_type") == "host":
+        where.append("a.is_host = TRUE")
 
     sql = f"""
         SELECT
@@ -1349,7 +1375,8 @@ def analytics_data(filters):
             cur.execute(sql, params)
             rows = cur.fetchall()
 
-            cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY full_name")
+            member_name_expr = member_name_sql(conn)
+            cur.execute(f"SELECT *, {member_name_expr} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
             members = cur.fetchall()
 
             cur.execute(
@@ -1439,6 +1466,113 @@ def analytics_data(filters):
     trend = compute_trend(rows, period_mode)
     prediction = predict_next_attendance(meeting_compare)
 
+    selected_member_ids_set = {int(item) for item in member_ids}
+    selected_member_map = {int(m["id"]): member_display_name(m) for m in members if m.get("id") is not None}
+
+    chart_rows = []
+    chart_where = ["a.is_member = TRUE", "a.member_id IS NOT NULL"]
+    chart_params = []
+    if from_date:
+        chart_where.append("CAST(m.start_time AS TEXT)::date >= %s")
+        chart_params.append(from_date)
+    if to_date:
+        chart_where.append("CAST(m.start_time AS TEXT)::date <= %s")
+        chart_params.append(to_date)
+    if filters.get("meeting_uuid"):
+        chart_where.append("a.meeting_uuid = %s")
+        chart_params.append(filters["meeting_uuid"])
+    if member_ids:
+        chart_where.append("a.member_id = ANY(%s)")
+        chart_params.append(member_ids)
+    if filters.get("person_name"):
+        chart_where.append("lower(a.participant_name) LIKE %s")
+        chart_params.append(f"%{filters['person_name'].strip().lower()}%")
+    if filters.get("participant_type") == "member":
+        pass
+    elif filters.get("participant_type") == "host":
+        chart_where.append("a.is_host = TRUE")
+
+    chart_sql = f"""
+        SELECT a.member_id, a.participant_name, a.total_seconds, a.current_join, a.first_join, a.last_leave,
+               m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
+        FROM attendance a
+        JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+        WHERE {' AND '.join(chart_where)}
+        ORDER BY m.id DESC, a.participant_name ASC
+    """
+
+    if not member_ids and not filters.get("meeting_uuid") and not from_date and not to_date and not filters.get("person_name") and filters.get("participant_type", "all") in ("all", "member"):
+        latest_meeting_uuid = meetings[0]["meeting_uuid"] if meetings else None
+        latest_meeting_label = None
+        if latest_meeting_uuid:
+            chart_rows = [r for r in rows if r.get("meeting_uuid") == latest_meeting_uuid and r.get("is_member")]
+            if not chart_rows:
+                with db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT a.member_id, a.participant_name, a.total_seconds, a.current_join, a.first_join, a.last_leave,
+                                   m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
+                            FROM attendance a
+                            JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+                            WHERE a.is_member = TRUE AND a.member_id IS NOT NULL AND a.meeting_uuid = %s
+                            ORDER BY a.participant_name ASC
+                            """,
+                            (latest_meeting_uuid,),
+                        )
+                        chart_rows = cur.fetchall()
+            latest_meeting = meetings[0] if meetings else None
+            if latest_meeting:
+                latest_meeting_label = f"{latest_meeting.get('topic') or 'Latest Meeting'} - {fmt_dt(latest_meeting.get('start_time'))}"
+        chart_mode = "latest_meeting_all_members"
+    else:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(chart_sql, chart_params)
+                chart_rows = cur.fetchall()
+        latest_meeting_label = None
+        chart_mode = "filtered_selection"
+
+    member_duration_map = defaultdict(float)
+    member_label_map = {}
+    for r in chart_rows:
+        member_id = r.get("member_id")
+        if not member_id:
+            continue
+        duration_seconds = r.get("total_seconds") or 0
+        if r.get("current_join"):
+            chart_end = parse_dt(r.get("last_leave")) or now_local()
+            current_join = parse_dt(r.get("current_join"))
+            if current_join:
+                duration_seconds += max(int((chart_end - current_join).total_seconds()), 0)
+        member_duration_map[int(member_id)] += duration_seconds / 60.0
+        member_label_map[int(member_id)] = selected_member_map.get(int(member_id), r.get("participant_name") or f"Member {member_id}")
+
+    if member_ids:
+        ordered_member_ids = [mid for mid in member_ids if mid in member_label_map or mid in selected_member_map]
+    else:
+        ordered_member_ids = sorted(member_duration_map.keys(), key=lambda mid: member_label_map.get(mid, "").lower())
+
+    member_duration_labels = []
+    member_duration_values = []
+    for mid in ordered_member_ids:
+        label = member_label_map.get(mid) or selected_member_map.get(mid)
+        if not label:
+            continue
+        member_duration_labels.append(label)
+        member_duration_values.append(round(member_duration_map.get(mid, 0), 2))
+
+    member_duration_chart = {
+        "labels": member_duration_labels,
+        "values": member_duration_values,
+        "empty": len(member_duration_labels) == 0,
+        "subtitle": (
+            f"Showing all members for latest meeting: {latest_meeting_label}" if chart_mode == "latest_meeting_all_members" and latest_meeting_label else
+            "Showing selected members based on your current filters." if member_ids else
+            "Showing members based on your current filters."
+        ),
+    }
+
     return {
         "filters": filters,
         "rows": rows,
@@ -1460,6 +1594,7 @@ def analytics_data(filters):
         "unknown_board": unknown_board,
         "meeting_compare": meeting_compare,
         "trend": trend,
+        "member_duration_chart": member_duration_chart,
     }
 
 
@@ -3021,13 +3156,17 @@ def analytics():
         "from_date": request.args.get("from_date", ""),
         "to_date": request.args.get("to_date", ""),
         "meeting_uuid": request.args.get("meeting_uuid", ""),
-        "member_id": request.args.get("member_id", ""),
+        "member_ids": request.args.getlist("member_ids"),
         "person_name": request.args.get("person_name", ""),
         "participant_type": request.args.get("participant_type", "all"),
     }
 
     data = analytics_data(filters)
     trend = data["trend"]
+    member_chart = data["member_duration_chart"]
+    export_query = build_filter_query(data["filters"])
+    export_csv_url = url_for("export_analytics_csv") + (f"?{export_query}" if export_query else "")
+    export_pdf_url = url_for("export_analytics_pdf") + (f"?{export_query}" if export_query else "")
 
     body = render_template_string(
         """
@@ -3063,13 +3202,19 @@ def analytics():
                         </select>
                     </div>
                     <div>
-                        <label>Member</label>
-                        <select name='member_id'>
-                            <option value=''>All members</option>
-                            {% for m in data.members %}
-                            <option value='{{ m.id }}' {% if filters.member_id == (m.id|string) %}selected{% endif %}>{{ m.full_name }}</option>
-                            {% endfor %}
-                        </select>
+                        <label>Members</label>
+                        <div class='multi-member-box'>
+                            <div class='multi-member-title'>Select one or more members</div>
+                            <div class='multi-member-list'>
+                                {% for m in data.members %}
+                                <label class='member-check-item'>
+                                    <input type='checkbox' name='member_ids' value='{{ m.id }}' {% if (m.id|string) in filters.member_ids %}checked{% endif %}>
+                                    <span class='member-check-circle'></span>
+                                    <span class='member-check-text'>{{ member_display_name(m) }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
                     </div>
                     <div><label>Person Search</label><input name='person_name' value='{{ filters.person_name }}' placeholder='type participant name'></div>
                     <div>
@@ -3078,13 +3223,14 @@ def analytics():
                             <option value='all' {% if filters.participant_type == 'all' %}selected{% endif %}>All</option>
                             <option value='member' {% if filters.participant_type == 'member' %}selected{% endif %}>Members</option>
                             <option value='unknown' {% if filters.participant_type == 'unknown' %}selected{% endif %}>Unknown / non-member</option>
+                            <option value='host' {% if filters.participant_type == 'host' %}selected{% endif %}>Host</option>
                         </select>
                     </div>
                 </div>
                 <div class='toolbar'>
                     <button type='submit'>Apply Filters</button>
-                    <a class='btn success' href='{{ url_for("export_analytics_csv", **filters) }}'>Export CSV</a>
-                    <a class='btn secondary' href='{{ url_for("export_analytics_pdf", **filters) }}'>Export PDF</a>
+                    <a class='btn success' href='{{ export_csv_url }}'>Export CSV</a>
+                    <a class='btn secondary' href='{{ export_pdf_url }}'>Export PDF</a>
                 </div>
             </form>
         </div>
@@ -3111,6 +3257,19 @@ def analytics():
                 <h3>Status Mix</h3>
                 <canvas id='statusChart'></canvas>
             </div>
+        </div>
+
+        <br>
+
+        <div class='card'>
+            <h3>Member Duration Comparison</h3>
+            <div class='muted'>{{ member_chart.subtitle }}</div>
+            <br>
+            {% if member_chart.empty %}
+                <div class='empty-analytics-state'>No member duration data found for the selected filters.</div>
+            {% else %}
+                <canvas id='memberDurationChart' height='120'></canvas>
+            {% endif %}
         </div>
 
         <br>
@@ -3196,6 +3355,20 @@ def analytics():
             </div>
         </div>
 
+        <style>
+            .multi-member-box{border:1px solid var(--line);border-radius:16px;padding:10px 12px;background:var(--card)}
+            .multi-member-title{font-size:12px;color:var(--muted);margin-bottom:8px}
+            .multi-member-list{max-height:160px;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+            .member-check-item{display:flex;align-items:center;gap:10px;cursor:pointer;padding:6px 4px;border-radius:10px}
+            .member-check-item:hover{background:var(--soft)}
+            .member-check-item input{display:none}
+            .member-check-circle{width:18px;height:18px;border-radius:50%;border:2px solid #93c5fd;display:inline-flex;align-items:center;justify-content:center;position:relative;flex-shrink:0}
+            .member-check-circle::after{content:'';width:8px;height:8px;border-radius:50%;background:var(--primary);transform:scale(0);transition:.15s ease}
+            .member-check-item input:checked + .member-check-circle::after{transform:scale(1)}
+            .member-check-text{font-size:13px}
+            .empty-analytics-state{border:1px dashed var(--line);border-radius:16px;padding:24px;text-align:center;color:var(--muted);background:var(--soft)}
+        </style>
+
         <script>
         new Chart(document.getElementById('trendChart'), {
             type:'line',
@@ -3225,13 +3398,39 @@ def analytics():
             },
             options:{responsive:true}
         });
+
+        {% if not member_chart.empty %}
+        new Chart(document.getElementById('memberDurationChart'), {
+            type:'bar',
+            data:{
+                labels: {{ member_chart.labels|tojson }},
+                datasets:[{
+                    label:'Minutes',
+                    data: {{ member_chart.values|tojson }},
+                    borderWidth:1,
+                    borderRadius:8
+                }]
+            },
+            options:{
+                responsive:true,
+                scales:{
+                    y:{beginAtZero:true,title:{display:true,text:'Minutes'}},
+                    x:{title:{display:true,text:'Members'}}
+                }
+            }
+        });
+        {% endif %}
         </script>
         """,
         data=data,
-        filters=filters,
+        filters=data["filters"],
         fmt_dt=fmt_dt,
         mins_from_seconds=mins_from_seconds,
         trend=trend,
+        member_chart=member_chart,
+        member_display_name=member_display_name,
+        export_csv_url=export_csv_url,
+        export_pdf_url=export_pdf_url,
     )
     return page("Analytics", body, "analytics")
 
@@ -3239,7 +3438,9 @@ def analytics():
 @app.route("/analytics/export.csv")
 @login_required
 def export_analytics_csv():
-    data = analytics_data(dict(request.args))
+    filters = dict(request.args)
+    filters["member_ids"] = request.args.getlist("member_ids")
+    data = analytics_data(filters)
     content = export_csv_bytes(data["rows"])
     filename = f"analytics_{slugify(now_local().strftime('%Y%m%d_%H%M%S'))}.csv"
     return Response(content, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
@@ -3248,7 +3449,9 @@ def export_analytics_csv():
 @app.route("/analytics/export.pdf")
 @login_required
 def export_analytics_pdf():
-    data = analytics_data(dict(request.args))
+    filters = dict(request.args)
+    filters["member_ids"] = request.args.getlist("member_ids")
+    data = analytics_data(filters)
     pdf = export_pdf_bytes("Filtered Analytics Report", data["rows"], data["summary"])
     return send_file(io.BytesIO(pdf), download_name="analytics_report.pdf", mimetype="application/pdf", as_attachment=True)
 
