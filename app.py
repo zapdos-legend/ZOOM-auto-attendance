@@ -1712,7 +1712,7 @@ def analytics_data(filters):
 
     member_duration_chart = {
         "labels": member_duration_labels,
-        "values": member_duration_values,
+        "chart_values": member_duration_values,
         "empty": len(member_duration_labels) == 0,
         "subtitle": (
             f"Showing all members for latest meeting: {latest_meeting_label}" if chart_mode == "latest_meeting_all_members" and latest_meeting_label else
@@ -3723,7 +3723,7 @@ def analytics():
                 labels: {{ member_chart.labels|tojson }},
                 datasets:[{
                     label:'Minutes',
-                    data: {{ member_chart.values|tojson }},
+                    data: {{ member_chart.chart_values|tojson }},
                     borderWidth:1,
                     borderRadius:8
                 }]
