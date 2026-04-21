@@ -2914,9 +2914,6 @@ def home():
         fmt_dt=fmt_dt,
         fmt_time_ampm=fmt_time_ampm,
         member_display_name=member_display_name,
-        total_members_count=total_members_count,
-        active_members_count=active_members_count,
-        inactive_members_count=inactive_members_count,
         session=session,
     )
     return page("Home", body, "home")
