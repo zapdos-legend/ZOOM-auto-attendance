@@ -779,6 +779,9 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
 
     with db() as conn:
         with conn.cursor() as cur:
+            is_member_db_value = db_true_value(conn, "attendance", "is_member") if member else db_false_value(conn, "attendance", "is_member")
+            is_host_db_value = db_true_value(conn, "attendance", "is_host") if is_host else db_false_value(conn, "attendance", "is_host")
+
             cur.execute(
                 "SELECT * FROM attendance WHERE meeting_uuid=%s AND participant_key=%s",
                 (meeting_uuid, key),
@@ -808,9 +811,9 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                         first_join,
                         last_leave,
                         current_join,
-                        bool(member),
+                        is_member_db_value,
                         member["id"] if member else None,
-                        is_host,
+                        is_host_db_value,
                         "JOINED" if event_type == "join" else "LEFT",
                     ),
                 )
@@ -842,9 +845,9 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                         event_time,
                         event_time,
                         rejoin_count,
-                        bool(member),
+                        is_member_db_value,
                         member["id"] if member else None,
-                        is_host,
+                        is_host_db_value,
                         row["id"],
                     ),
                 )
@@ -874,9 +877,9 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                         participant_email,
                         event_time,
                         total_seconds,
-                        bool(member),
+                        is_member_db_value,
                         member["id"] if member else None,
-                        is_host,
+                        is_host_db_value,
                         row["id"],
                     ),
                 )
