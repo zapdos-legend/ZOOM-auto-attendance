@@ -781,6 +781,19 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
         with conn.cursor() as cur:
             is_member_db_value = db_true_value(conn, "attendance", "is_member") if member else db_false_value(conn, "attendance", "is_member")
             is_host_db_value = db_true_value(conn, "attendance", "is_host") if is_host else db_false_value(conn, "attendance", "is_host")
+            has_meeting_pk = column_exists(conn, "attendance", "meeting_pk")
+            meeting_pk = None
+
+            if has_meeting_pk:
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                meeting = cur.fetchone()
+                if not meeting:
+                    print("❌ Meeting not found, skipping participant")
+                    return
+                meeting_pk = meeting.get("id")
+                if not meeting_pk:
+                    print("⚠️ Skipping attendance insert: meeting_pk missing")
+                    return
 
             cur.execute(
                 "SELECT * FROM attendance WHERE meeting_uuid=%s AND participant_key=%s",
@@ -793,96 +806,188 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                 current_join = event_time if event_type == "join" else None
                 last_leave = event_time if event_type == "leave" else None
 
-                cur.execute(
-                    """
-                    INSERT INTO attendance(
-                        meeting_uuid, participant_name, participant_email, participant_key,
-                        first_join, last_leave, current_join, total_seconds, rejoin_count,
-                        is_member, member_id, is_host, status, updated_at
-                    )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,0,0,%s,%s,%s,%s,NOW())
-                    RETURNING *
-                    """,
-                    (
-                        meeting_uuid,
-                        participant_name,
-                        participant_email,
-                        key,
-                        first_join,
-                        last_leave,
-                        current_join,
-                        is_member_db_value,
-                        member["id"] if member else None,
-                        is_host_db_value,
-                        "JOINED" if event_type == "join" else "LEFT",
-                    ),
-                )
-                row = cur.fetchone()
+                try:
+                    if has_meeting_pk:
+                        cur.execute(
+                            """
+                            INSERT INTO attendance(
+                                meeting_pk, meeting_uuid, participant_name, participant_email, participant_key,
+                                first_join, last_leave, current_join, total_seconds, rejoin_count,
+                                is_member, member_id, is_host, status, updated_at
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0,0,%s,%s,%s,%s,NOW())
+                            RETURNING *
+                            """,
+                            (
+                                meeting_pk,
+                                meeting_uuid,
+                                participant_name,
+                                participant_email,
+                                key,
+                                first_join,
+                                last_leave,
+                                current_join,
+                                is_member_db_value,
+                                member["id"] if member else None,
+                                is_host_db_value,
+                                "JOINED" if event_type == "join" else "LEFT",
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO attendance(
+                                meeting_uuid, participant_name, participant_email, participant_key,
+                                first_join, last_leave, current_join, total_seconds, rejoin_count,
+                                is_member, member_id, is_host, status, updated_at
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,0,0,%s,%s,%s,%s,NOW())
+                            RETURNING *
+                            """,
+                            (
+                                meeting_uuid,
+                                participant_name,
+                                participant_email,
+                                key,
+                                first_join,
+                                last_leave,
+                                current_join,
+                                is_member_db_value,
+                                member["id"] if member else None,
+                                is_host_db_value,
+                                "JOINED" if event_type == "join" else "LEFT",
+                            ),
+                        )
+                    row = cur.fetchone()
+                except Exception as e:
+                    print("❌ ATTENDANCE INSERT FAILED:", str(e))
+                    raise
 
             if event_type == "join":
                 rejoin_count = row["rejoin_count"]
                 if row["first_join"] is not None:
                     rejoin_count += 1
 
-                cur.execute(
-                    """
-                    UPDATE attendance
-                    SET participant_name=%s,
-                        participant_email=%s,
-                        first_join=COALESCE(first_join, %s),
-                        current_join=%s,
-                        rejoin_count=%s,
-                        is_member=%s,
-                        member_id=%s,
-                        is_host=%s,
-                        status='JOINED',
-                        updated_at=NOW()
-                    WHERE id=%s
-                    """,
-                    (
-                        participant_name,
-                        participant_email,
-                        event_time,
-                        event_time,
-                        rejoin_count,
-                        is_member_db_value,
-                        member["id"] if member else None,
-                        is_host_db_value,
-                        row["id"],
-                    ),
-                )
+                if has_meeting_pk:
+                    cur.execute(
+                        """
+                        UPDATE attendance
+                        SET participant_name=%s,
+                            participant_email=%s,
+                            first_join=COALESCE(first_join, %s),
+                            current_join=%s,
+                            rejoin_count=%s,
+                            is_member=%s,
+                            member_id=%s,
+                            is_host=%s,
+                            meeting_pk=%s,
+                            status='JOINED',
+                            updated_at=NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            participant_name,
+                            participant_email,
+                            event_time,
+                            event_time,
+                            rejoin_count,
+                            is_member_db_value,
+                            member["id"] if member else None,
+                            is_host_db_value,
+                            meeting_pk,
+                            row["id"],
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE attendance
+                        SET participant_name=%s,
+                            participant_email=%s,
+                            first_join=COALESCE(first_join, %s),
+                            current_join=%s,
+                            rejoin_count=%s,
+                            is_member=%s,
+                            member_id=%s,
+                            is_host=%s,
+                            status='JOINED',
+                            updated_at=NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            participant_name,
+                            participant_email,
+                            event_time,
+                            event_time,
+                            rejoin_count,
+                            is_member_db_value,
+                            member["id"] if member else None,
+                            is_host_db_value,
+                            row["id"],
+                        ),
+                    )
             else:
                 total_seconds = row["total_seconds"] or 0
                 if row["current_join"]:
                     delta = int((event_time - parse_dt(row["current_join"])).total_seconds())
                     total_seconds += max(delta, 0)
 
-                cur.execute(
-                    """
-                    UPDATE attendance
-                    SET participant_name=%s,
-                        participant_email=%s,
-                        last_leave=%s,
-                        current_join=NULL,
-                        total_seconds=%s,
-                        is_member=%s,
-                        member_id=%s,
-                        is_host=%s,
-                        status='LEFT',
-                        updated_at=NOW()
-                    WHERE id=%s
-                    """,
-                    (
-                        participant_name,
-                        participant_email,
-                        event_time,
-                        total_seconds,
-                        is_member_db_value,
-                        member["id"] if member else None,
-                        is_host_db_value,
-                        row["id"],
-                    ),
-                )
+                if has_meeting_pk:
+                    cur.execute(
+                        """
+                        UPDATE attendance
+                        SET participant_name=%s,
+                            participant_email=%s,
+                            last_leave=%s,
+                            current_join=NULL,
+                            total_seconds=%s,
+                            is_member=%s,
+                            member_id=%s,
+                            is_host=%s,
+                            meeting_pk=%s,
+                            status='LEFT',
+                            updated_at=NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            participant_name,
+                            participant_email,
+                            event_time,
+                            total_seconds,
+                            is_member_db_value,
+                            member["id"] if member else None,
+                            is_host_db_value,
+                            meeting_pk,
+                            row["id"],
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE attendance
+                        SET participant_name=%s,
+                            participant_email=%s,
+                            last_leave=%s,
+                            current_join=NULL,
+                            total_seconds=%s,
+                            is_member=%s,
+                            member_id=%s,
+                            is_host=%s,
+                            status='LEFT',
+                            updated_at=NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            participant_name,
+                            participant_email,
+                            event_time,
+                            total_seconds,
+                            is_member_db_value,
+                            member["id"] if member else None,
+                            is_host_db_value,
+                            row["id"],
+                        ),
+                    )
         conn.commit()
 
     refresh_live_meeting_summary(meeting_uuid)
