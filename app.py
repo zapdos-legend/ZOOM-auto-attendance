@@ -703,25 +703,66 @@ def participant_key(name, email=None):
 
 
 def ensure_meeting(payload_object):
-    meeting_uuid = str(payload_object.get("uuid") or payload_object.get("id") or "")
-    meeting_id = str(payload_object.get("id") or "")
-    topic = payload_object.get("topic") or "Zoom Meeting"
-    host_name = payload_object.get("host_name") or payload_object.get("host_email") or ""
+    meeting_uuid = str(payload_object.get("uuid") or "").strip()
+    meeting_id = str(payload_object.get("id") or payload_object.get("meeting_id") or "").strip()
+    topic = (payload_object.get("topic") or payload_object.get("meeting_topic") or "Zoom Meeting").strip()
+    host_name = (payload_object.get("host_name") or payload_object.get("host_email") or "").strip()
     start_time = parse_dt(payload_object.get("start_time")) or now_local()
+
+    lookup_uuid = meeting_uuid or meeting_id
+    if not lookup_uuid and not meeting_id:
+        return None
 
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
-            row = cur.fetchone()
-            if row:
-                return row
+            if lookup_uuid:
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (lookup_uuid,))
+                row = cur.fetchone()
+                if row:
+                    cur.execute(
+                        """
+                        UPDATE meetings
+                        SET meeting_id=COALESCE(NULLIF(%s, ''), meeting_id),
+                            topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
+                            host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
+                            start_time=COALESCE(start_time, %s)
+                        WHERE id=%s
+                        RETURNING *
+                        """,
+                        (meeting_id, topic, topic, host_name, host_name, start_time, row["id"]),
+                    )
+                    row = cur.fetchone()
+                    conn.commit()
+                    return row
+
+            if meeting_id:
+                cur.execute(
+                    "SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY id DESC LIMIT 1",
+                    (meeting_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    cur.execute(
+                        """
+                        UPDATE meetings
+                        SET topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
+                            host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
+                            start_time=COALESCE(start_time, %s)
+                        WHERE id=%s
+                        RETURNING *
+                        """,
+                        (topic, topic, host_name, host_name, start_time, row["id"]),
+                    )
+                    row = cur.fetchone()
+                    conn.commit()
+                    return row
 
             cur.execute(
                 """
                 INSERT INTO meetings(meeting_uuid, meeting_id, topic, host_name, start_time, status)
                 VALUES (%s, %s, %s, %s, %s, 'live') RETURNING *
                 """,
-                (meeting_uuid, meeting_id, topic, host_name, start_time),
+                (lookup_uuid or meeting_id, meeting_id, topic, host_name, start_time),
             )
             row = cur.fetchone()
         conn.commit()
@@ -2011,6 +2052,7 @@ def live():
 
     if not info:
         body = """
+        <meta http-equiv='refresh' content='2'>
         <div class='hero'>
             <h2>Live Dashboard</h2>
             <div class='muted' style='color:#cbd5e1'>No live meeting is active right now.</div>
@@ -2964,22 +3006,34 @@ def zoom_webhook():
     if not verify_zoom_signature(request):
         return jsonify({"message": "invalid signature"}), 401
 
-    event = payload.get("event")
-    obj = payload.get("payload", {}).get("object", {})
-    participant = payload.get("payload", {}).get("object", {}).get("participant", {}) or payload.get("payload", {}).get("object", {})
+    event = (payload.get("event") or "").strip()
+    payload_root = payload.get("payload", {}) or {}
+    obj = payload_root.get("object", {}) or {}
+
+    participant = obj.get("participant") or payload_root.get("participant") or {}
+    if not participant and isinstance(obj.get("participants"), list) and obj.get("participants"):
+        participant = obj.get("participants")[0] or {}
+    if not participant and any(k in obj for k in ("user_name", "participant_user_name", "name", "email", "user_email")):
+        participant = obj
 
     if event == "meeting.started":
         meeting = ensure_meeting(obj)
-        log_activity("zoom_started", meeting["meeting_uuid"])
+        log_activity("zoom_started", meeting["meeting_uuid"] if meeting else "unknown")
         return jsonify({"ok": True})
 
-    if event in ("meeting.participant_joined", "meeting.participant_left"):
+    if "participant_joined" in event or "participant_left" in event:
         meeting = ensure_meeting(obj)
+        if not meeting:
+            return jsonify({"ok": False, "reason": "meeting not resolved"}), 400
+
         meeting_uuid = meeting["meeting_uuid"]
+        event_type = "join" if "participant_joined" in event else "leave"
 
         event_raw = (
             participant.get("join_time")
             or participant.get("leave_time")
+            or obj.get("join_time")
+            or obj.get("leave_time")
             or (
                 datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME)).isoformat()
                 if isinstance(payload.get("event_ts"), (int, float))
@@ -2991,23 +3045,33 @@ def zoom_webhook():
         participant_name = (
             participant.get("user_name")
             or participant.get("participant_user_name")
+            or participant.get("display_name")
             or participant.get("name")
+            or participant.get("participant_name")
+            or participant.get("screen_name")
             or "Unknown Participant"
         )
-        participant_email = participant.get("email") or participant.get("user_email") or None
+        participant_email = (
+            participant.get("email")
+            or participant.get("user_email")
+            or participant.get("participant_email")
+            or None
+        )
 
         update_participant(
             meeting_uuid,
             participant_name,
             participant_email,
             event_time,
-            "join" if event.endswith("joined") else "leave",
+            event_type,
         )
-        log_activity("zoom_participant_event", f"{event} :: {participant_name}")
+        log_activity("zoom_participant_event", f"{event} :: {meeting_uuid} :: {participant_name}")
         return jsonify({"ok": True})
 
     if event in ("meeting.ended", "meeting.end"):
         meeting = ensure_meeting(obj)
+        if not meeting:
+            return jsonify({"ok": False, "reason": "meeting not resolved"}), 400
         finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local())
         log_activity("zoom_meeting_ended", meeting["meeting_uuid"])
         return jsonify({"ok": True, "finalized": bool(finalized)})
