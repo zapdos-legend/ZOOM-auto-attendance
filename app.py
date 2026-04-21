@@ -231,18 +231,43 @@ def fix_database_compatibility():
                 cur.execute(
                     """
                     DO $$
+                    DECLARE
+                        col_type TEXT;
                     BEGIN
-                        IF EXISTS (
-                            SELECT 1
-                            FROM information_schema.columns
-                            WHERE table_schema='public'
-                              AND table_name='members'
-                              AND column_name='active'
-                              AND data_type IN ('integer', 'smallint', 'bigint', 'numeric')
-                        ) THEN
+                        SELECT data_type
+                        INTO col_type
+                        FROM information_schema.columns
+                        WHERE table_schema='public'
+                          AND table_name='members'
+                          AND column_name='active';
+
+                        IF col_type IN ('integer', 'smallint', 'bigint', 'numeric') THEN
+                            ALTER TABLE members ALTER COLUMN active DROP DEFAULT;
+
                             ALTER TABLE members
                             ALTER COLUMN active TYPE BOOLEAN
-                            USING (active::boolean);
+                            USING (
+                                CASE
+                                    WHEN active IS NULL THEN FALSE
+                                    WHEN active::integer = 1 THEN TRUE
+                                    ELSE FALSE
+                                END
+                            );
+
+                            ALTER TABLE members ALTER COLUMN active SET DEFAULT TRUE;
+                        ELSIF col_type = 'text' THEN
+                            ALTER TABLE members ALTER COLUMN active DROP DEFAULT;
+
+                            ALTER TABLE members
+                            ALTER COLUMN active TYPE BOOLEAN
+                            USING (
+                                CASE
+                                    WHEN lower(trim(active)) IN ('1','true','t','yes','y') THEN TRUE
+                                    ELSE FALSE
+                                END
+                            );
+
+                            ALTER TABLE members ALTER COLUMN active SET DEFAULT TRUE;
                         END IF;
                     END$$;
                     """
@@ -251,18 +276,43 @@ def fix_database_compatibility():
                 cur.execute(
                     """
                     DO $$
+                    DECLARE
+                        col_type TEXT;
                     BEGIN
-                        IF EXISTS (
-                            SELECT 1
-                            FROM information_schema.columns
-                            WHERE table_schema='public'
-                              AND table_name='users'
-                              AND column_name='is_active'
-                              AND data_type IN ('integer', 'smallint', 'bigint', 'numeric')
-                        ) THEN
+                        SELECT data_type
+                        INTO col_type
+                        FROM information_schema.columns
+                        WHERE table_schema='public'
+                          AND table_name='users'
+                          AND column_name='is_active';
+
+                        IF col_type IN ('integer', 'smallint', 'bigint', 'numeric') THEN
+                            ALTER TABLE users ALTER COLUMN is_active DROP DEFAULT;
+
                             ALTER TABLE users
                             ALTER COLUMN is_active TYPE BOOLEAN
-                            USING (is_active::boolean);
+                            USING (
+                                CASE
+                                    WHEN is_active IS NULL THEN FALSE
+                                    WHEN is_active::integer = 1 THEN TRUE
+                                    ELSE FALSE
+                                END
+                            );
+
+                            ALTER TABLE users ALTER COLUMN is_active SET DEFAULT TRUE;
+                        ELSIF col_type = 'text' THEN
+                            ALTER TABLE users ALTER COLUMN is_active DROP DEFAULT;
+
+                            ALTER TABLE users
+                            ALTER COLUMN is_active TYPE BOOLEAN
+                            USING (
+                                CASE
+                                    WHEN lower(trim(is_active)) IN ('1','true','t','yes','y') THEN TRUE
+                                    ELSE FALSE
+                                END
+                            );
+
+                            ALTER TABLE users ALTER COLUMN is_active SET DEFAULT TRUE;
                         END IF;
                     END$$;
                     """
@@ -280,6 +330,9 @@ def fix_database_compatibility():
                               AND column_name='start_time'
                               AND data_type='text'
                         ) THEN
+                            ALTER TABLE meetings
+                            ALTER COLUMN start_time DROP DEFAULT;
+
                             ALTER TABLE meetings
                             ALTER COLUMN start_time TYPE TIMESTAMPTZ
                             USING NULLIF(start_time, '')::timestamptz;
@@ -300,6 +353,9 @@ def fix_database_compatibility():
                               AND column_name='end_time'
                               AND data_type='text'
                         ) THEN
+                            ALTER TABLE meetings
+                            ALTER COLUMN end_time DROP DEFAULT;
+
                             ALTER TABLE meetings
                             ALTER COLUMN end_time TYPE TIMESTAMPTZ
                             USING NULLIF(end_time, '')::timestamptz;
