@@ -380,6 +380,8 @@ def fix_database_compatibility():
             except Exception:
                 conn.rollback()
                 raise
+
+
 def get_setting(name, cast=str):
     value = DEFAULT_SETTINGS.get(name)
     with db() as conn:
@@ -2992,91 +2994,123 @@ def health():
 
 @app.route("/zoom/webhook", methods=["POST"])
 def zoom_webhook():
-    payload = request.get_json(force=True, silent=True) or {}
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        print("🔥 FULL ZOOM DATA:", payload)
 
-    if payload.get("event") == "endpoint.url_validation":
-        plain = payload.get("payload", {}).get("plainToken", "")
-        encrypted = hmac.new(
-            ZOOM_SECRET_TOKEN.encode("utf-8"),
-            plain.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest() if ZOOM_SECRET_TOKEN else ""
-        return jsonify({"plainToken": plain, "encryptedToken": encrypted})
+        if payload.get("event") == "endpoint.url_validation":
+            plain = payload.get("payload", {}).get("plainToken", "")
+            encrypted = hmac.new(
+                ZOOM_SECRET_TOKEN.encode("utf-8"),
+                plain.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest() if ZOOM_SECRET_TOKEN else ""
+            print("✅ URL VALIDATION:", {"plainToken": plain, "encryptedToken": encrypted})
+            return jsonify({"plainToken": plain, "encryptedToken": encrypted})
 
-    if not verify_zoom_signature(request):
-        return jsonify({"message": "invalid signature"}), 401
+        if not verify_zoom_signature(request):
+            print("❌ INVALID SIGNATURE")
+            return jsonify({"message": "invalid signature"}), 401
 
-    event = (payload.get("event") or "").strip()
-    payload_root = payload.get("payload", {}) or {}
-    obj = payload_root.get("object", {}) or {}
+        event = (payload.get("event") or "").strip()
+        payload_root = payload.get("payload", {}) or {}
+        obj = payload_root.get("object", {}) or {}
 
-    participant = obj.get("participant") or payload_root.get("participant") or {}
-    if not participant and isinstance(obj.get("participants"), list) and obj.get("participants"):
-        participant = obj.get("participants")[0] or {}
-    if not participant and any(k in obj for k in ("user_name", "participant_user_name", "name", "email", "user_email")):
-        participant = obj
+        print("📌 EVENT:", event)
+        print("📌 OBJECT:", obj)
 
-    if event == "meeting.started":
-        meeting = ensure_meeting(obj)
-        log_activity("zoom_started", meeting["meeting_uuid"] if meeting else "unknown")
-        return jsonify({"ok": True})
+        participant = obj.get("participant") or payload_root.get("participant") or {}
+        if not participant and isinstance(obj.get("participants"), list) and obj.get("participants"):
+            participant = obj.get("participants")[0] or {}
+        if not participant and any(k in obj for k in ("user_name", "participant_user_name", "name", "email", "user_email")):
+            participant = obj
 
-    if "participant_joined" in event or "participant_left" in event:
-        meeting = ensure_meeting(obj)
-        if not meeting:
-            return jsonify({"ok": False, "reason": "meeting not resolved"}), 400
+        print("📌 PARTICIPANT:", participant)
 
-        meeting_uuid = meeting["meeting_uuid"]
-        event_type = "join" if "participant_joined" in event else "leave"
+        if event == "meeting.started":
+            meeting = ensure_meeting(obj)
+            print("✅ MEETING STARTED RESOLVED:", meeting)
+            log_activity("zoom_started", meeting["meeting_uuid"] if meeting else "unknown")
+            return jsonify({"ok": True})
 
-        event_raw = (
-            participant.get("join_time")
-            or participant.get("leave_time")
-            or obj.get("join_time")
-            or obj.get("leave_time")
-            or (
-                datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME)).isoformat()
-                if isinstance(payload.get("event_ts"), (int, float))
-                else None
+        if "participant_joined" in event or "participant_left" in event:
+            meeting = ensure_meeting(obj)
+            print("✅ PARTICIPANT EVENT MEETING:", meeting)
+
+            if not meeting:
+                print("❌ meeting not resolved")
+                return jsonify({"ok": False, "reason": "meeting not resolved"}), 200
+
+            meeting_uuid = meeting["meeting_uuid"]
+            event_type = "join" if "participant_joined" in event else "leave"
+
+            event_raw = (
+                participant.get("join_time")
+                or participant.get("leave_time")
+                or obj.get("join_time")
+                or obj.get("leave_time")
+                or (
+                    datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME)).isoformat()
+                    if isinstance(payload.get("event_ts"), (int, float))
+                    else None
+                )
             )
-        )
-        event_time = parse_dt(event_raw) or now_local()
+            event_time = parse_dt(event_raw) or now_local()
 
-        participant_name = (
-            participant.get("user_name")
-            or participant.get("participant_user_name")
-            or participant.get("display_name")
-            or participant.get("name")
-            or participant.get("participant_name")
-            or participant.get("screen_name")
-            or "Unknown Participant"
-        )
-        participant_email = (
-            participant.get("email")
-            or participant.get("user_email")
-            or participant.get("participant_email")
-            or None
-        )
+            participant_name = (
+                participant.get("user_name")
+                or participant.get("participant_user_name")
+                or participant.get("display_name")
+                or participant.get("name")
+                or participant.get("participant_name")
+                or participant.get("screen_name")
+                or "Unknown Participant"
+            )
+            participant_email = (
+                participant.get("email")
+                or participant.get("user_email")
+                or participant.get("participant_email")
+                or None
+            )
 
-        update_participant(
-            meeting_uuid,
-            participant_name,
-            participant_email,
-            event_time,
-            event_type,
-        )
-        log_activity("zoom_participant_event", f"{event} :: {meeting_uuid} :: {participant_name}")
-        return jsonify({"ok": True})
+            print("📌 PARSED PARTICIPANT:", {
+                "meeting_uuid": meeting_uuid,
+                "event_type": event_type,
+                "participant_name": participant_name,
+                "participant_email": participant_email,
+                "event_raw": event_raw,
+                "event_time": str(event_time),
+            })
 
-    if event in ("meeting.ended", "meeting.end"):
-        meeting = ensure_meeting(obj)
-        if not meeting:
-            return jsonify({"ok": False, "reason": "meeting not resolved"}), 400
-        finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local())
-        log_activity("zoom_meeting_ended", meeting["meeting_uuid"])
-        return jsonify({"ok": True, "finalized": bool(finalized)})
+            update_participant(
+                meeting_uuid,
+                participant_name,
+                participant_email,
+                event_time,
+                event_type,
+            )
+            log_activity("zoom_participant_event", f"{event} :: {meeting_uuid} :: {participant_name}")
+            return jsonify({"ok": True})
 
-    return jsonify({"ok": True, "ignored": event})
+        if event in ("meeting.ended", "meeting.end"):
+            meeting = ensure_meeting(obj)
+            print("✅ MEETING ENDED RESOLVED:", meeting)
+
+            if not meeting:
+                print("❌ meeting not resolved")
+                return jsonify({"ok": False, "reason": "meeting not resolved"}), 200
+
+            finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local())
+            print("✅ FINALIZED:", finalized)
+            log_activity("zoom_meeting_ended", meeting["meeting_uuid"])
+            return jsonify({"ok": True, "finalized": bool(finalized)})
+
+        print("ℹ️ IGNORED EVENT:", event)
+        return jsonify({"ok": True, "ignored": event})
+
+    except Exception as e:
+        print("❌ WEBHOOK ERROR:", str(e))
+        return jsonify({"ok": False, "error": str(e)}), 200
 
 
 if __name__ == "__main__":
