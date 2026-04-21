@@ -1574,6 +1574,14 @@ def build_meeting_report_data(meeting_uuid):
     return {"meeting": meeting, "rows": report_rows, "summary": summary}
 
 
+def build_meeting_pdf_filename(report_data):
+    summary = report_data["summary"]
+    date_part = summary.get("date") or fmt_date(now_local())
+    start_part = (summary.get("start_time") or "-").replace(":", "-").replace(" ", "_")
+    end_part = (summary.get("end_time") or "-").replace(":", "-").replace(" ", "_")
+    return f"{date_part}_from_{start_part}_to_{end_part}.pdf"
+
+
 def export_meeting_pdf_bytes(title, report_data):
     meeting = report_data["meeting"]
     rows = report_data["rows"]
@@ -2077,14 +2085,14 @@ BASE_HTML = """
         .top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
         .kpi-note{font-size:12px;color:var(--muted)}
         .toggle-form{display:inline-flex;align-items:center}
-        .toggle-switch{position:relative;width:92px;height:40px;border:none;border-radius:999px;padding:0;cursor:pointer;box-shadow:none;overflow:hidden;background:linear-gradient(180deg,#ef4444,#dc2626)}
-        .toggle-switch.on{background:linear-gradient(180deg,#22c55e,#16a34a)}
-        .toggle-switch.off{background:linear-gradient(180deg,#ef4444,#dc2626)}
-        .toggle-switch .toggle-knob{position:absolute;top:4px;left:4px;width:32px;height:32px;border-radius:50%;background:#fff;transition:left .2s ease}
-        .toggle-switch.on .toggle-knob{left:56px}
-        .toggle-switch .toggle-icon{position:absolute;top:50%;transform:translateY(-50%);font-size:20px;font-weight:900;line-height:1;color:rgba(0,0,0,.45)}
-        .toggle-switch .toggle-on{left:18px}
-        .toggle-switch .toggle-off{right:18px}
+        .toggle-switch{position:relative;width:98px;height:42px;border:none;border-radius:999px;padding:0;cursor:pointer;box-shadow:inset 0 2px 6px rgba(255,255,255,.14),0 10px 22px rgba(15,23,42,.22);overflow:hidden;background:linear-gradient(135deg,#ef4444,#dc2626);transition:transform .16s ease, box-shadow .16s ease}
+        .toggle-switch.on{background:linear-gradient(135deg,#22c55e,#16a34a)}
+        .toggle-switch.off{background:linear-gradient(135deg,#ef4444,#dc2626)}
+        .toggle-switch .toggle-knob{position:absolute;top:4px;left:4px;width:34px;height:34px;border-radius:50%;background:linear-gradient(180deg,#ffffff,#e2e8f0);box-shadow:0 4px 12px rgba(2,6,23,.25);transition:left .2s ease}
+        .toggle-switch.on .toggle-knob{left:60px}
+        .toggle-switch .toggle-icon{position:absolute;top:50%;transform:translateY(-50%);font-size:19px;font-weight:900;line-height:1;color:rgba(255,255,255,.92);text-shadow:0 1px 2px rgba(0,0,0,.22)}
+        .toggle-switch .toggle-on{left:16px}
+        .toggle-switch .toggle-off{right:16px}
         @media (max-width: 920px){
             .wrap{display:block}
             .sidebar{width:100%;border-right:none;border-bottom:1px solid rgba(148,163,184,.25)}
@@ -2454,6 +2462,9 @@ def home():
         fmt_dt=fmt_dt,
         fmt_time_ampm=fmt_time_ampm,
         member_display_name=member_display_name,
+        total_members_count=total_members_count,
+        active_members_count=active_members_count,
+        inactive_members_count=inactive_members_count,
         session=session,
     )
     return page("Home", body, "home")
@@ -2512,7 +2523,7 @@ def live():
 
         <br>
 
-        <div class='grid' style='grid-template-columns:minmax(0,1.55fr) minmax(300px,0.85fr);align-items:start;'>
+        <div class='grid' style='grid-template-columns:minmax(0,1.72fr) minmax(260px,0.68fr);gap:12px;align-items:start;'>
             <div class='card'>
                 <h3>Live Participants</h3>
                 <div class="table-wrap">
@@ -2606,7 +2617,7 @@ def members():
 
         if action == "add" and can_edit_users():
             full_name = request.form.get("full_name", "").strip()
-            email = request.form.get("email", "").strip() or None
+            email = None
             phone = request.form.get("phone", "").strip() or None
 
             if full_name:
@@ -2681,10 +2692,16 @@ def members():
     with db() as conn:
         with conn.cursor() as cur:
             member_name_field = member_name_sql(conn)
+            cur.execute("SELECT COUNT(*) AS c FROM members")
+            total_members_count = cur.fetchone()["c"]
+            cur.execute(f"SELECT COUNT(*) AS c FROM members WHERE {ACTIVE_MEMBER_SQL}")
+            active_members_count = cur.fetchone()["c"]
+            inactive_members_count = total_members_count - active_members_count
+
             if q:
                 cur.execute(
-                    f"SELECT * FROM members WHERE (lower(COALESCE({member_name_field}, '')) LIKE %s OR lower(COALESCE(email,'')) LIKE %s) ORDER BY id DESC",
-                    (f"%{q}%", f"%{q}%"),
+                    f"SELECT * FROM members WHERE (lower(COALESCE({member_name_field}, '')) LIKE %s OR lower(COALESCE(email,'')) LIKE %s OR lower(COALESCE(phone,'')) LIKE %s) ORDER BY id DESC",
+                    (f"%{q}%", f"%{q}%", f"%{q}%"),
                 )
             else:
                 cur.execute("SELECT * FROM members ORDER BY id DESC")
@@ -2703,6 +2720,14 @@ def members():
         </div>
 
         <div class='grid'>
+            <div class='card stat-card'><h4>Total Members</h4><div class='metric'>{{ total_members_count }}</div></div>
+            <div class='card stat-card'><h4>Active Members</h4><div class='metric'>{{ active_members_count }}</div></div>
+            <div class='card stat-card'><h4>Inactive Members</h4><div class='metric'>{{ inactive_members_count }}</div></div>
+        </div>
+
+        <br>
+
+        <div class='grid'>
             <div class='card'>
                 <h3>{{ 'Edit Member' if edit_member else 'Add Member' }}</h3>
                 {% if session.get('role') == 'admin' %}
@@ -2711,8 +2736,10 @@ def members():
                     {% if edit_member %}<input type='hidden' name='member_id' value='{{ edit_member.id }}'>{% endif %}
                     <label>Full Name</label>
                     <input name='full_name' required value='{{ member_display_name(edit_member) if edit_member else "" }}'>
+                    {% if edit_member %}
                     <label>Email</label>
                     <input name='email' value='{{ edit_member.email if edit_member else "" }}'>
+                    {% endif %}
                     <label>Phone</label>
                     <input name='phone' value='{{ edit_member.phone if edit_member else "" }}'>
                     <button type='submit'>{{ 'Update Member' if edit_member else 'Save Member' }}</button>
@@ -2743,7 +2770,7 @@ def members():
         <div class='card'>
             <h3>Search Members</h3>
             <form method='get'>
-                <input name='q' value='{{ q }}' placeholder='Search by name or email'>
+                <input name='q' value='{{ q }}' placeholder='Search by name, email or phone'>
                 <button type='submit'>Search</button>
             </form>
 
@@ -2758,7 +2785,7 @@ def members():
                     {% for m in rows %}
                         <tr>
                             <td>{{ member_display_name(m) }}</td>
-                            <td>{{ m.phone or '-' }}</td>
+                            <td>{{ m.email or '-' }}</td>
                             <td>{{ m.phone or '-' }}</td>
                             <td>
                                 {% if m.active|string in ['1', 'True', 'true', 't'] %}
@@ -3320,9 +3347,10 @@ def meeting_pdf(meeting_uuid):
         return redirect(url_for("meetings"))
 
     pdf = export_meeting_pdf_bytes("Attendance Report", report_data)
+    pdf_filename = build_meeting_pdf_filename(report_data)
     return send_file(
         io.BytesIO(pdf),
-        download_name=f"{slugify(meeting_uuid)}.pdf",
+        download_name=pdf_filename,
         mimetype="application/pdf",
         as_attachment=True,
     )
