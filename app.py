@@ -1507,11 +1507,11 @@ def analytics_data(filters):
         where.append("lower(a.participant_name) LIKE %s")
         params.append(f"%{filters['person_name'].strip().lower()}%")
     if filters.get("participant_type") == "member":
-        where.append("a.is_member = TRUE")
+        where.append("CAST(a.is_member AS TEXT) IN ('1','true','t','True','TRUE')")
     elif filters.get("participant_type") == "unknown":
-        where.append("a.is_member = FALSE")
+        where.append("COALESCE(CAST(a.is_member AS TEXT), '0') NOT IN ('1','true','t','True','TRUE')")
     elif filters.get("participant_type") == "host":
-        where.append("a.is_host = TRUE")
+        where.append("CAST(a.is_host AS TEXT) IN ('1','true','t','True','TRUE')")
 
     sql = f"""
         SELECT
@@ -1621,7 +1621,7 @@ def analytics_data(filters):
     selected_member_map = {int(m["id"]): member_display_name(m) for m in members if m.get("id") is not None}
 
     chart_rows = []
-    chart_where = ["a.is_member = TRUE", "a.member_id IS NOT NULL"]
+    chart_where = ["CAST(a.is_member AS TEXT) IN ('1','true','t','True','TRUE')", "a.member_id IS NOT NULL"]
     chart_params = []
     if from_date:
         chart_where.append("CAST(m.start_time AS TEXT)::date >= %s")
@@ -1639,7 +1639,7 @@ def analytics_data(filters):
         chart_where.append("lower(a.participant_name) LIKE %s")
         chart_params.append(f"%{filters['person_name'].strip().lower()}%")
     if filters.get("participant_type") == "host":
-        chart_where.append("a.is_host = TRUE")
+        chart_where.append("CAST(a.is_host AS TEXT) IN ('1','true','t','True','TRUE')")
 
     chart_sql = f"""
         SELECT a.member_id, a.participant_name, a.total_seconds, a.current_join, a.first_join, a.last_leave,
@@ -1664,7 +1664,7 @@ def analytics_data(filters):
                                    a.rejoin_count, a.final_status, a.is_member, m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
                             FROM attendance a
                             JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
-                            WHERE a.is_member = TRUE AND a.member_id IS NOT NULL AND a.meeting_uuid = %s
+                            WHERE CAST(a.is_member AS TEXT) IN ('1','true','t','True','TRUE') AND a.member_id IS NOT NULL AND a.meeting_uuid = %s
                             ORDER BY a.participant_name ASC
                             """,
                             (latest_meeting_uuid,),
