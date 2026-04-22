@@ -932,8 +932,16 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                     raise
 
             if event_type == "join":
-                rejoin_count = row["rejoin_count"]
-                if row["first_join"] is not None:
+                rejoin_count = row["rejoin_count"] or 0
+                had_previous_session = (
+                    row.get("first_join") is not None
+                    and row.get("current_join") is None
+                    and (
+                        row.get("last_leave") is not None
+                        or (row.get("total_seconds") or 0) > 0
+                    )
+                )
+                if had_previous_session:
                     rejoin_count += 1
 
                 if has_meeting_pk:
@@ -1852,7 +1860,7 @@ def build_meeting_report_data(meeting_uuid):
     if not end_time:
         last_points = []
         for row in attendance_rows:
-            for key in ("last_leave", "updated_at", "first_join", "current_join"):
+            for key in ("last_leave", "first_join", "current_join"):
                 candidate = parse_dt(row.get(key))
                 if candidate:
                     last_points.append(candidate)
@@ -1860,7 +1868,8 @@ def build_meeting_report_data(meeting_uuid):
     if end_time < start_time:
         end_time = start_time
 
-    present_threshold_minutes = round(max((end_time - start_time).total_seconds(), 0) / 60 * get_setting("present_percentage", int) / 100.0, 2)
+    meeting_total_seconds = max(int((end_time - start_time).total_seconds()), 0)
+    present_threshold_minutes = round(meeting_total_seconds / 60 * get_setting("present_percentage", int) / 100.0, 2)
     late_summary_threshold_minutes = round(max((end_time - start_time).total_seconds(), 0) / 60 * get_setting("late_count_as_present_percentage", int) / 100.0, 2)
 
     joined_member_ids = set()
@@ -1877,7 +1886,10 @@ def build_meeting_report_data(meeting_uuid):
         else:
             total_seconds = row.get("total_seconds") or 0
             if row.get("current_join"):
-                total_seconds += max(int((end_time - parse_dt(row.get("current_join"))).total_seconds()), 0)
+                current_join_dt = parse_dt(row.get("current_join"))
+                if current_join_dt:
+                    total_seconds += max(int((end_time - current_join_dt).total_seconds()), 0)
+        total_seconds = max(0, min(int(total_seconds or 0), meeting_total_seconds))
 
         join_seen = bool(row.get("first_join") or row.get("last_leave") or row.get("current_join") or total_seconds > 0)
         if join_seen:
@@ -3058,6 +3070,25 @@ def manual_finalize_meeting(meeting_uuid):
     return redirect(url_for("meetings"))
 
 
+@app.route("/meetings/<path:meeting_uuid>/delete", methods=["POST"])
+@login_required
+@admin_required
+def delete_meeting(meeting_uuid):
+    if not meeting_uuid:
+        flash("Meeting UUID missing for this record.", "error")
+        return redirect(url_for("meetings"))
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM attendance WHERE meeting_uuid=%s", (meeting_uuid,))
+            cur.execute("DELETE FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+        conn.commit()
+
+    log_activity("meeting_delete", meeting_uuid)
+    flash("Meeting deleted successfully.", "success")
+    return redirect(url_for("meetings"))
+
+
 @app.route("/members", methods=["GET", "POST"])
 @login_required
 def members():
@@ -3274,6 +3305,9 @@ def members():
         q=q,
         edit_member=edit_member,
         member_display_name=member_display_name,
+        total_members_count=total_members_count,
+        active_members_count=active_members_count,
+        inactive_members_count=inactive_members_count,
         session=session,
     )
     return page("Members", body, "members")
@@ -3834,6 +3868,11 @@ def meetings():
                                 <div class="row">
                                     <a class='btn success small' href='{{ url_for("meeting_csv", meeting_uuid=m.meeting_uuid) }}'>CSV</a>
                                     <a class='btn secondary small' href='{{ url_for("meeting_pdf", meeting_uuid=m.meeting_uuid) }}'>PDF</a>
+                                    {% if session.get('role') == 'admin' %}
+                                        <form method='post' action='{{ url_for("delete_meeting", meeting_uuid=m.meeting_uuid) }}' onsubmit='return confirm("Delete this meeting and its attendance records?")'>
+                                            <button type='submit' class='btn danger small'>Delete</button>
+                                        </form>
+                                    {% endif %}
                                     {% if session.get('role') == 'admin' and m.status == 'live' %}
                                         <a class='btn danger small' href='{{ url_for("manual_finalize_meeting", meeting_uuid=m.meeting_uuid) }}'>Finalize</a>
                                     {% endif %}
