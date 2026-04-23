@@ -268,8 +268,7 @@ def get_vapid_private_key_value():
     raw = VAPID_PRIVATE_KEY or ""
     if not raw:
         return ""
-    return raw.replace("\n", "
-").strip()
+    return raw.replace("\n", "\n").replace("\r", "").strip()
 
 
 def is_web_push_configured() -> bool:
