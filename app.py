@@ -1621,6 +1621,71 @@ def build_filter_query(filters):
     return urlencode(query_items, doseq=True)
 
 
+def build_phase3_alerts(summary, latest_meeting_summary, previous_meeting_summary, reminder_suggestion):
+    alerts = []
+    if summary.get("critical_members_count", 0) > 0:
+        alerts.append({"level": "danger", "title": "Critical member risk detected", "text": f"{summary.get('critical_members_count', 0)} member(s) need immediate follow-up."})
+    elif summary.get("warning_members_count", 0) > 0:
+        alerts.append({"level": "warn", "title": "Warning members found", "text": f"{summary.get('warning_members_count', 0)} member(s) are slipping below healthy attendance."})
+
+    if summary.get("unknown_rows", 0) >= 3:
+        alerts.append({"level": "info", "title": "Unknown participants trend", "text": f"{summary.get('unknown_rows', 0)} unknown participant records appeared in the current filtered view."})
+
+    if latest_meeting_summary and not latest_meeting_summary.get("present"):
+        alerts.append({"level": "warn", "title": "Latest meeting has weak turnout", "text": "The latest meeting has no present classifications in the filtered dataset."})
+
+    if latest_meeting_summary and latest_meeting_summary.get("unknown", 0) >= 2:
+        alerts.append({"level": "info", "title": "Unknown participant watch", "text": f"{latest_meeting_summary.get('unknown', 0)} unknown attendees appeared in the latest meeting snapshot."})
+
+    if latest_meeting_summary and previous_meeting_summary:
+        latest_health = float(latest_meeting_summary.get("health") or 0)
+        previous_health = float(previous_meeting_summary.get("health") or 0)
+        if previous_health and latest_health + 10 < previous_health:
+            alerts.append({"level": "danger", "title": "Meeting health drop detected", "text": f"Latest meeting health dropped from {previous_health}% to {latest_health}%."})
+
+    if reminder_suggestion and reminder_suggestion.get("count"):
+        alerts.append({"level": "warn", "title": "Reminder suggested", "text": reminder_suggestion.get("message")})
+
+    if not alerts:
+        alerts.append({"level": "ok", "title": "No urgent alerts", "text": "Current filters do not show any critical operational issue."})
+    return alerts[:5]
+
+
+def export_meeting_excel_bytes(report_data):
+    out = io.StringIO()
+    writer = csv.writer(out)
+    summary = report_data["summary"]
+    rows = report_data["rows"]
+
+    writer.writerow(["Attendance Report"])
+    writer.writerow(["Topic", summary.get("topic")])
+    writer.writerow(["Meeting ID", summary.get("meeting_id")])
+    writer.writerow(["Date", summary.get("date")])
+    writer.writerow(["Start Time", summary.get("start_time")])
+    writer.writerow(["End Time", summary.get("end_time")])
+    writer.writerow(["Meeting Duration (Minutes)", summary.get("meeting_duration_minutes")])
+    writer.writerow(["Meeting Health Score", summary.get("meeting_health_score")])
+    writer.writerow([])
+    writer.writerow(["Total Participants", summary.get("total_participants")])
+    writer.writerow(["Total Members", summary.get("total_members")])
+    writer.writerow(["Present Members", summary.get("total_present_members")])
+    writer.writerow(["Absent Members", summary.get("total_absent_members")])
+    writer.writerow(["Unknown Participants", summary.get("total_unknown_participants")])
+    writer.writerow([])
+    writer.writerow(["Name", "Join", "Leave", "Duration", "Rejoins", "Status", "Unknown"])
+    for row in rows:
+        writer.writerow([
+            row.get("participant_name") or "",
+            row.get("join_display") or "",
+            row.get("leave_display") or "",
+            row.get("duration_minutes") or 0,
+            row.get("rejoin_count") or 0,
+            row.get("status") or "",
+            "Yes" if row.get("is_unknown_joined") else "No",
+        ])
+    return out.getvalue().encode("utf-8")
+
+
 def analytics_data(filters):
     period_mode = filters.get("period_mode", "custom")
     from_date, to_date = normalize_period_dates(filters)
@@ -1937,6 +2002,23 @@ def analytics_data(filters):
         risk_table,
     )
 
+    duration_distribution = {
+        "0-15": 0,
+        "15-30": 0,
+        "30-60": 0,
+        "60+": 0,
+    }
+    for r in rows:
+        mins = mins_from_seconds(r.get("total_seconds") or 0)
+        if mins < 15:
+            duration_distribution["0-15"] += 1
+        elif mins < 30:
+            duration_distribution["15-30"] += 1
+        elif mins < 60:
+            duration_distribution["30-60"] += 1
+        else:
+            duration_distribution["60+"] += 1
+
     summary = {
         "total_rows": total_rows,
         "present_rows": present_rows,
@@ -1955,7 +2037,9 @@ def analytics_data(filters):
         "warning_members_count": len(warning_members),
         "safe_members_count": sum(1 for p in leaderboard if p["risk"]["short"] == "SAFE"),
         "insight_lines": insight_lines,
+        "duration_distribution": duration_distribution,
     }
+    alerts = build_phase3_alerts(summary, latest_meeting_summary, previous_meeting_summary, reminder_suggestion)
 
     return {
         "filters": filters,
@@ -1978,6 +2062,7 @@ def analytics_data(filters):
         "latest_meeting_summary": latest_meeting_summary,
         "previous_meeting_summary": previous_meeting_summary,
         "comparison_delta": comparison_delta,
+        "alerts": alerts,
     }
 
 
@@ -2072,6 +2157,7 @@ def build_meeting_report_data(meeting_uuid):
 
     report_rows = sorted(report_rows, key=status_order)
 
+    meeting_health_score = round(((present_members_count + max(0, joined_actual_count - present_members_count - unknown_participants_count)) / joined_actual_count) * 100, 2) if joined_actual_count else 0
     summary = {
         "topic": meeting.get("topic") or "Zoom Meeting",
         "meeting_id": meeting.get("meeting_id") or "-",
@@ -2086,6 +2172,8 @@ def build_meeting_report_data(meeting_uuid):
         "total_unknown_participants": unknown_participants_count,
         "present_threshold_minutes": present_threshold_minutes,
         "late_summary_threshold_minutes": late_summary_threshold_minutes,
+        "meeting_health_score": meeting_health_score,
+        "notes": meeting.get("notes") or "No meeting notes were stored for this meeting.",
     }
     return {"meeting": meeting, "rows": report_rows, "summary": summary}
 
@@ -2104,111 +2192,116 @@ def export_meeting_pdf_bytes(title, report_data):
     summary = report_data["summary"]
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=24, rightMargin=24, topMargin=22, bottomMargin=22)
     styles = getSampleStyleSheet()
     elements = []
 
     title_style = styles["Title"]
     title_style.alignment = 1
-    elements.append(Paragraph(f"<b>{title}</b>", title_style))
-    elements.append(Spacer(1, 12))
-
-    info_lines = [
-        f"Topic: {summary['topic']}",
-        f"Meeting ID: {summary['meeting_id']}",
-        f"Date: {summary['date']}",
-        f"Start Time: {summary['start_time']}",
-        f"End Time: {summary['end_time']}",
-        f"Total Meeting Duration: {summary['meeting_duration_minutes']} minutes",
-    ]
-    for line in info_lines:
-        elements.append(Paragraph(line, styles["Normal"]))
-
+    elements.append(Paragraph("<b>Zoom Attendance Platform</b>", title_style))
+    elements.append(Paragraph(f"<b>{title}</b>", styles["Heading2"]))
     elements.append(Spacer(1, 10))
 
-    table_data = [["Name", "Join", "Leave", "Duration", "Rejoins", "Status"]]
-    for row in rows:
-        name_value = row["participant_name"]
-        if row["is_unknown_joined"]:
-            name_value = f'<font color="red">{name_value}</font>'
-        table_data.append(
-            [
-                Paragraph(name_value, styles["Normal"]),
+    header_table = Table([
+        ["Topic", summary["topic"], "Meeting ID", summary["meeting_id"]],
+        ["Date", summary["date"], "Start", summary["start_time"]],
+        ["End", summary["end_time"], "Duration", f"{summary['meeting_duration_minutes']} min"],
+    ], colWidths=[70, 190, 70, 180])
+    header_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("PADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 10))
+
+    summary_table = Table([
+        ["Participants", summary["total_participants"], "Members", summary["total_members"], "Health", f"{summary['meeting_health_score']}%"],
+        ["Present", summary["total_present_members"], "Absent", summary["total_absent_members"], "Unknown", summary["total_unknown_participants"]],
+    ], colWidths=[75, 70, 75, 70, 75, 75])
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eff6ff")),
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#bfdbfe")),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#0f172a")),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("PADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(summary_table)
+    elements.append(Spacer(1, 10))
+
+    member_rows = [r for r in rows if not r.get("is_unknown_joined")]
+    unknown_rows = [r for r in rows if r.get("is_unknown_joined")]
+
+    def build_people_table(source_rows, title_text):
+        block = []
+        block.append(Paragraph(f"<b>{title_text}</b>", styles["Heading3"]))
+        table_data = [["Name", "Join", "Leave", "Duration", "Rejoins", "Status"]]
+        for row in source_rows:
+            table_data.append([
+                Paragraph(row["participant_name"], styles["Normal"]),
                 row["join_display"],
                 row["leave_display"],
                 str(row["duration_minutes"]),
                 str(row["rejoin_count"]),
                 row["status"],
-            ]
-        )
-
-    table = Table(table_data, repeatRows=1, colWidths=[190, 75, 75, 60, 55, 65])
-    table_style = TableStyle(
-        [
+            ])
+        table = Table(table_data, repeatRows=1, colWidths=[180, 70, 70, 60, 52, 68])
+        style = TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#94a3b8")),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ]
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("PADDING", (0, 0), (-1, -1), 5),
+        ])
+        for i in range(1, len(table_data)):
+            status = table_data[i][5]
+            if status == "PRESENT":
+                style.add("TEXTCOLOR", (5, i), (5, i), colors.green)
+            elif status == "LATE":
+                style.add("TEXTCOLOR", (5, i), (5, i), colors.orange)
+            elif status == "ABSENT":
+                style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
+            elif status == "HOST":
+                style.add("TEXTCOLOR", (5, i), (5, i), colors.HexColor("#1d4ed8"))
+        table.setStyle(style)
+        block.append(table)
+        block.append(Spacer(1, 8))
+        return block
+
+    elements.extend(build_people_table(member_rows[:120], "Member Attendance Section"))
+    if unknown_rows:
+        elements.extend(build_people_table(unknown_rows[:40], "Unknown Participants Section"))
+
+    criteria_text = (
+        "<b>Attendance Criteria</b><br/>"
+        f"• Present threshold for this meeting: {summary['present_threshold_minutes']} minutes<br/>"
+        f"• Late counted as present in summary above: {summary['late_summary_threshold_minutes']} minutes<br/>"
+        "• Host rows are preserved separately and not treated as absent.<br/>"
+        "• Unknown participants are attendees not matched to your member directory."
     )
-
-    for i in range(1, len(table_data)):
-        status = rows[i - 1]["status"]
-        if status == "PRESENT":
-            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.green)
-        elif status == "LATE":
-            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.orange)
-        elif status == "ABSENT":
-            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
-        elif status == "HOST":
-            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.HexColor("#1d4ed8"))
-
-    table.setStyle(table_style)
-    elements.append(table)
-    elements.append(Spacer(1, 12))
-
-    summary_lines = [
-        f"Total Participants: {summary['total_participants']}",
-        f"Total Members: {summary['total_members']}",
-        f"Total Present Members: {summary['total_present_members']}",
-        f"Total Absent Members: {summary['total_absent_members']}",
-        f"Total Unknown Participants: {summary['total_unknown_participants']}",
-    ]
-    for line in summary_lines:
-        elements.append(Paragraph(line, styles["Normal"]))
-
-    elements.append(Spacer(1, 10))
-
-    criteria_data = [[
-        Paragraph(
-            "<b>■ Attendance Criteria</b><br/>"
-            "■ Present = Duration ≥ 75% of total meeting duration<br/>"
-            "■ Late = Duration &lt; 75% of total meeting duration<br/>"
-            "■ Absent = Did not join the meeting (for added members only)<br/><br/>"
-            f"<b>■ Present Threshold For This Meeting: {summary['present_threshold_minutes']} minutes</b><br/>"
-            f"<b>■ Late counted as present in summary if Duration &gt; {summary['late_summary_threshold_minutes']} minutes</b>",
-            styles["Normal"],
-        )
-    ]]
-    criteria_table = Table(criteria_data, colWidths=[540])
-    criteria_table.setStyle(
-        TableStyle(
-            [
-                ("GRID", (0, 0), (-1, -1), 1, colors.black),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ]
-        )
-    )
+    criteria_table = Table([[Paragraph(criteria_text, styles["Normal"])]], colWidths=[520])
+    criteria_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+        ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cbd5e1")),
+        ("PADDING", (0, 0), (-1, -1), 8),
+    ]))
     elements.append(criteria_table)
+    elements.append(Spacer(1, 8))
+
+    notes_text = f"<b>Meeting Health Summary:</b> {summary['meeting_health_score']}%<br/><b>Notes:</b> {summary['notes']}"
+    notes_table = Table([[Paragraph(notes_text, styles["Normal"])]], colWidths=[520])
+    notes_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fefce8")),
+        ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#fde68a")),
+        ("PADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(notes_table)
 
     doc.build(elements)
     buffer.seek(0)
@@ -2749,28 +2842,6 @@ BASE_HTML = """
         .login-error{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:12px;padding:10px 12px;margin:10px 0 14px 0;font-weight:800}
         .debug-box{background:#fff7ed;color:#9a3412;border:1px solid #fdba74;border-radius:12px;padding:14px;white-space:pre-wrap;word-break:break-word;font-family:monospace}
         .mobile-show{display:none}
-        .ops-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
-        .action-tile{display:block;text-decoration:none;color:inherit;padding:18px;border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.04));border:1px solid var(--surface-ring);box-shadow:var(--shadow-soft);transition:transform .18s ease,border-color .18s ease}
-        .action-tile:hover{transform:translateY(-3px);border-color:rgba(96,165,250,.30)}
-        .action-tile .tile-icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font-size:20px;background:rgba(99,102,241,.18);margin-bottom:12px}
-        .soft-panel{padding:16px 18px;border-radius:22px;border:1px solid var(--surface-ring);background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.03))}
-        .form-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-        .form-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
-        .segmented{display:flex;flex-wrap:wrap;gap:8px}
-        .seg-chip{padding:8px 12px;border-radius:999px;border:1px solid var(--surface-ring);background:rgba(255,255,255,.06);font-size:12px;font-weight:800}
-        .toggle-switch{position:relative;display:inline-flex;align-items:center;justify-content:flex-start;width:54px;height:30px;border-radius:999px;border:none;cursor:pointer;background:rgba(148,163,184,.35);padding:0 4px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
-        .toggle-switch.on{background:linear-gradient(135deg,#22c55e,#16a34a)}
-        .toggle-switch.off{background:linear-gradient(135deg,#475569,#334155)}
-        .toggle-knob{width:22px;height:22px;border-radius:50%;background:#fff;display:block;transform:translateX(0);transition:transform .18s ease;box-shadow:0 3px 10px rgba(0,0,0,.25)}
-        .toggle-switch.on .toggle-knob{transform:translateX(24px)}
-        .toggle-icon{position:absolute;font-size:11px;font-weight:900;color:#fff;top:50%;transform:translateY(-50%)}
-        .toggle-on{left:10px}.toggle-off{right:10px}
-        .metric-compact{font-size:28px;font-weight:900;letter-spacing:-.04em}
-        .meeting-card{padding:18px;border-radius:22px;border:1px solid var(--surface-ring);background:linear-gradient(180deg,rgba(255,255,255,.1),rgba(255,255,255,.03));display:flex;flex-direction:column;gap:14px}
-        .alert-card{padding:14px 16px;border-radius:18px;border:1px solid var(--surface-ring);background:linear-gradient(180deg,rgba(239,68,68,.10),rgba(239,68,68,.04))}
-        .ok-card{padding:14px 16px;border-radius:18px;border:1px solid var(--surface-ring);background:linear-gradient(180deg,rgba(34,197,94,.10),rgba(34,197,94,.04))}
-        .table-actions{display:flex;flex-wrap:wrap;gap:8px}
-
         @media (max-width:1200px){
             .hero-grid,.grid-3,.grid-2{grid-template-columns:1fr}
         }
@@ -3783,8 +3854,6 @@ def members():
             cur.execute(f"SELECT COUNT(*) AS c FROM members WHERE {ACTIVE_MEMBER_SQL}")
             active_members_count = cur.fetchone()["c"]
             inactive_members_count = total_members_count - active_members_count
-            cur.execute("SELECT COUNT(*) AS c FROM members WHERE COALESCE(phone,'') <> ''")
-            contact_ready_count = cur.fetchone()["c"]
 
             if q:
                 cur.execute(
@@ -3803,104 +3872,99 @@ def members():
     body = render_template_string(
         """
         <div class="hero">
-            <div class="hero-grid">
-                <div>
-                    <div class="badge info" style="margin-bottom:12px">Member Ops</div>
-                    <h1 class="hero-title">Members Command Desk</h1>
-                    <div class="hero-copy">Manage your member directory with clean activation controls, import flows, and quick editing without disturbing your attendance engine.</div>
-                </div>
-                <div class="hero-stats">
-                    <div class="hero-chip"><div class="small">Directory Size</div><div class="big">{{ total_members_count }}</div></div>
-                    <div class="hero-chip"><div class="small">Active</div><div class="big">{{ active_members_count }}</div></div>
-                    <div class="hero-chip"><div class="small">Contact Ready</div><div class="big">{{ contact_ready_count }}</div></div>
-                </div>
-            </div>
+            <h2>Members</h2>
+            <div class="muted" style="color:#cbd5e1">Manage members, import CSV, and maintain clean member vs non-member distinction.</div>
         </div>
 
         <div class='grid'>
-            <div class='card kpi-card'><div class='kpi-icon'>👥</div><h4>Total Members</h4><div class='metric'>{{ total_members_count }}</div><div class='metric-sub'>All records currently stored in your directory.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>🟢</div><h4>Active Members</h4><div class='metric'>{{ active_members_count }}</div><div class='metric-sub'>Members eligible for live tracking and reports.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>🌙</div><h4>Inactive Members</h4><div class='metric'>{{ inactive_members_count }}</div><div class='metric-sub'>Safely disabled without data loss.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>📞</div><h4>Contact Ready</h4><div class='metric'>{{ contact_ready_count }}</div><div class='metric-sub'>Members with phone data available for follow-up.</div></div>
+            <div class='card stat-card'><h4>Total Members</h4><div class='metric'>{{ total_members_count }}</div></div>
+            <div class='card stat-card'><h4>Active Members</h4><div class='metric'>{{ active_members_count }}</div></div>
+            <div class='card stat-card'><h4>Inactive Members</h4><div class='metric'>{{ inactive_members_count }}</div></div>
         </div>
 
-        <div class='grid-2' style='margin-top:16px'>
+        <br>
+
+        <div class='grid'>
             <div class='card'>
-                <div class='section-title'><div><h3 style='margin:0'>{{ 'Edit Member' if edit_member else 'Create Member' }}</h3><p>Professional member profile control with safe update flow.</p></div>{% if edit_member %}<span class='badge info'>Editing #{{ edit_member.id }}</span>{% endif %}</div>
+                <h3>{{ 'Edit Member' if edit_member else 'Add Member' }}</h3>
                 {% if session.get('role') == 'admin' %}
-                <form method='post' class='stack'>
+                <form method='post'>
                     <input type='hidden' name='action' value='{{ "edit" if edit_member else "add" }}'>
                     {% if edit_member %}<input type='hidden' name='member_id' value='{{ edit_member.id }}'>{% endif %}
-                    <div class='form-grid-2'>
-                        <div><label>Full Name</label><input name='full_name' required value='{{ member_display_name(edit_member) if edit_member else "" }}'></div>
-                        <div><label>Phone</label><input name='phone' value='{{ edit_member.phone if edit_member else "" }}'></div>
-                    </div>
-                    <div class='form-grid-2'>
-                        <div><label>Email</label><input name='email' value='{{ edit_member.email if edit_member else "" }}'></div>
-                        <div><label>Status Guidance</label><div class='soft-panel'><div class='segmented'><span class='seg-chip'>Tracks live meetings</span><span class='seg-chip'>Appears in reports</span><span class='seg-chip'>Safe for legacy data</span></div></div></div>
-                    </div>
-                    <div class='toolbar'>
-                        <button type='submit'>{{ 'Update Member' if edit_member else 'Save Member' }}</button>
-                        {% if edit_member %}<a class='btn secondary' href='{{ url_for("members") }}'>Cancel Edit</a>{% endif %}
-                    </div>
+                    <label>Full Name</label>
+                    <input name='full_name' required value='{{ member_display_name(edit_member) if edit_member else "" }}'>
+                    {% if edit_member %}
+                    <label>Email</label>
+                    <input name='email' value='{{ edit_member.email if edit_member else "" }}'>
+                    {% endif %}
+                    <label>Phone</label>
+                    <input name='phone' value='{{ edit_member.phone if edit_member else "" }}'>
+                    <button type='submit'>{{ 'Update Member' if edit_member else 'Save Member' }}</button>
+                    {% if edit_member %}
+                        <a class='btn secondary' href='{{ url_for("members") }}'>Cancel</a>
+                    {% endif %}
                 </form>
                 {% else %}
-                <div class='empty-state'><div class='empty-icon'>🔒</div><div style='font-weight:900;margin-bottom:6px'>Viewer mode enabled</div><div class='muted'>You can review members but only admins can change directory data.</div></div>
+                <div class='muted'>Viewer can only view members.</div>
                 {% endif %}
             </div>
 
-            <div class='stack'>
-                <div class='card'>
-                    <div class='section-title'><div><h3 style='margin:0'>Import Members</h3><p>Bring members in using CSV without touching existing logic.</p></div><span class='badge gray'>CSV only</span></div>
-                    {% if session.get('role') == 'admin' %}
-                    <form method='post' enctype='multipart/form-data' class='stack'>
-                        <input type='hidden' name='action' value='import_csv'>
-                        <div><label>Expected columns</label><div class='soft-panel'>full_name, email, phone</div></div>
-                        <div><label>CSV File</label><input type='file' name='csv_file' accept='.csv' required></div>
-                        <div class='toolbar'><button type='submit' class='btn success'>Import CSV</button></div>
-                    </form>
-                    {% else %}<div class='muted'>Import is available for admins only.</div>{% endif %}
-                </div>
-                <div class='card'>
-                    <div class='section-title'><div><h3 style='margin:0'>Quick Search</h3><p>Search instantly by name, email, or phone.</p></div></div>
-                    <form method='get' class='toolbar'>
-                        <input name='q' value='{{ q }}' placeholder='Search by name, email or phone'>
-                        <button type='submit'>Search</button>
-                        {% if q %}<a class='btn secondary' href='{{ url_for("members") }}'>Clear</a>{% endif %}
-                    </form>
-                </div>
+            <div class='card'>
+                <h3>CSV Import</h3>
+                <div class='muted'>Expected columns: full_name, email, phone</div>
+                {% if session.get('role') == 'admin' %}
+                <form method='post' enctype='multipart/form-data'>
+                    <input type='hidden' name='action' value='import_csv'>
+                    <input type='file' name='csv_file' accept='.csv' required>
+                    <button type='submit' class='btn success'>Import CSV</button>
+                </form>
+                {% endif %}
             </div>
         </div>
 
-        <div class='card' style='margin-top:16px'>
-            <div class='section-title'><div><h3 style='margin:0'>Directory Table</h3><p>{{ rows|length }} member rows in the current view.</p></div><span class='badge {{ 'ok' if q else 'gray' }}'>{{ 'Filtered view' if q else 'Full directory' }}</span></div>
-            <div class='table-wrap'>
+        <br>
+
+        <div class='card'>
+            <h3>Search Members</h3>
+            <form method='get'>
+                <input name='q' value='{{ q }}' placeholder='Search by name, email or phone'>
+                <button type='submit'>Search</button>
+            </form>
+
+            <br>
+
+            <div class="table-wrap">
                 <table>
                     <tr>
-                        <th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Readiness</th>
+                        <th>Name</th><th>Email</th><th>Phone</th><th>Status</th>
                         {% if session.get('role') == 'admin' %}<th>Actions</th>{% endif %}
                     </tr>
                     {% for m in rows %}
                         <tr>
-                            <td><b>{{ member_display_name(m) }}</b></td>
+                            <td>{{ member_display_name(m) }}</td>
                             <td>{{ m.email or '-' }}</td>
                             <td>{{ m.phone or '-' }}</td>
                             <td>
-                                {% if m.active|string in ['1', 'True', 'true', 't'] %}<span class='badge ok'>Active</span>{% else %}<span class='badge danger'>Inactive</span>{% endif %}
+                                {% if m.active|string in ['1', 'True', 'true', 't'] %}
+                                    <span class='badge ok'>Active</span>
+                                {% else %}
+                                    <span class='badge danger'>Inactive</span>
+                                {% endif %}
                             </td>
-                            <td>{% if m.phone or m.email %}<span class='badge info'>Contact ready</span>{% else %}<span class='badge gray'>Basic only</span>{% endif %}</td>
                             {% if session.get('role') == 'admin' %}
                             <td>
-                                <div class='table-actions'>
+                                <div class='row'>
                                     <a class='btn secondary small' href='{{ url_for("members", edit_id=m.id) }}'>Edit</a>
                                     <form method='post' class='toggle-form'>
                                         <input type='hidden' name='action' value='toggle'>
                                         <input type='hidden' name='member_id' value='{{ m.id }}'>
                                         <button type='submit' class='toggle-switch {% if m.active|string in ['1', 'True', 'true', 't'] %}on{% else %}off{% endif %}' aria-label='Toggle member status'>
-                                            <span class='toggle-knob'></span><span class='toggle-icon toggle-on'>✓</span><span class='toggle-icon toggle-off'>✕</span>
+                                            <span class='toggle-knob'></span>
+                                            <span class='toggle-icon toggle-on'>✓</span>
+                                            <span class='toggle-icon toggle-off'>✕</span>
                                         </button>
                                     </form>
-                                    <form method='post' onsubmit='return confirm("Delete this member permanently?")'>
+                                    <form method='post' onsubmit='return confirm("Delete this member?")'>
                                         <input type='hidden' name='action' value='delete'>
                                         <input type='hidden' name='member_id' value='{{ m.id }}'>
                                         <button type='submit' class='btn danger small'>Delete</button>
@@ -3921,7 +3985,6 @@ def members():
         total_members_count=total_members_count,
         active_members_count=active_members_count,
         inactive_members_count=inactive_members_count,
-        contact_ready_count=contact_ready_count,
         session=session,
     )
     return page("Members", body, "members")
@@ -4010,10 +4073,6 @@ def users():
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM users ORDER BY id DESC")
             rows = cur.fetchall()
-            total_users = len(rows)
-            active_users = sum(1 for r in rows if is_truthy(r.get("is_active")))
-            admin_users = sum(1 for r in rows if (r.get("role") or "viewer") == "admin")
-            viewer_users = total_users - admin_users
 
             edit_user = None
             if edit_id:
@@ -4023,85 +4082,74 @@ def users():
     body = render_template_string(
         """
         <div class="hero">
-            <div class="hero-grid">
-                <div>
-                    <div class="badge info" style="margin-bottom:12px">Access Control</div>
-                    <h1 class="hero-title">Users & Roles Control Tower</h1>
-                    <div class="hero-copy">Manage admin and viewer access with safer actions, cleaner controls, and an audit-friendly operations surface.</div>
-                </div>
-                <div class="hero-stats">
-                    <div class="hero-chip"><div class="small">Users</div><div class="big">{{ total_users }}</div></div>
-                    <div class="hero-chip"><div class="small">Active</div><div class="big">{{ active_users }}</div></div>
-                    <div class="hero-chip"><div class="small">Admins</div><div class="big">{{ admin_users }}</div></div>
-                </div>
-            </div>
+            <h2>Users & Roles</h2>
+            <div class="muted" style="color:#cbd5e1">Manage admin/viewer access, reset passwords, delete users, and control activity safely.</div>
         </div>
 
         <div class='grid'>
-            <div class='card kpi-card'><div class='kpi-icon'>🔐</div><h4>Total Users</h4><div class='metric'>{{ total_users }}</div><div class='metric-sub'>All user accounts in the platform.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>🟢</div><h4>Active Users</h4><div class='metric'>{{ active_users }}</div><div class='metric-sub'>Users currently allowed to sign in.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>🛡️</div><h4>Admins</h4><div class='metric'>{{ admin_users }}</div><div class='metric-sub'>Users with elevated management controls.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>👁️</div><h4>Viewers</h4><div class='metric'>{{ viewer_users }}</div><div class='metric-sub'>Read-only users for safe monitoring access.</div></div>
-        </div>
-
-        <div class='grid-2' style='margin-top:16px'>
             <div class='card'>
-                <div class='section-title'><div><h3 style='margin:0'>{{ 'Edit User' if edit_user else 'Create User' }}</h3><p>Strong account control while preserving existing login logic.</p></div>{% if edit_user %}<span class='badge info'>Editing #{{ edit_user.id }}</span>{% endif %}</div>
-                <form method='post' class='stack'>
+                <h3>{{ 'Edit User' if edit_user else 'Create User' }}</h3>
+                <form method='post'>
                     <input type='hidden' name='action' value='{{ "edit" if edit_user else "add" }}'>
                     {% if edit_user %}<input type='hidden' name='user_id' value='{{ edit_user.id }}'>{% endif %}
-                    <div class='form-grid-2'>
-                        <div><label>Username</label><input name='username' required value='{{ edit_user.username if edit_user else "" }}'></div>
-                        <div><label>Role</label><select name='role'><option value='viewer' {% if edit_user and edit_user.role == 'viewer' %}selected{% endif %}>viewer</option><option value='admin' {% if edit_user and edit_user.role == 'admin' %}selected{% endif %}>admin</option></select></div>
-                    </div>
-                    {% if not edit_user %}<div><label>Password</label><input name='password' required></div>{% endif %}
-                    <div class='toolbar'>
-                        <button type='submit'>{{ 'Update User' if edit_user else 'Create User' }}</button>
-                        {% if edit_user %}<a class='btn secondary' href='{{ url_for("users") }}'>Cancel Edit</a>{% endif %}
-                    </div>
+                    <label>Username</label>
+                    <input name='username' required value='{{ edit_user.username if edit_user else "" }}'>
+                    {% if not edit_user %}
+                    <label>Password</label>
+                    <input name='password' required>
+                    {% endif %}
+                    <label>Role</label>
+                    <select name='role'>
+                        <option value='viewer' {% if edit_user and edit_user.role == 'viewer' %}selected{% endif %}>viewer</option>
+                        <option value='admin' {% if edit_user and edit_user.role == 'admin' %}selected{% endif %}>admin</option>
+                    </select>
+                    <button type='submit'>{{ 'Update User' if edit_user else 'Create' }}</button>
+                    {% if edit_user %}
+                        <a class='btn secondary' href='{{ url_for("users") }}'>Cancel</a>
+                    {% endif %}
                 </form>
             </div>
-            <div class='stack'>
-                <div class='card'>
-                    <div class='section-title'><div><h3 style='margin:0'>Role Guide</h3><p>Clear separation between operations control and read-only use.</p></div></div>
-                    <div class='mini-list'>
-                        <div class='mini-item'><div class='muted'>Admin</div><div style='font-weight:900;margin-top:4px'>Members, users, settings, imports, finalization.</div></div>
-                        <div class='mini-item'><div class='muted'>Viewer</div><div style='font-weight:900;margin-top:4px'>Live, meetings, analytics, reports.</div></div>
-                    </div>
-                </div>
-                <div class='alert-card'>
-                    <div style='font-weight:900;margin-bottom:6px'>Safety note</div>
-                    <div class='muted' style='color:inherit'>Self-disable and self-delete protection remain active to avoid locking out the current session.</div>
+
+            <div class='card'>
+                <h3>Role Guide</h3>
+                <div class='muted'>
+                    Admin can manage members, users, settings, imports, and finalization.
+                    Viewer can safely view live dashboard, meetings, analytics, and reports.
                 </div>
             </div>
         </div>
 
-        <div class='card' style='margin-top:16px'>
-            <div class='section-title'><div><h3 style='margin:0'>User Access Table</h3><p>Manage status, password resets, and role changes from one surface.</p></div><span class='badge gray'>Audit friendly</span></div>
-            <div class='table-wrap'>
+        <br>
+
+        <div class='card'>
+            <div class="table-wrap">
                 <table>
-                    <tr><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th>Password Reset</th><th>Actions</th></tr>
+                    <tr><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr>
                     {% for u in rows %}
                     <tr>
-                        <td><b>{{ u.username }}</b>{% if u.username == session.get('username') %}<div class='muted'>Current session</div>{% endif %}</td>
-                        <td><span class='badge {{ 'info' if u.role == 'admin' else 'gray' }}'>{{ u.role }}</span></td>
-                        <td>{% if u.is_active|string in ['1', 'True', 'true', 't'] %}<span class='badge ok'>Active</span>{% else %}<span class='badge danger'>Disabled</span>{% endif %}</td>
+                        <td>{{ u.username }}</td>
+                        <td>{{ u.role }}</td>
+                        <td>
+                            {% if u.is_active|string in ['1', 'True', 'true', 't'] %}
+                                <span class='badge ok'>Active</span>
+                            {% else %}
+                                <span class='badge danger'>Disabled</span>
+                            {% endif %}
+                        </td>
                         <td>{{ fmt_dt(u.created_at) }}</td>
                         <td>
-                            <form method='post' class='toolbar'>
-                                <input type='hidden' name='action' value='password'>
-                                <input type='hidden' name='user_id' value='{{ u.id }}'>
-                                <input name='new_password' placeholder='new password' required>
-                                <button class='btn secondary small' type='submit'>Reset Password</button>
-                            </form>
-                        </td>
-                        <td>
-                            <div class='table-actions'>
+                            <div class='row'>
                                 <a class='btn secondary small' href='{{ url_for("users", edit_id=u.id) }}'>Edit</a>
                                 <form method='post'>
                                     <input type='hidden' name='action' value='toggle'>
                                     <input type='hidden' name='user_id' value='{{ u.id }}'>
-                                    <button type='submit' class='toggle-switch {% if u.is_active|string in ['1', 'True', 'true', 't'] %}on{% else %}off{% endif %}' aria-label='Toggle user status'><span class='toggle-knob'></span><span class='toggle-icon toggle-on'>✓</span><span class='toggle-icon toggle-off'>✕</span></button>
+                                    <button class='btn warn small' type='submit'>Toggle</button>
+                                </form>
+                                <form method='post'>
+                                    <input type='hidden' name='action' value='password'>
+                                    <input type='hidden' name='user_id' value='{{ u.id }}'>
+                                    <input name='new_password' placeholder='new password' required>
+                                    <button class='btn secondary small' type='submit'>Reset Password</button>
                                 </form>
                                 <form method='post' onsubmit='return confirm("Delete this user?")'>
                                     <input type='hidden' name='action' value='delete'>
@@ -4119,11 +4167,6 @@ def users():
         rows=rows,
         fmt_dt=fmt_dt,
         edit_user=edit_user,
-        total_users=total_users,
-        active_users=active_users,
-        admin_users=admin_users,
-        viewer_users=viewer_users,
-        session=session,
     )
     return page("Users", body, "users")
 
@@ -4436,6 +4479,84 @@ def analytics():
             </div>
         </div>
 
+        <div class="grid-2" style="margin-top:16px">
+            <div class="card">
+                <div class="section-title">
+                    <div>
+                        <h3 style="margin:0">Operational Alerts</h3>
+                        <p>Auto-detected reminders, unknown spikes, and meeting health warnings.</p>
+                    </div>
+                    <a class="btn warn small" href="{{ url_for('analytics_reminder', **request.args) }}">Trigger Reminder Suggestion</a>
+                </div>
+                <div class="insight-list">
+                    {% for alert in data.alerts %}
+                    <div class="insight-item" style="border-left:4px solid {% if alert.level == 'danger' %}#ef4444{% elif alert.level == 'warn' %}#f59e0b{% elif alert.level == 'ok' %}#22c55e{% else %}#3b82f6{% endif %}">
+                        <div style="font-weight:900">{{ alert.title }}</div>
+                        <div class="muted" style="margin-top:4px">{{ alert.text }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="card">
+                <div class="section-title">
+                    <div>
+                        <h3 style="margin:0">Duration Distribution</h3>
+                        <p>How attendance durations are distributed across the filtered records.</p>
+                    </div>
+                </div>
+                <div class="mini-list">
+                    {% for bucket, count in data.summary.duration_distribution.items() %}
+                    <div class="mini-item">
+                        <div class="muted">{{ bucket }} minutes</div>
+                        <div style="font-weight:900;margin-top:4px">{{ count }} record(s)</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-2" style="margin-top:16px">
+            <div class="card">
+                <div class="section-title">
+                    <div>
+                        <h3 style="margin:0">Attendance Heatmap</h3>
+                        <p>Recent participation footprint for the selected member scope.</p>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:6px">
+                    {% for cell in data.heatmap %}
+                    <div title="{{ cell.title }}" style="height:24px;border-radius:7px;display:grid;place-items:center;font-size:10px;
+                        background:{% if cell.css == 'heat-good' %}rgba(34,197,94,.35){% elif cell.css == 'heat-warn' %}rgba(245,158,11,.35){% elif cell.css == 'heat-bad' %}rgba(239,68,68,.35){% else %}rgba(148,163,184,.16){% endif %};
+                        border:1px solid rgba(255,255,255,.06)">
+                        {{ cell.day }}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="card">
+                <div class="section-title">
+                    <div>
+                        <h3 style="margin:0">Unknown Match Suggestions</h3>
+                        <p>Potential member matches for unknown participant names.</p>
+                    </div>
+                </div>
+                <div class="list-card">
+                    {% for suggestion in data.unknown_match_suggestions %}
+                    <div class="list-row">
+                        <div>
+                            <div style="font-weight:900">{{ suggestion.unknown }}</div>
+                            <div class="muted">Possible match: {{ suggestion.member }}</div>
+                        </div>
+                        <span class="badge info">{{ suggestion.score }}%</span>
+                    </div>
+                    {% else %}
+                    <div class="muted">No likely unknown-to-member match suggestions right now.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+
         <script>
         (() => {
             const trendCanvas = document.getElementById('trendChart');
@@ -4531,6 +4652,7 @@ def analytics():
         latest_meeting=latest_meeting,
         previous_meeting=previous_meeting,
         comparison_delta=comparison_delta,
+        request=request,
     )
     return page("Analytics", body, "analytics")
 
@@ -4587,102 +4709,55 @@ def meetings():
             cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT 250")
             rows = cur.fetchall()
 
-    live_count = sum(1 for m in rows if (m.get("status") or "") == "live")
-    ended_count = sum(1 for m in rows if (m.get("status") or "") == "ended")
-    total_unknown = sum(int(m.get("unknown_participants") or 0) for m in rows)
-    avg_health = 0
-    if rows:
-        health_values = []
-        for m in rows:
-            total_rows = (m.get("present_count") or 0) + (m.get("late_count") or 0) + (m.get("absent_count") or 0)
-            health_values.append((((m.get("present_count") or 0) + (m.get("late_count") or 0)) / total_rows * 100) if total_rows else 0)
-        avg_health = round(sum(health_values) / len(health_values), 2) if health_values else 0
-
     body = render_template_string(
         """
         <div class="hero">
-            <div class="hero-grid">
-                <div>
-                    <div class="badge info" style="margin-bottom:12px">Meeting Operations</div>
-                    <h1 class="hero-title">Meetings Control Room</h1>
-                    <div class="hero-copy">Inspect meeting outcomes, export clean reports, finalize safely, and monitor overall meeting health from one organized operations page.</div>
-                </div>
-                <div class="hero-stats">
-                    <div class="hero-chip"><div class="small">Live</div><div class="big">{{ live_count }}</div></div>
-                    <div class="hero-chip"><div class="small">Ended</div><div class="big">{{ ended_count }}</div></div>
-                    <div class="hero-chip"><div class="small">Avg Health</div><div class="big">{{ avg_health }}%</div></div>
-                </div>
-            </div>
+            <h2>Meetings</h2>
+            <div class="muted" style="color:#cbd5e1">View meeting summaries and download meeting-level reports.</div>
         </div>
 
-        <div class='grid'>
-            <div class='card kpi-card'><div class='kpi-icon'>📂</div><h4>Total Meetings</h4><div class='metric'>{{ rows|length }}</div><div class='metric-sub'>Recent meetings currently available in the board.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>🟢</div><h4>Live Meetings</h4><div class='metric'>{{ live_count }}</div><div class='metric-sub'>Meetings still active and eligible for manual finalize.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>✅</div><h4>Ended Meetings</h4><div class='metric'>{{ ended_count }}</div><div class='metric-sub'>Meetings finalized with attendance summaries.</div></div>
-            <div class='card kpi-card'><div class='kpi-icon'>❓</div><h4>Unknown Joined</h4><div class='metric'>{{ total_unknown }}</div><div class='metric-sub'>Unknown participants across the displayed meeting list.</div></div>
-        </div>
-
-        <div class='grid-2' style='margin-top:16px'>
-            <div class='meeting-card'>
-                <div class='section-title'><div><h3 style='margin:0'>Meeting Board</h3><p>Rich view with exports and safe admin actions.</p></div><span class='badge gray'>{{ rows|length }} loaded</span></div>
-                <div class='table-wrap'>
-                    <table>
-                        <tr>
-                            <th>Date</th><th>Topic</th><th>Status</th><th>Participants</th><th>Members</th><th>Unknown</th><th>Health</th><th>Reports</th>
-                        </tr>
-                        {% for m in rows %}
-                        {% set total_rows = (m.present_count or 0) + (m.late_count or 0) + (m.absent_count or 0) %}
-                        {% set health = (((m.present_count or 0) + (m.late_count or 0)) / total_rows * 100) if total_rows else 0 %}
-                        <tr>
-                            <td>{{ fmt_dt(m.start_time) }}</td>
-                            <td><b>{{ m.topic or 'Untitled Meeting' }}</b><div class='muted'>{{ m.meeting_id or '-' }}</div></td>
-                            <td><span class='badge {{ 'ok' if m.status == 'live' else 'gray' }}'>{{ m.status or '-' }}</span></td>
-                            <td>{{ m.unique_participants or 0 }}</td>
-                            <td>{{ m.member_participants or 0 }}</td>
-                            <td>{{ m.unknown_participants or 0 }}</td>
-                            <td>{{ '%.1f'|format(health) }}%</td>
-                            <td>
-                                {% if m.meeting_uuid %}
-                                    <div class='table-actions'>
-                                        <a class='btn success small' href='{{ url_for("meeting_csv", meeting_uuid=m.meeting_uuid) }}'>CSV</a>
-                                        <a class='btn secondary small' href='{{ url_for("meeting_pdf", meeting_uuid=m.meeting_uuid) }}'>PDF</a>
-                                        {% if session.get('role') == 'admin' and m.status == 'live' %}<a class='btn purple small' href='{{ url_for("manual_finalize_meeting", meeting_uuid=m.meeting_uuid) }}'>Finalize</a>{% endif %}
-                                        {% if session.get('role') == 'admin' %}
-                                            <form method='post' action='{{ url_for("delete_meeting", meeting_uuid=m.meeting_uuid) }}' onsubmit='return confirm("Delete this meeting and all related attendance records?")'>
-                                                <button type='submit' class='btn danger small'>Delete</button>
-                                            </form>
-                                        {% endif %}
-                                    </div>
-                                {% else %}
-                                    <span class='badge danger'>No UUID / old record</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </table>
-                </div>
-            </div>
-
-            <div class='stack'>
-                <div class='card'>
-                    <div class='section-title'><div><h3 style='margin:0'>Operations Summary</h3><p>High-level cues for report and meeting management.</p></div></div>
-                    <div class='mini-list'>
-                        <div class='mini-item'><div class='muted'>Average meeting health</div><div style='font-weight:900;margin-top:4px'>{{ avg_health }}%</div></div>
-                        <div class='mini-item'><div class='muted'>Export availability</div><div style='font-weight:900;margin-top:4px'>CSV and PDF downloads remain active.</div></div>
-                        <div class='mini-item'><div class='muted'>Manual admin tools</div><div style='font-weight:900;margin-top:4px'>Finalize live meetings and delete safely.</div></div>
-                    </div>
-                </div>
-                {% if live_count %}
-                <div class='alert-card'>
-                    <div style='font-weight:900;margin-bottom:6px'>Live meeting alert</div>
-                    <div class='muted' style='color:inherit'>{{ live_count }} meeting(s) are still live. Admin can finalize them safely from this page.</div>
-                </div>
-                {% else %}
-                <div class='ok-card'>
-                    <div style='font-weight:900;margin-bottom:6px'>No live backlog</div>
-                    <div class='muted' style='color:inherit'>All listed meetings are currently settled or ended.</div>
-                </div>
-                {% endif %}
+        <div class='card'>
+            <div class="table-wrap">
+                <table>
+                    <tr>
+                        <th>Date</th>
+                        <th>Topic</th>
+                        <th>Status</th>
+                        <th>Participants</th>
+                        <th>Members</th>
+                        <th>Unknown</th>
+                        <th>Reports</th>
+                    </tr>
+                    {% for m in rows %}
+                    <tr>
+                        <td>{{ fmt_dt(m.start_time) }}</td>
+                        <td>{{ m.topic or 'Untitled Meeting' }}</td>
+                        <td>{{ m.status or '-' }}</td>
+                        <td>{{ m.unique_participants or 0 }}</td>
+                        <td>{{ m.member_participants or 0 }}</td>
+                        <td>{{ m.unknown_participants or 0 }}</td>
+                        <td>
+                            {% if m.meeting_uuid %}
+                                <div class="row">
+                                    <a class='btn success small' href='{{ url_for("meeting_csv", meeting_uuid=m.meeting_uuid) }}'>CSV</a>
+                                    <a class='btn purple small' href='{{ url_for("meeting_excel", meeting_uuid=m.meeting_uuid) }}'>Excel</a>
+                                    <a class='btn secondary small' href='{{ url_for("meeting_pdf", meeting_uuid=m.meeting_uuid) }}'>PDF</a>
+                                    {% if session.get('role') == 'admin' %}
+                                        <form method='post' action='{{ url_for("delete_meeting", meeting_uuid=m.meeting_uuid) }}' onsubmit='return confirm("Delete this meeting and its attendance records?")'>
+                                            <button type='submit' class='btn danger small'>Delete</button>
+                                        </form>
+                                    {% endif %}
+                                    {% if session.get('role') == 'admin' and m.status == 'live' %}
+                                        <a class='btn danger small' href='{{ url_for("manual_finalize_meeting", meeting_uuid=m.meeting_uuid) }}'>Finalize</a>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class='badge danger'>No UUID / old record</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
             </div>
         </div>
         """,
@@ -4691,10 +4766,6 @@ def meetings():
         fmt_time_ampm=fmt_time_ampm,
         member_display_name=member_display_name,
         session=session,
-        live_count=live_count,
-        ended_count=ended_count,
-        total_unknown=total_unknown,
-        avg_health=avg_health,
     )
     return page("Meetings", body, "meetings")
 
@@ -4714,6 +4785,28 @@ def meeting_csv(meeting_uuid):
         headers={"Content-Disposition": f"attachment; filename={slugify(meeting_uuid)}.csv"},
     )
 
+
+
+
+@app.route("/meetings/<path:meeting_uuid>/report.xlsx")
+@login_required
+def meeting_excel(meeting_uuid):
+    if not meeting_uuid:
+        flash("Meeting UUID missing for this record.", "error")
+        return redirect(url_for("meetings"))
+
+    report_data = build_meeting_report_data(meeting_uuid)
+    if not report_data:
+        flash("Meeting report data not found.", "error")
+        return redirect(url_for("meetings"))
+
+    content = export_meeting_excel_bytes(report_data)
+    filename = slugify(build_meeting_pdf_filename(report_data).replace(".pdf", "")) + ".csv"
+    return Response(
+        content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 @app.route("/meetings/<path:meeting_uuid>/report.pdf")
 @login_required
