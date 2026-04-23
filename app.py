@@ -1471,13 +1471,8 @@ def calculate_attendance_score(present_count, late_count, absent_count):
     total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
     if total <= 0:
         return 0.0
-    raw = (int(present_count or 0) * 10) + (int(late_count or 0) * 5) - (int(absent_count or 0) * 10)
-    raw_min = total * -10
-    raw_max = total * 10
-    if raw_max == raw_min:
-        return 0.0
-    normalized = ((raw - raw_min) / (raw_max - raw_min)) * 100.0
-    return clamp_score(normalized)
+    attendance_ratio = ((int(present_count or 0) * 1.0) + (int(late_count or 0) * 0.6)) / total
+    return clamp_score(attendance_ratio * 100.0)
 
 
 def calculate_engagement_score(minutes_attended, rejoins, meetings_count, present_count, late_count, absent_count, avg_minutes_reference):
@@ -1503,6 +1498,113 @@ def get_risk_level(score):
     if score >= 50:
         return {"label": "Warning", "emoji": "🟡", "css": "warn", "short": "WARNING"}
     return {"label": "Critical", "emoji": "🔴", "css": "danger", "short": "CRITICAL"}
+
+
+def safe_percent(part, whole):
+    try:
+        part = float(part or 0)
+        whole = float(whole or 0)
+    except Exception:
+        return 0.0
+    if whole <= 0:
+        return 0.0
+    return clamp_score((part / whole) * 100.0)
+
+
+def calculate_weighted_member_score(attendance_pct, consistency_pct, duration_pct):
+    return clamp_score((attendance_pct * 0.5) + (consistency_pct * 0.3) + (duration_pct * 0.2))
+
+
+def derive_trend_label(score_points):
+    points = [float(x) for x in (score_points or []) if x is not None]
+    if len(points) < 2:
+        return {"label": "Stable", "emoji": "➖", "short": "STABLE", "delta": 0.0}
+    recent = points[-3:]
+    previous = points[:-3] if len(points) > 3 else points[:-1]
+    if not previous:
+        previous = [points[0]]
+    recent_avg = sum(recent) / len(recent)
+    previous_avg = sum(previous) / len(previous)
+    delta = round(recent_avg - previous_avg, 2)
+    if delta >= 5:
+        return {"label": "Improving", "emoji": "📈", "short": "IMPROVING", "delta": delta}
+    if delta <= -5:
+        return {"label": "Declining", "emoji": "📉", "short": "DECLINING", "delta": delta}
+    return {"label": "Stable", "emoji": "➖", "short": "STABLE", "delta": delta}
+
+
+def build_member_intelligence(person, avg_minutes_reference):
+    meetings = max(int(person.get("meetings") or 0), 0)
+    present = int(person.get("present") or 0)
+    late = int(person.get("late") or 0)
+    absent = int(person.get("absent") or 0)
+    minutes = max(float(person.get("minutes") or 0), 0.0)
+    rejoins = max(float(person.get("rejoins") or 0), 0.0)
+    attendance_pct = calculate_attendance_score(present, late, absent)
+    if meetings > 0:
+        stability_penalty = min((rejoins / meetings) * 12.0, 24.0)
+        attendance_consistency_pct = clamp_score((((present * 1.0) + (late * 0.65)) / meetings) * 100.0 - stability_penalty)
+    else:
+        attendance_consistency_pct = 0.0
+    duration_pct = clamp_score(min(minutes / max(avg_minutes_reference * max(meetings, 1), 1.0), 1.15) / 1.15 * 100.0)
+    weighted_score = calculate_weighted_member_score(attendance_pct, attendance_consistency_pct, duration_pct)
+    engagement_score = calculate_engagement_score(minutes, rejoins, meetings, present, late, absent, avg_minutes_reference)
+    overall_score = clamp_score((weighted_score * 0.72) + (engagement_score * 0.28))
+    last_seen = parse_dt(person.get("last_seen"))
+    days_since_seen = None
+    recency_penalty = 0.0
+    if last_seen:
+        days_since_seen = max((today_local() - last_seen.date()).days, 0)
+        if days_since_seen >= 30:
+            recency_penalty = 22.0
+        elif days_since_seen >= 14:
+            recency_penalty = 12.0
+        elif days_since_seen >= 7:
+            recency_penalty = 6.0
+    else:
+        recency_penalty = 18.0 if meetings > 0 else 0.0
+    risk_driver = clamp_score(overall_score - recency_penalty)
+    risk = get_risk_level(risk_driver)
+    trend = derive_trend_label(person.get("score_points") or [])
+    return {
+        "attendance_pct": attendance_pct,
+        "consistency_pct": attendance_consistency_pct,
+        "duration_pct": duration_pct,
+        "attendance_score": weighted_score,
+        "engagement_score": engagement_score,
+        "overall_score": overall_score,
+        "risk_driver": risk_driver,
+        "risk": risk,
+        "trend": trend,
+        "last_seen": last_seen,
+        "days_since_seen": days_since_seen,
+    }
+
+
+def calculate_meeting_health_score(present_count, late_count, absent_count, avg_duration_minutes, reference_duration_minutes, unknown_count=0, host_present=False):
+    total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
+    attendance_component = safe_percent((int(present_count or 0) + (int(late_count or 0) * 0.6)), total) * 0.5
+    duration_component = clamp_score(min(float(avg_duration_minutes or 0) / max(float(reference_duration_minutes or 0), 1.0), 1.15) / 1.15 * 100.0) * 0.3
+    unknown_penalty = min(int(unknown_count or 0) * 4.0, 18.0)
+    host_bonus = 6.0 if host_present else -6.0
+    participation_component = clamp_score(100.0 - unknown_penalty + host_bonus) * 0.2
+    return clamp_score(attendance_component + duration_component + participation_component)
+
+
+def build_smart_actions(summary, latest_meeting_summary, risk_table):
+    actions = []
+    target_names = [item["name"] for item in (risk_table or [])[:6]]
+    if target_names:
+        actions.append(f"Send reminder to these users: {', '.join(target_names)}")
+    if latest_meeting_summary and float(latest_meeting_summary.get("health") or 0) < 60:
+        actions.append("Mark meeting low quality")
+    if summary.get("critical_members_count", 0) > 0 or summary.get("host_absent_flag"):
+        actions.append("Follow-up required")
+    if summary.get("unknown_spike_flag"):
+        actions.append("Review unknown participants and member mapping")
+    if not actions:
+        actions.append("No automatic action required right now")
+    return actions[:5]
 
 
 def normalize_name_for_match(value):
@@ -1787,17 +1889,31 @@ def analytics_data(filters):
                 "is_member": bool(r.get("is_member")),
                 "member_id": r.get("member_id"),
                 "is_host": bool(r.get("is_host")),
+                "last_seen": None,
+                "score_points": [],
             },
         )
         by_person[key]["meetings"] += 1
-        by_person[key]["minutes"] += (r.get("total_seconds") or 0) / 60
+        row_minutes = (r.get("total_seconds") or 0) / 60
+        by_person[key]["minutes"] += row_minutes
         by_person[key]["rejoins"] += (r.get("rejoin_count") or 0)
         if r.get("final_status") == "PRESENT":
             by_person[key]["present"] += 1
+            score_point = 100.0
         elif r.get("final_status") == "LATE":
             by_person[key]["late"] += 1
+            score_point = 62.0
         elif r.get("final_status") == "ABSENT":
             by_person[key]["absent"] += 1
+            score_point = 20.0
+        else:
+            score_point = 50.0
+        if row_minutes > 0:
+            score_point = min(100.0, score_point + min(row_minutes / 3.0, 16.0))
+        by_person[key]["score_points"].append(round(score_point, 2))
+        last_seen_candidate = parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join")) or parse_dt(r.get("start_time"))
+        if last_seen_candidate and (by_person[key]["last_seen"] is None or last_seen_candidate > by_person[key]["last_seen"]):
+            by_person[key]["last_seen"] = last_seen_candidate
 
         mk = r.get("meeting_uuid") or f"meeting_{r.get('meeting_row_id')}"
         by_meeting.setdefault(
@@ -1825,9 +1941,22 @@ def analytics_data(filters):
             by_meeting[mk]["unknown"] += 1
 
     meeting_compare = list(by_meeting.values())[:30]
+    meeting_duration_minutes_reference = avg_minutes if avg_minutes > 0 else 1
     for m in meeting_compare:
         total = m["total"] or 1
-        m["health"] = round(((m["present"] + m["late"]) / total) * 100, 2)
+        meeting_rows = [row for row in rows if row.get("meeting_uuid") == m.get("meeting_uuid")]
+        average_duration_for_meeting = round(sum((row.get("total_seconds") or 0) for row in meeting_rows) / 60 / len(meeting_rows), 2) if meeting_rows else 0
+        host_present_for_meeting = any(bool(row.get("is_host")) for row in meeting_rows)
+        m["avg_duration_minutes"] = average_duration_for_meeting
+        m["health"] = calculate_meeting_health_score(
+            m.get("present", 0),
+            m.get("late", 0),
+            m.get("absent", 0),
+            average_duration_for_meeting,
+            meeting_duration_minutes_reference,
+            m.get("unknown", 0),
+            host_present_for_meeting,
+        )
 
     trend = compute_trend(rows, period_mode)
     prediction = predict_next_attendance(meeting_compare)
@@ -1939,22 +2068,18 @@ def analytics_data(filters):
 
     enriched_people = []
     for person in by_person.values():
-        attendance_score = calculate_attendance_score(person["present"], person["late"], person["absent"])
-        engagement_score = calculate_engagement_score(
-            person["minutes"],
-            person["rejoins"],
-            person["meetings"],
-            person["present"],
-            person["late"],
-            person["absent"],
-            avg_minutes_reference,
-        )
-        overall_score = clamp_score((attendance_score * 0.6) + (engagement_score * 0.4))
-        risk = get_risk_level(overall_score)
-        person["attendance_score"] = attendance_score
-        person["engagement_score"] = engagement_score
-        person["overall_score"] = overall_score
-        person["risk"] = risk
+        intelligence = build_member_intelligence(person, avg_minutes_reference)
+        person["attendance_pct"] = intelligence["attendance_pct"]
+        person["consistency_pct"] = intelligence["consistency_pct"]
+        person["duration_pct"] = intelligence["duration_pct"]
+        person["attendance_score"] = intelligence["attendance_score"]
+        person["engagement_score"] = intelligence["engagement_score"]
+        person["overall_score"] = intelligence["overall_score"]
+        person["risk_driver"] = intelligence["risk_driver"]
+        person["risk"] = intelligence["risk"]
+        person["trend"] = intelligence["trend"]
+        person["last_seen"] = intelligence["last_seen"]
+        person["days_since_seen"] = intelligence["days_since_seen"]
         enriched_people.append(person)
 
     leaderboard = sorted(
@@ -2019,6 +2144,14 @@ def analytics_data(filters):
         else:
             duration_distribution["60+"] += 1
 
+    current_meeting_health = latest_meeting_summary.get("health") if latest_meeting_summary else 0
+    latest_unknown_ratio = safe_percent((latest_meeting_summary or {}).get("unknown", 0), (latest_meeting_summary or {}).get("total", 0)) if latest_meeting_summary else 0
+    unknown_spike_flag = bool(latest_meeting_summary and latest_meeting_summary.get("unknown", 0) >= 3 and latest_unknown_ratio >= 25)
+    host_absent_flag = bool(latest_meeting_summary and not any((row.get("meeting_uuid") == latest_meeting_summary.get("meeting_uuid")) and bool(row.get("is_host")) for row in rows))
+    ended_early_flag = False
+    if latest_meeting_summary and previous_meeting_summary:
+        ended_early_flag = float(latest_meeting_summary.get("avg_duration_minutes") or 0) < max(float(previous_meeting_summary.get("avg_duration_minutes") or 0) * 0.65, 10.0)
+
     summary = {
         "total_rows": total_rows,
         "present_rows": present_rows,
@@ -2030,6 +2163,7 @@ def analytics_data(filters):
         "avg_rejoins": avg_rejoins,
         "predicted_next_attendance": prediction,
         "attendance_health": attendance_health,
+        "current_meeting_health": round(current_meeting_health, 2) if current_meeting_health is not None else 0,
         "avg_attendance_score": avg_attendance_score,
         "avg_engagement_score": avg_engagement_score,
         "risk_members_count": risk_members_count,
@@ -2038,8 +2172,20 @@ def analytics_data(filters):
         "safe_members_count": sum(1 for p in leaderboard if p["risk"]["short"] == "SAFE"),
         "insight_lines": insight_lines,
         "duration_distribution": duration_distribution,
+        "unknown_spike_flag": unknown_spike_flag,
+        "host_absent_flag": host_absent_flag,
+        "ended_early_flag": ended_early_flag,
     }
     alerts = build_phase3_alerts(summary, latest_meeting_summary, previous_meeting_summary, reminder_suggestion)
+    if any(item.get("trend", {}).get("short") == "DECLINING" for item in leaderboard[:8]):
+        alerts.insert(0, {"level": "warn", "title": "Low attendance trend", "text": "At least one high-visibility member is showing a declining attendance trend."})
+    if unknown_spike_flag:
+        alerts.insert(0, {"level": "danger", "title": "Too many unknown participants", "text": f"Unknown participant ratio reached {round(latest_unknown_ratio, 2)}% in the latest meeting."})
+    if host_absent_flag:
+        alerts.insert(0, {"level": "warn", "title": "Host absent", "text": "The latest tracked meeting snapshot does not show the host as present."})
+    if ended_early_flag:
+        alerts.insert(0, {"level": "warn", "title": "Meeting ended early", "text": "Latest meeting duration looks lower than the recent meeting baseline."})
+    alerts = alerts[:6]
 
     return {
         "filters": filters,
@@ -2063,6 +2209,7 @@ def analytics_data(filters):
         "previous_meeting_summary": previous_meeting_summary,
         "comparison_delta": comparison_delta,
         "alerts": alerts,
+        "auto_actions": build_smart_actions(summary, latest_meeting_summary, risk_table),
     }
 
 
@@ -2157,7 +2304,19 @@ def build_meeting_report_data(meeting_uuid):
 
     report_rows = sorted(report_rows, key=status_order)
 
-    meeting_health_score = round(((present_members_count + max(0, joined_actual_count - present_members_count - unknown_participants_count)) / joined_actual_count) * 100, 2) if joined_actual_count else 0
+    avg_duration_minutes = round(sum(row["duration_minutes"] for row in report_rows) / len(report_rows), 2) if report_rows else 0
+    critical_count = sum(1 for row in report_rows if row.get("status") == "ABSENT")
+    warning_count = sum(1 for row in report_rows if row.get("status") == "LATE")
+    healthy_count = sum(1 for row in report_rows if row.get("status") in ("PRESENT", "HOST"))
+    meeting_health_score = calculate_meeting_health_score(
+        present_members_count,
+        sum(1 for row in report_rows if row.get("status") == "LATE"),
+        absent_members_count,
+        avg_duration_minutes,
+        max(avg_duration_minutes, 1),
+        unknown_participants_count,
+        bool(meeting.get("host_present")),
+    )
     summary = {
         "topic": meeting.get("topic") or "Zoom Meeting",
         "meeting_id": meeting.get("meeting_id") or "-",
@@ -2173,6 +2332,10 @@ def build_meeting_report_data(meeting_uuid):
         "present_threshold_minutes": present_threshold_minutes,
         "late_summary_threshold_minutes": late_summary_threshold_minutes,
         "meeting_health_score": meeting_health_score,
+        "healthy_count": healthy_count,
+        "warning_count": warning_count,
+        "critical_count": critical_count,
+        "avg_duration_minutes": avg_duration_minutes,
         "notes": meeting.get("notes") or "No meeting notes were stored for this meeting.",
     }
     return {"meeting": meeting, "rows": report_rows, "summary": summary}
@@ -2219,8 +2382,9 @@ def export_meeting_pdf_bytes(title, report_data):
     elements.append(Spacer(1, 10))
 
     summary_table = Table([
-        ["Participants", summary["total_participants"], "Members", summary["total_members"], "Health", f"{summary['meeting_health_score']}%"],
+        ["Participants", summary["total_participants"], "Members", summary["total_members"], "Health", f"{summary['meeting_health_score']} / 100"],
         ["Present", summary["total_present_members"], "Absent", summary["total_absent_members"], "Unknown", summary["total_unknown_participants"]],
+        ["Healthy", summary.get("healthy_count", 0), "Warning", summary.get("warning_count", 0), "Critical", summary.get("critical_count", 0)],
     ], colWidths=[75, 70, 75, 70, 75, 75])
     summary_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eff6ff")),
@@ -2281,7 +2445,8 @@ def export_meeting_pdf_bytes(title, report_data):
     criteria_text = (
         "<b>Attendance Criteria</b><br/>"
         f"• Present threshold for this meeting: {summary['present_threshold_minutes']} minutes<br/>"
-        f"• Late counted as present in summary above: {summary['late_summary_threshold_minutes']} minutes<br/>"
+        f"• Late threshold for this meeting: {summary['late_summary_threshold_minutes']} minutes<br/>"
+        "• Smart health score uses attendance, duration, participation quality, and host visibility.<br/>"
         "• Host rows are preserved separately and not treated as absent.<br/>"
         "• Unknown participants are attendees not matched to your member directory."
     )
@@ -2294,7 +2459,7 @@ def export_meeting_pdf_bytes(title, report_data):
     elements.append(criteria_table)
     elements.append(Spacer(1, 8))
 
-    notes_text = f"<b>Meeting Health Summary:</b> {summary['meeting_health_score']}%<br/><b>Notes:</b> {summary['notes']}"
+    notes_text = f"<b>Meeting Health Summary:</b> {summary['meeting_health_score']} / 100<br/><b>Average Duration:</b> {summary.get('avg_duration_minutes', 0)} minutes<br/><b>Notes:</b> {summary['notes']}"
     notes_table = Table([[Paragraph(notes_text, styles["Normal"])]], colWidths=[520])
     notes_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fefce8")),
@@ -3778,95 +3943,82 @@ def live():
     host_now = "No"
     member_live_count = 0
     unknown_live_count = 0
+    live_join_feed = []
+    live_unknown_rows = []
+    live_known_rows = []
     for p in participants:
         live_status, live_total = get_live_status_for_row(p, start_dt)
-        if p.get("current_join") is not None:
+        is_active_now = p.get("current_join") is not None
+        if is_active_now:
             active_now += 1
-        if p.get("is_host") and p.get("current_join") is not None:
+        if p.get("is_host") and is_active_now:
             host_now = "Yes"
         if p.get("is_member"):
             member_live_count += 1
+            live_known_rows.append(p)
         else:
             unknown_live_count += 1
-        rows_for_live.append(
-            {
-                "participant_name": p.get("participant_name"),
-                "first_join": p.get("first_join"),
-                "last_leave": p.get("last_leave"),
-                "duration_min": mins_from_seconds(live_total),
-                "rejoin_count": p.get("rejoin_count") or 0,
-                "status": live_status,
-                "is_active_now": p.get("current_join") is not None,
-            }
-        )
+            live_unknown_rows.append(p)
+        entry = {
+            "participant_name": p.get("participant_name"),
+            "first_join": p.get("first_join"),
+            "last_leave": p.get("last_leave"),
+            "duration_min": mins_from_seconds(live_total),
+            "rejoin_count": p.get("rejoin_count") or 0,
+            "status": live_status,
+            "is_active_now": is_active_now,
+            "member_type": "Known" if p.get("is_member") else "Unknown",
+        }
+        rows_for_live.append(entry)
+        live_join_feed.append({
+            "name": p.get("participant_name") or "-",
+            "time": fmt_time_ampm(p.get("first_join")) if p.get("first_join") else "-",
+            "tag": "LIVE" if is_active_now else ("KNOWN" if p.get("is_member") else "UNKNOWN"),
+        })
+    known_unknown_ratio = f"{member_live_count} / {unknown_live_count}"
+    live_risk_banner = "Healthy" if host_now == "Yes" and unknown_live_count <= max(1, member_live_count // 2) else ("Warning" if active_now > 0 else "Critical")
 
     body = render_template_string(
         """
         <meta http-equiv='refresh' content='2'>
-        <div class="hero">
+        <div class="hero live-hero-shell">
+            <div class="live-light live-light-1"></div>
+            <div class="live-light live-light-2"></div>
             <div class="hero-grid">
                 <div>
-                    <div class="live-ping" style="margin-bottom:12px"><span class="status-pulse"></span> LIVE MEETING IN PROGRESS</div>
+                    <div class="live-ping" style="margin-bottom:12px"><span class="status-pulse"></span> LIVE OPERATIONS BOARD</div>
                     <h1 class="hero-title">{{ meeting.topic or 'Untitled Meeting' }}</h1>
                     <div class="hero-copy">
-                        Real-time board for participant flow, duration growth, joins, leaves, and member monitoring. This page refreshes automatically every 2 seconds.
+                        Real-time command board for participant flow, host visibility, member presence, unknown risk, and attendance movement. This page refreshes every 2 seconds.
                     </div>
-                    <div class="row" style="margin-top:16px">
+                    <div class="row" style="margin-top:16px;gap:10px;flex-wrap:wrap">
                         <span class="badge info">Meeting ID {{ meeting.meeting_id or '-' }}</span>
                         <span class="badge gray">Started {{ fmt_dt(meeting.start_time) }}</span>
-                        <span class="badge {{ 'ok' if host_now == 'Yes' else 'warn' }}">Host present {{ host_now }}</span>
+                        <span class="badge {{ 'ok' if host_now == 'Yes' else 'warn' if active_now else 'danger' }}">Host {{ 'present' if host_now == 'Yes' else 'absent' }}</span>
+                        <span class="badge {{ 'ok' if live_risk_banner == 'Healthy' else 'warn' if live_risk_banner == 'Warning' else 'danger' }}">Risk {{ live_risk_banner }}</span>
                     </div>
                 </div>
                 <div class="hero-stats">
-                    <div class="hero-chip">
-                        <div class="small">Active Now</div>
-                        <div class="big">{{ active_now }}</div>
-                    </div>
-                    <div class="hero-chip">
-                        <div class="small">Tracked Rows</div>
-                        <div class="big">{{ live_rows|length }}</div>
-                    </div>
-                    <div class="hero-chip">
-                        <div class="small">Not Joined</div>
-                        <div class="big">{{ not_joined|length }}</div>
-                    </div>
+                    <div class="hero-chip"><div class="small">Live Participants</div><div class="big live-counter">{{ active_now }}</div></div>
+                    <div class="hero-chip"><div class="small">Known / Unknown</div><div class="big">{{ known_unknown_ratio }}</div></div>
+                    <div class="hero-chip"><div class="small">Not Joined</div><div class="big">{{ not_joined|length }}</div></div>
                 </div>
             </div>
         </div>
 
-        <div class="grid">
-            <div class="card kpi-card">
-                <div class="kpi-icon">🧍</div>
-                <h4>Participants Tracked</h4>
-                <div class="metric">{{ live_rows|length }}</div>
-                <div class="metric-sub">All rows currently associated with this live meeting UUID.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">⚡</div>
-                <h4>Active Now</h4>
-                <div class="metric">{{ active_now }}</div>
-                <div class="metric-sub">Participants with an open current session right now.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">👥</div>
-                <h4>Member Participants</h4>
-                <div class="metric">{{ member_live_count }}</div>
-                <div class="metric-sub">Registered members mapped to the current live meeting.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">🛰️</div>
-                <h4>Unknown Participants</h4>
-                <div class="metric">{{ unknown_live_count }}</div>
-                <div class="metric-sub">Unmatched participants detected during the live session.</div>
-            </div>
+        <div class="grid" style="margin-top:16px">
+            <div class="card kpi-card"><div class="kpi-icon">🔴</div><h4>Live Pulse</h4><div class="metric">{{ 'ACTIVE' if active_now else 'WAITING' }}</div><div class="metric-sub">Blinking board status with auto-refresh.</div></div>
+            <div class="card kpi-card"><div class="kpi-icon">👥</div><h4>Live Participants Counter</h4><div class="metric">{{ active_now }}</div><div class="metric-sub">Participants currently inside the meeting.</div></div>
+            <div class="card kpi-card"><div class="kpi-icon">🧑</div><h4>Host Status</h4><div class="metric">{{ 'Present' if host_now == 'Yes' else 'Absent' }}</div><div class="metric-sub">Current host visibility based on live webhook flow.</div></div>
+            <div class="card kpi-card"><div class="kpi-icon">🪪</div><h4>Known vs Unknown</h4><div class="metric">{{ known_unknown_ratio }}</div><div class="metric-sub">Registered members compared with unmatched attendees.</div></div>
         </div>
 
-        <div class="grid-2" style="margin-top:16px;grid-template-columns:minmax(0,1.75fr) minmax(290px,.75fr)">
+        <div class="grid-2" style="margin-top:16px;grid-template-columns:minmax(0,1.45fr) minmax(320px,.55fr)">
             <div class="card">
                 <div class="section-title">
                     <div>
                         <h3 style="margin:0">Live Participants Board</h3>
-                        <p>Participant status, join and leave timing, duration growth, and rejoin count.</p>
+                        <p>Participant status, known/unknown split, duration growth, and rejoin count.</p>
                     </div>
                     <span class="badge ok"><span class="status-pulse"></span> Auto refresh</span>
                 </div>
@@ -3874,6 +4026,7 @@ def live():
                     <table>
                         <tr>
                             <th>Name</th>
+                            <th>Type</th>
                             <th>Join</th>
                             <th>Leave</th>
                             <th>Duration</th>
@@ -3883,17 +4036,12 @@ def live():
                         {% for p in live_rows %}
                         <tr>
                             <td><b>{{ p.participant_name }}</b></td>
+                            <td><span class="badge {{ 'ok' if p.member_type == 'Known' else 'warn' }}">{{ p.member_type }}</span></td>
                             <td>{{ fmt_time_ampm(p.first_join) if p.first_join else '-' }}</td>
                             <td>{{ fmt_time_ampm(p.last_leave) if p.last_leave else ('Live now' if p.is_active_now else '-') }}</td>
                             <td>{{ p.duration_min }}</td>
                             <td>{{ p.rejoin_count }}</td>
-                            <td>
-                                {% if p.is_active_now %}
-                                    <span class="status-pill status-live"><span class="status-pulse"></span>{{ p.status }}</span>
-                                {% else %}
-                                    <span class="badge {{ 'ok' if p.status == 'PRESENT' else 'warn' if p.status == 'LATE' else 'gray' if p.status == 'HOST' else 'danger' }}">{{ p.status }}</span>
-                                {% endif %}
-                            </td>
+                            <td>{% if p.is_active_now %}<span class="status-pill status-live"><span class="status-pulse"></span>{{ p.status }}</span>{% else %}<span class="badge {{ 'ok' if p.status == 'PRESENT' else 'warn' if p.status == 'LATE' else 'gray' if p.status == 'HOST' else 'danger' }}">{{ p.status }}</span>{% endif %}</td>
                         </tr>
                         {% endfor %}
                     </table>
@@ -3902,53 +4050,26 @@ def live():
 
             <div class="stack">
                 <div class="card">
-                    <div class="section-title">
-                        <div>
-                            <h3 style="margin:0">Live Health Snapshot</h3>
-                            <p>Operational indicators for this running meeting.</p>
-                        </div>
-                    </div>
-                    <div class="mini-list">
-                        <div class="mini-item">
-                            <div class="muted">Meeting topic</div>
-                            <div style="font-weight:900;margin-top:4px">{{ meeting.topic or 'Untitled Meeting' }}</div>
-                        </div>
-                        <div class="mini-item">
-                            <div class="muted">Host currently active</div>
-                            <div style="font-weight:900;margin-top:4px">{{ host_now }}</div>
-                        </div>
-                        <div class="mini-item">
-                            <div class="muted">Session started</div>
-                            <div style="font-weight:900;margin-top:4px">{{ fmt_dt(meeting.start_time) }}</div>
-                        </div>
+                    <div class="section-title"><div><h3 style="margin:0">Live Join Feed</h3><p>Scrolling feed of tracked joins and active rows.</p></div></div>
+                    <div class="list-card" style="max-height:340px;overflow:auto">
+                        {% for item in live_join_feed %}
+                        <div class="list-row"><div><div style="font-weight:900">{{ item.name }}</div><div class="muted">Joined {{ item.time }}</div></div><span class="badge {{ 'ok' if item.tag == 'KNOWN' else 'info' if item.tag == 'LIVE' else 'warn' }}">{{ item.tag }}</span></div>
+                        {% else %}
+                        <div class="muted">No live join data yet.</div>
+                        {% endfor %}
                     </div>
                 </div>
 
                 <div class="card">
-                    <div class="section-title">
-                        <div>
-                            <h3 style="margin:0">Members Not Yet Joined</h3>
-                            <p>Active members still absent from the live session.</p>
-                        </div>
-                    </div>
+                    <div class="section-title"><div><h3 style="margin:0">Members Not Yet Joined</h3><p>Active members still absent from the live session.</p></div></div>
                     {% if not_joined %}
-                        <div class="list-card">
-                            {% for m in not_joined[:12] %}
-                            <div class="list-row">
-                                <div>
-                                    <div style="font-weight:800">{{ member_display_name(m) }}</div>
-                                    <div class="muted">{{ m.email or m.phone or 'No contact info' }}</div>
-                                </div>
-                                <span class="badge danger">Not joined</span>
-                            </div>
+                        <div class="list-card" style="max-height:300px;overflow:auto">
+                            {% for m in not_joined[:18] %}
+                            <div class="list-row"><div><div style="font-weight:800">{{ member_display_name(m) }}</div><div class="muted">{{ m.email or m.phone or 'No contact info' }}</div></div><span class="badge danger">Not joined</span></div>
                             {% endfor %}
                         </div>
                     {% else %}
-                        <div class="empty-state" style="padding:22px 18px">
-                            <div class="empty-icon" style="width:58px;height:58px;font-size:22px">✅</div>
-                            <div style="font-weight:900;margin-bottom:6px">All active members joined</div>
-                            <div class="muted">No pending active member remains outside the current session.</div>
-                        </div>
+                        <div class="empty-state" style="padding:22px 18px"><div class="empty-icon" style="width:58px;height:58px;font-size:22px">✅</div><div style="font-weight:900;margin-bottom:6px">All active members joined</div><div class="muted">No pending active member remains outside the current session.</div></div>
                     {% endif %}
                 </div>
             </div>
@@ -3961,6 +4082,9 @@ def live():
         host_now=host_now,
         member_live_count=member_live_count,
         unknown_live_count=unknown_live_count,
+        known_unknown_ratio=known_unknown_ratio,
+        live_risk_banner=live_risk_banner,
+        live_join_feed=live_join_feed,
         fmt_dt=fmt_dt,
         fmt_time_ampm=fmt_time_ampm,
         member_display_name=member_display_name,
@@ -4446,11 +4570,11 @@ def analytics():
                     </div>
                     <div class="hero-chip">
                         <div class="small">Health</div>
-                        <div class="big">{{ data.summary.attendance_health }}%</div>
+                        <div class="big">{{ data.summary.current_meeting_health }} / 100</div>
                     </div>
                     <div class="hero-chip">
                         <div class="small">Predicted Next</div>
-                        <div class="big">{{ data.summary.predicted_next_attendance }}</div>
+                        <div class="big">{{ data.summary.current_meeting_health }}</div>
                     </div>
                 </div>
             </div>
@@ -4557,9 +4681,9 @@ def analytics():
             </div>
             <div class="card kpi-card">
                 <div class="kpi-icon">🔮</div>
-                <h4>Predicted Next</h4>
-                <div class="metric">{{ data.summary.predicted_next_attendance }}</div>
-                <div class="metric-sub">Simple average projection from recent meetings.</div>
+                <h4>Meeting Health</h4>
+                <div class="metric">{{ data.summary.current_meeting_health }}</div>
+                <div class="metric-sub">Weighted score from attendance, duration and participation.</div>
             </div>
         </div>
 
@@ -4650,7 +4774,7 @@ def analytics():
                 <div class="section-title">
                     <div>
                         <h3 style="margin:0">Top Members</h3>
-                        <p>Best overall performers based on attendance and engagement scores.</p>
+                        <p>Top performers ranked by weighted attendance score, consistency and duration.</p>
                     </div>
                 </div>
                 <div class="list-card">
@@ -4747,6 +4871,19 @@ def analytics():
         </div>
 
         <div class="grid-2" style="margin-top:16px">
+            <div class="card">
+                <div class="section-title">
+                    <div>
+                        <h3 style="margin:0">Auto Actions</h3>
+                        <p>Suggested next actions based on risk, live quality, and meeting intelligence.</p>
+                    </div>
+                </div>
+                <div class="insight-list">
+                    {% for action in data.auto_actions %}
+                    <div class="insight-item">{{ action }}</div>
+                    {% endfor %}
+                </div>
+            </div>
             <div class="card">
                 <div class="section-title">
                     <div>
