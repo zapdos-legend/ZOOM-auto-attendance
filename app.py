@@ -16,6 +16,7 @@ import csv
 import hashlib
 import hmac
 import io
+import json
 import os
 import smtplib
 import time
@@ -43,6 +44,7 @@ from flask import (
 )
 import psycopg
 from psycopg.rows import dict_row
+from pywebpush import WebPushException, webpush
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
@@ -57,6 +59,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 TIMEZONE_NAME = os.getenv("TIMEZONE_NAME", "Asia/Kolkata")
 ZOOM_SECRET_TOKEN = os.getenv("ZOOM_SECRET_TOKEN", "")
 HOST_NAME_HINT = os.getenv("HOST_NAME_HINT", "host").strip().lower()
+WEB_PUSH_ENABLED = os.getenv("WEB_PUSH_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:test@example.com").strip()
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+
 
 DEFAULT_SETTINGS = {
     "present_percentage": os.getenv("PRESENT_PERCENTAGE", "75"),
@@ -255,6 +262,106 @@ def send_email(to_email, subject, body, html_body=None):
     except Exception as e:
         print(f"❌ Email failed: {e}")
         return False, str(e)
+
+
+def get_vapid_private_key_value():
+    raw = VAPID_PRIVATE_KEY or ""
+    if not raw:
+        return ""
+    return raw.replace("\n", "
+").strip()
+
+
+def is_web_push_configured() -> bool:
+    return bool(WEB_PUSH_ENABLED and VAPID_PUBLIC_KEY and get_vapid_private_key_value())
+
+
+def save_push_subscription(subscription_data, username=None):
+    endpoint = (subscription_data or {}).get("endpoint") or ""
+    keys = (subscription_data or {}).get("keys") or {}
+    p256dh = keys.get("p256dh") or ""
+    auth = keys.get("auth") or ""
+    if not endpoint or not p256dh or not auth:
+        return False, "Invalid subscription payload"
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO push_subscriptions(endpoint, p256dh, auth, username, updated_at)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (endpoint)
+                DO UPDATE SET
+                    p256dh = EXCLUDED.p256dh,
+                    auth = EXCLUDED.auth,
+                    username = COALESCE(EXCLUDED.username, push_subscriptions.username),
+                    updated_at = NOW()
+                """,
+                (endpoint, p256dh, auth, username),
+            )
+        conn.commit()
+    return True, "Subscription saved"
+
+
+def send_push_notification(title, body, target_username=None, click_url=None):
+    if not is_web_push_configured():
+        print("⚠️ Web Push not configured")
+        return {"sent": 0, "failed": 0, "errors": ["Web Push not configured"]}
+
+    payload = json.dumps({
+        "title": title,
+        "body": body,
+        "icon": "/static/icon.png",
+        "badge": "/static/icon.png",
+        "url": click_url or url_for("home", _external=True),
+    })
+
+    results = {"sent": 0, "failed": 0, "errors": []}
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            if target_username:
+                cur.execute(
+                    "SELECT * FROM push_subscriptions WHERE username=%s ORDER BY id DESC",
+                    (target_username,),
+                )
+            else:
+                cur.execute("SELECT * FROM push_subscriptions ORDER BY id DESC")
+            rows = cur.fetchall()
+
+            for row in rows:
+                subscription_info = {
+                    "endpoint": row.get("endpoint"),
+                    "keys": {
+                        "p256dh": row.get("p256dh"),
+                        "auth": row.get("auth"),
+                    },
+                }
+                try:
+                    webpush(
+                        subscription_info=subscription_info,
+                        data=payload,
+                        vapid_private_key=get_vapid_private_key_value(),
+                        vapid_claims={"sub": VAPID_SUBJECT},
+                        ttl=60,
+                    )
+                    results["sent"] += 1
+                except WebPushException as exc:
+                    results["failed"] += 1
+                    err_text = str(exc)
+                    results["errors"].append(err_text)
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status_code in (404, 410):
+                        try:
+                            cur.execute("DELETE FROM push_subscriptions WHERE endpoint=%s", (row.get("endpoint"),))
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    results["failed"] += 1
+                    results["errors"].append(str(exc))
+        conn.commit()
+
+    return results
 
 
 def login_required(f):
@@ -770,6 +877,19 @@ def init_db():
                 )
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    id SERIAL PRIMARY KEY,
+                    endpoint TEXT UNIQUE NOT NULL,
+                    p256dh TEXT NOT NULL,
+                    auth TEXT NOT NULL,
+                    username TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
 
         if table_exists(conn, "users"):
             ensure_column(conn, "users", "role", "TEXT NOT NULL DEFAULT 'viewer'")
@@ -829,6 +949,14 @@ def init_db():
             ensure_column(conn, "activity_log", "action", "TEXT")
             ensure_column(conn, "activity_log", "details", "TEXT")
             ensure_column(conn, "activity_log", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+        if table_exists(conn, "push_subscriptions"):
+            ensure_column(conn, "push_subscriptions", "endpoint", "TEXT")
+            ensure_column(conn, "push_subscriptions", "p256dh", "TEXT")
+            ensure_column(conn, "push_subscriptions", "auth", "TEXT")
+            ensure_column(conn, "push_subscriptions", "username", "TEXT")
+            ensure_column(conn, "push_subscriptions", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            ensure_column(conn, "push_subscriptions", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 
         ensure_index(conn, "idx_attendance_meeting_uuid", "CREATE INDEX idx_attendance_meeting_uuid ON attendance(meeting_uuid)")
         ensure_index(conn, "idx_attendance_member_id", "CREATE INDEX idx_attendance_member_id ON attendance(member_id)")
@@ -5515,6 +5643,196 @@ def zoom_webhook():
     except Exception as e:
         print("❌ WEBHOOK ERROR:", str(e))
         return jsonify({"ok": False, "error": str(e)}), 200
+
+
+@app.route("/push/vapid-key")
+@login_required
+def push_vapid_key():
+    if not is_web_push_configured():
+        return jsonify({"ok": False, "error": "Web Push not configured"}), 503
+    return jsonify({"ok": True, "publicKey": VAPID_PUBLIC_KEY})
+
+
+@app.route("/push/subscribe", methods=["POST"])
+@login_required
+def push_subscribe():
+    if not is_web_push_configured():
+        return jsonify({"ok": False, "error": "Web Push not configured"}), 503
+
+    data = request.get_json(silent=True) or {}
+    ok, message = save_push_subscription(data, session.get("username"))
+    if ok:
+        log_activity("push_subscription_saved", session.get("username") or "anonymous")
+        return jsonify({"ok": True, "message": message})
+    return jsonify({"ok": False, "error": message}), 400
+
+
+@app.route("/service-worker.js")
+def service_worker_js():
+    js = """
+self.addEventListener('push', function(event) {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    data = { title: 'Notification', body: event.data ? event.data.text() : '' };
+  }
+
+  const title = data.title || 'Zoom Attendance Platform';
+  const options = {
+    body: data.body || '',
+    icon: data.icon || '/static/icon.png',
+    badge: data.badge || '/static/icon.png',
+    data: { url: data.url || '/' }
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          client.navigate(targetUrl);
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
+});
+"""
+    return Response(js, mimetype="application/javascript")
+
+
+@app.route("/push-setup")
+@login_required
+def push_setup():
+    html = f"""
+    <!doctype html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Web Push Setup</title>
+        {DARK_THEME_CSS}
+        <style>
+            .push-wrap {{ max-width: 760px; margin: 40px auto; padding: 24px; }}
+            .push-card {{ background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 24px; box-shadow: 0 8px 30px rgba(0,0,0,0.35); }}
+            .push-muted {{ color: #9ca3af; }}
+            .push-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }}
+            .push-btn {{ cursor: pointer; }}
+            .push-status {{ margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.04); white-space: pre-wrap; }}
+            a.push-link {{ color: #c4b5fd; text-decoration: none; }}
+        </style>
+    </head>
+    <body>
+        <div class="push-wrap">
+            <div class="push-card">
+                <h1 style="margin-top:0;">🔔 Browser Push Setup</h1>
+                <p class="push-muted">Enable browser notifications for your account. This safely stores your browser subscription in the database for future smart alerts.</p>
+                <div class="push-row">
+                    <button class="push-btn" onclick="enablePush()">Enable Notifications</button>
+                    <button class="push-btn" onclick="sendTestPush()">Send Test Push</button>
+                    <a class="push-link" href="{url_for('home')}">← Back to Dashboard</a>
+                </div>
+                <div id="pushStatus" class="push-status">Status: Ready</div>
+            </div>
+        </div>
+        <script>
+        function urlBase64ToUint8Array(base64String) {{
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = atob(base64);
+            return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+        }}
+
+        function setStatus(message) {{
+            document.getElementById('pushStatus').textContent = message;
+        }}
+
+        async function enablePush() {{
+            try {{
+                if (!('serviceWorker' in navigator)) {{
+                    setStatus('Service Worker is not supported in this browser.');
+                    return;
+                }}
+                if (!('PushManager' in window)) {{
+                    setStatus('Push notifications are not supported in this browser.');
+                    return;
+                }}
+
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') {{
+                    setStatus('Notification permission was not granted.');
+                    return;
+                }}
+
+                const vapidResp = await fetch('{url_for('push_vapid_key')}');
+                const vapidData = await vapidResp.json();
+                if (!vapidData.ok) {{
+                    setStatus('Unable to load VAPID key: ' + (vapidData.error || 'Unknown error'));
+                    return;
+                }}
+
+                const registration = await navigator.serviceWorker.register('{url_for('service_worker_js')}');
+                let subscription = await registration.pushManager.getSubscription();
+                if (!subscription) {{
+                    subscription = await registration.pushManager.subscribe({{
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(vapidData.publicKey)
+                    }});
+                }}
+
+                const saveResp = await fetch('{url_for('push_subscribe')}', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify(subscription)
+                }});
+                const saveData = await saveResp.json();
+                if (saveData.ok) {{
+                    setStatus('Notifications enabled successfully for this browser.');
+                }} else {{
+                    setStatus('Subscription save failed: ' + (saveData.error || 'Unknown error'));
+                }}
+            }} catch (err) {{
+                setStatus('Push setup failed: ' + err);
+            }}
+        }}
+
+        async function sendTestPush() {{
+            try {{
+                const resp = await fetch('{url_for('test_push')}');
+                const data = await resp.json();
+                setStatus('Test push result: ' + JSON.stringify(data));
+            }} catch (err) {{
+                setStatus('Test push failed: ' + err);
+            }}
+        }}
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html)
+
+
+@app.route("/test-push")
+@login_required
+def test_push():
+    results = send_push_notification(
+        title="Test Push from Zoom Attendance Platform",
+        body="Browser push setup is working successfully.",
+        target_username=session.get("username"),
+        click_url=url_for("home", _external=True),
+    )
+    if results.get("sent", 0) > 0:
+        log_activity("test_push_sent", session.get("username") or "unknown")
+    return jsonify({"ok": results.get("sent", 0) > 0, **results})
 
 
 @app.route("/test-email")
