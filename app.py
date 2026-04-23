@@ -19,6 +19,7 @@ import io
 import json
 import os
 import smtplib
+import tempfile
 import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -275,6 +276,20 @@ def get_vapid_private_key_value():
     return raw.replace("\\n", "\n").replace("\\r", "").replace("\r", "").strip()
 
 
+def get_vapid_private_key_file():
+    # pywebpush accepts either a PEM file path or a base64 DER key string.
+    # Our .env stores the private key text, so we safely write it to a temp PEM
+    # file and pass the file path. This avoids ASN.1/DER parsing errors.
+    private_key_text = get_vapid_private_key_value()
+    if not private_key_text:
+        return ""
+    key_path = os.path.join(tempfile.gettempdir(), "zoom_attendance_vapid_private_key.pem")
+    with open(key_path, "w", encoding="utf-8", newline="\n") as key_file:
+        key_file.write(private_key_text)
+        if not private_key_text.endswith("\n"):
+            key_file.write("\n")
+    return key_path
+
 def is_web_push_configured() -> bool:
     return bool(WEB_PUSH_ENABLED and VAPID_PUBLIC_KEY and get_vapid_private_key_value())
 
@@ -344,7 +359,7 @@ def send_push_notification(title, body, target_username=None, click_url=None):
                     webpush(
                         subscription_info=subscription_info,
                         data=payload,
-                        vapid_private_key=get_vapid_private_key_value(),
+                        vapid_private_key=get_vapid_private_key_file(),
                         vapid_claims={"sub": VAPID_SUBJECT},
                         ttl=60,
                     )
