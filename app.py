@@ -265,10 +265,14 @@ def send_email(to_email, subject, body, html_body=None):
 
 
 def get_vapid_private_key_value():
-    raw = VAPID_PRIVATE_KEY or ""
+    # Read the latest value from environment each time so Render/local .env changes
+    # are respected after app restart. Supports both one-line \n escaped PEM
+    # and real multi-line PEM formats.
+    raw = os.getenv("VAPID_PRIVATE_KEY", VAPID_PRIVATE_KEY or "")
     if not raw:
         return ""
-    return raw.replace("\n", "\n").replace("\r", "").strip()
+    raw = raw.strip().strip('"').strip("'")
+    return raw.replace("\\n", "\n").replace("\\r", "").replace("\r", "").strip()
 
 
 def is_web_push_configured() -> bool:
