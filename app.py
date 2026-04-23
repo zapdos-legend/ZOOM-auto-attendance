@@ -17,7 +17,10 @@ import hashlib
 import hmac
 import io
 import os
+import smtplib
 import time
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from difflib import SequenceMatcher
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -201,6 +204,57 @@ def db():
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+def send_email(to_email, subject, body, html_body=None):
+    if str(os.getenv("EMAIL_ENABLED", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+        print("⚠️ Email sending is disabled")
+        return False, "Email disabled"
+
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = os.getenv("SMTP_PORT", "465").strip()
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_pass = os.getenv("SMTP_PASS", "").strip()
+    from_name = os.getenv("SMTP_FROM_NAME", "Zoom Attendance Platform").strip()
+
+    if not smtp_host or not smtp_port or not smtp_user or not smtp_pass:
+        print("⚠️ SMTP config missing")
+        return False, "SMTP config missing"
+
+    try:
+        smtp_port = int(smtp_port)
+    except Exception:
+        smtp_port = 465
+
+    try:
+        if html_body:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = f"{from_name} <{smtp_user}>"
+            msg["To"] = to_email
+            msg.attach(MIMEText(body or "", "plain", "utf-8"))
+            msg.attach(MIMEText(html_body, "html", "utf-8"))
+        else:
+            msg = MIMEText(body or "", "plain", "utf-8")
+            msg["Subject"] = subject
+            msg["From"] = f"{from_name} <{smtp_user}>"
+            msg["To"] = to_email
+
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as server:
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to_email], msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to_email], msg.as_string())
+
+        print(f"✅ Email sent to {to_email}")
+        return True, "Email sent successfully"
+
+    except Exception as e:
+        print(f"❌ Email failed: {e}")
+        return False, str(e)
 
 
 def login_required(f):
@@ -5461,6 +5515,23 @@ def zoom_webhook():
     except Exception as e:
         print("❌ WEBHOOK ERROR:", str(e))
         return jsonify({"ok": False, "error": str(e)}), 200
+
+
+@app.route("/test-email")
+def test_email():
+    target_email = (request.args.get("to") or "").strip()
+    if not target_email:
+        return "Please pass email like /test-email?to=yourgmail@gmail.com", 400
+
+    ok, message = send_email(
+        to_email=target_email,
+        subject="Test Email from Zoom Attendance Platform",
+        body="Hello,\n\nYour Gmail SMTP setup is working successfully.\n\nRegards,\nZoom Attendance Platform"
+    )
+
+    if ok:
+        return f"✅ {message} -> {target_email}"
+    return f"❌ {message}", 500
 
 
 if __name__ == "__main__":
