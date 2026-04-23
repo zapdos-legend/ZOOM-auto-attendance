@@ -3410,6 +3410,26 @@ def home():
             if participant_row.get("current_join") is not None and not participant_row.get("is_member"):
                 unknown_live_count += 1
 
+    home_data = {
+        "phase3_alerts": [
+            {
+                "level": "ok" if live_info else "info",
+                "title": "Live monitoring active" if live_info else "System standing by",
+                "text": "Webhook stream is tracking a current live meeting." if live_info else "No live session is open right now, but the control center is healthy.",
+            },
+            {
+                "level": "warn" if latest_meeting and (latest_meeting.get("unknown_participants") or 0) > 0 else "ok",
+                "title": "Unknown participant watch",
+                "text": f"{(latest_meeting.get('unknown_participants') or 0) if latest_meeting else 0} unknown participant(s) detected in the latest meeting snapshot.",
+            },
+            {
+                "level": "danger" if health < 75 else "ok",
+                "title": "Attendance health signal",
+                "text": "Attention is needed because attendance quality is below target." if health < 75 else "Attendance health is currently in a comfortable zone.",
+            },
+        ]
+    }
+
     body = render_template_string(
         """
         <div class="hero">
@@ -3656,6 +3676,9 @@ def home():
         health=health,
         live_info=live_info,
         latest_meeting=latest_meeting,
+        host_now=host_now,
+        unknown_live_count=unknown_live_count,
+        data=home_data,
         fmt_dt=fmt_dt,
     )
     return page("Home", body, "home")
