@@ -50,6 +50,7 @@ DEFAULT_SETTINGS = {
 
 DB_INITIALIZED = False
 LAST_STALE_CHECK_TS = 0
+SETTINGS_CACHE = {}
 
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
@@ -174,7 +175,14 @@ def slugify(text: str) -> str:
 def db():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is missing")
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    connect_timeout = os.getenv("DB_CONNECT_TIMEOUT", "5")
+    try:
+        connect_timeout = int(connect_timeout)
+    except Exception:
+        connect_timeout = 5
+    if connect_timeout <= 0:
+        connect_timeout = 5
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=connect_timeout)
 
 
 def hash_password(password: str) -> str:
@@ -449,15 +457,56 @@ def fix_database_compatibility():
                 raise
 
 
+def cast_setting_value(value, cast=str):
+    if value is None:
+        value = ""
+    try:
+        return cast(value)
+    except Exception:
+        try:
+            default_value = DEFAULT_SETTINGS.get(value)
+            if default_value is not None:
+                return cast(default_value)
+        except Exception:
+            pass
+        if cast is int:
+            try:
+                return int(float(value))
+            except Exception:
+                try:
+                    return int(float(DEFAULT_SETTINGS.get(str(value), 0)))
+                except Exception:
+                    return 0
+        if cast is float:
+            try:
+                return float(value)
+            except Exception:
+                try:
+                    return float(DEFAULT_SETTINGS.get(str(value), 0))
+                except Exception:
+                    return 0.0
+        if cast is bool:
+            return str(value).strip().lower() in ("1", "true", "t", "yes", "y", "on")
+        return str(value)
+
+
 def get_setting(name, cast=str):
-    value = DEFAULT_SETTINGS.get(name)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT value FROM settings WHERE key=%s", (name,))
-            row = cur.fetchone()
-            if row:
-                value = row["value"]
-    return cast(value)
+    cached_value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
+    value = cached_value
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM settings WHERE key=%s", (name,))
+                row = cur.fetchone()
+                if row and row.get("value") not in (None, ""):
+                    value = row["value"]
+                    SETTINGS_CACHE[name] = value
+                elif name not in SETTINGS_CACHE and value is not None:
+                    SETTINGS_CACHE[name] = value
+    except Exception as e:
+        print(f"⚠️ get_setting fallback for {name}: {e}")
+        value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
+    return cast_setting_value(value, cast)
 
 
 def set_setting(name, value):
@@ -472,6 +521,7 @@ def set_setting(name, value):
                 (name, str(value)),
             )
         conn.commit()
+    SETTINGS_CACHE[name] = str(value)
 
 
 def sync_special_user(conn, username: str, password: str, role: str):
@@ -510,11 +560,18 @@ def maybe_finalize_stale_live_meetings(force=False):
     if not force and now_ts - LAST_STALE_CHECK_TS < 12:
         return
     LAST_STALE_CHECK_TS = now_ts
-    finalize_stale_live_meetings()
+    try:
+        finalize_stale_live_meetings()
+    except Exception as e:
+        print(f"⚠️ finalize_stale_live_meetings skipped: {e}")
 
 
 def finalize_stale_live_meetings():
     finalize_seconds = get_setting("meeting_finalize_seconds", int)
+    if finalize_seconds <= 0:
+        finalize_seconds = cast_setting_value(DEFAULT_SETTINGS.get("meeting_finalize_seconds", "30"), int)
+        if finalize_seconds <= 0:
+            finalize_seconds = 30
     threshold_time = now_local() - timedelta(seconds=finalize_seconds)
 
     with db() as conn:
@@ -546,7 +603,10 @@ def finalize_stale_live_meetings():
                         last_activity = candidate
 
                 if last_activity and last_activity <= threshold_time:
-                    finalize_meeting(meeting_uuid, last_activity)
+                    try:
+                        finalize_meeting(meeting_uuid, last_activity)
+                    except Exception as e:
+                        print(f"⚠️ finalize_meeting skipped for {meeting_uuid}: {e}")
 
 
 def init_db():
@@ -1069,15 +1129,25 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
     refresh_live_meeting_summary(meeting_uuid)
 
 
-def classify_row_for_meeting(row, start_time, end_time):
-    present_percentage = get_setting("present_percentage", int)
-    late_pct = get_setting("late_count_as_present_percentage", int)
+def classify_row_for_meeting(row, start_time, end_time, present_percentage=None, late_pct=None):
+    if present_percentage is None:
+        present_percentage = get_setting("present_percentage", int)
+    if late_pct is None:
+        late_pct = get_setting("late_count_as_present_percentage", int)
 
-    total = row["total_seconds"] or 0
-    if row["current_join"]:
-        total += max(int((end_time - parse_dt(row["current_join"])).total_seconds()), 0)
+    start_dt = parse_dt(start_time) or now_local()
+    end_dt = parse_dt(end_time) or start_dt
+    if end_dt < start_dt:
+        end_dt = start_dt
 
-    meeting_seconds = max(int((end_time - start_time).total_seconds()), 0)
+    total = cast_setting_value(row.get("total_seconds") or 0, int)
+    current_join_dt = parse_dt(row.get("current_join"))
+    if current_join_dt:
+        if current_join_dt > end_dt:
+            current_join_dt = end_dt
+        total += max(int((end_dt - current_join_dt).total_seconds()), 0)
+
+    meeting_seconds = max(int((end_dt - start_dt).total_seconds()), 0)
     required_present = meeting_seconds * present_percentage / 100.0
     required_late = meeting_seconds * late_pct / 100.0
 
@@ -1092,6 +1162,8 @@ def classify_row_for_meeting(row, start_time, end_time):
 
 def finalize_meeting(meeting_uuid, ended_at=None):
     ended_at = parse_dt(ended_at) or now_local()
+    present_percentage = get_setting("present_percentage", int)
+    late_pct = get_setting("late_count_as_present_percentage", int)
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -1114,7 +1186,7 @@ def finalize_meeting(meeting_uuid, ended_at=None):
             host_present = False
 
             for row in rows:
-                final_status, total = classify_row_for_meeting(row, start_time, end_time)
+                final_status, total = classify_row_for_meeting(row, start_time, end_time, present_percentage, late_pct)
 
                 if final_status == "PRESENT":
                     present_count += 1
@@ -1123,12 +1195,12 @@ def finalize_meeting(meeting_uuid, ended_at=None):
                 elif final_status == "ABSENT":
                     absent_count += 1
 
-                if row["is_member"]:
+                if row.get("is_member"):
                     member_participants += 1
                 else:
                     unknown_participants += 1
 
-                if row["is_host"]:
+                if row.get("is_host"):
                     host_present = True
 
                 cur.execute(
@@ -2798,7 +2870,10 @@ def profile():
 @app.route("/home")
 @login_required
 def home():
-    maybe_finalize_stale_live_meetings()
+    try:
+        maybe_finalize_stale_live_meetings()
+    except Exception as e:
+        print(f"⚠️ home stale finalization skipped: {e}")
 
     live_info = read_live_snapshot()
 
