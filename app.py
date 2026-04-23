@@ -596,11 +596,7 @@ def finalize_stale_live_meetings():
                 if anybody_live:
                     continue
 
-                last_activity = None
-                for r in rows:
-                    candidate = parse_dt(r.get("updated_at")) or parse_dt(r.get("last_leave")) or parse_dt(r.get("first_join"))
-                    if candidate and (last_activity is None or candidate > last_activity):
-                        last_activity = candidate
+                last_activity = get_meeting_rows_last_activity(rows)
 
                 if last_activity and last_activity <= threshold_time:
                     try:
@@ -900,6 +896,44 @@ def ensure_meeting(payload_object):
     return row
 
 
+def get_row_visible_span_seconds(row, end_time=None):
+    first_join_dt = parse_dt(row.get("first_join"))
+    if not first_join_dt:
+        return None
+    last_point_dt = parse_dt(row.get("last_leave")) or parse_dt(row.get("current_join")) or parse_dt(end_time)
+    if not last_point_dt:
+        return None
+    if last_point_dt < first_join_dt:
+        return 0
+    return max(int((last_point_dt - first_join_dt).total_seconds()), 0)
+
+
+def get_row_effective_total_seconds(row, end_time=None):
+    total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
+    current_join_dt = parse_dt(row.get("current_join"))
+    end_dt = parse_dt(end_time)
+    if current_join_dt:
+        if end_dt and current_join_dt > end_dt:
+            current_join_dt = end_dt
+        if end_dt and current_join_dt:
+            total_seconds += max(int((end_dt - current_join_dt).total_seconds()), 0)
+
+    visible_span_seconds = get_row_visible_span_seconds(row, end_time)
+    if visible_span_seconds is not None and total_seconds > visible_span_seconds:
+        total_seconds = visible_span_seconds
+
+    return max(total_seconds, 0)
+
+
+def get_meeting_rows_last_activity(attendance_rows):
+    last_activity = None
+    for row in attendance_rows or []:
+        candidate = parse_dt(row.get("last_leave")) or parse_dt(row.get("current_join")) or parse_dt(row.get("first_join"))
+        if candidate and (last_activity is None or candidate > last_activity):
+            last_activity = candidate
+    return last_activity
+
+
 def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type):
     is_host = bool(HOST_NAME_HINT and HOST_NAME_HINT in (participant_name or "").strip().lower())
     member = find_member(participant_name, participant_email)
@@ -1063,10 +1097,25 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                         ),
                     )
             else:
-                total_seconds = row["total_seconds"] or 0
-                if row["current_join"]:
-                    delta = int((event_time - parse_dt(row["current_join"])).total_seconds())
+                total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
+                current_join_dt = parse_dt(row.get("current_join"))
+                if current_join_dt:
+                    if event_time < current_join_dt:
+                        delta = 0
+                    else:
+                        delta = int((event_time - current_join_dt).total_seconds())
                     total_seconds += max(delta, 0)
+
+                visible_span_seconds = get_row_visible_span_seconds(
+                    {
+                        "first_join": row.get("first_join"),
+                        "last_leave": event_time,
+                        "current_join": None,
+                    },
+                    event_time,
+                )
+                if visible_span_seconds is not None and total_seconds > visible_span_seconds:
+                    total_seconds = visible_span_seconds
 
                 if has_meeting_pk:
                     cur.execute(
@@ -1140,12 +1189,7 @@ def classify_row_for_meeting(row, start_time, end_time, present_percentage=None,
     if end_dt < start_dt:
         end_dt = start_dt
 
-    total = cast_setting_value(row.get("total_seconds") or 0, int)
-    current_join_dt = parse_dt(row.get("current_join"))
-    if current_join_dt:
-        if current_join_dt > end_dt:
-            current_join_dt = end_dt
-        total += max(int((end_dt - current_join_dt).total_seconds()), 0)
+    total = get_row_effective_total_seconds(row, end_dt)
 
     meeting_seconds = max(int((end_dt - start_dt).total_seconds()), 0)
     required_present = meeting_seconds * present_percentage / 100.0
@@ -1173,10 +1217,21 @@ def finalize_meeting(meeting_uuid, ended_at=None):
                 return None
 
             start_time = parse_dt(meeting["start_time"]) or ended_at
-            end_time = ended_at if ended_at > start_time else start_time
 
             cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
             rows = cur.fetchall()
+
+            derived_last_activity = get_meeting_rows_last_activity(rows)
+            if derived_last_activity and derived_last_activity >= start_time:
+                if ended_at > derived_last_activity:
+                    end_time = derived_last_activity
+                else:
+                    end_time = ended_at
+            else:
+                end_time = ended_at
+
+            if end_time < start_time:
+                end_time = start_time
 
             present_count = 0
             late_count = 0
@@ -1929,14 +1984,11 @@ def build_meeting_report_data(meeting_uuid):
 
     start_time = parse_dt(meeting.get("start_time")) or now_local()
     end_time = parse_dt(meeting.get("end_time"))
+    derived_last_activity = get_meeting_rows_last_activity(attendance_rows)
     if not end_time:
-        last_points = []
-        for row in attendance_rows:
-            for key in ("last_leave", "first_join", "current_join"):
-                candidate = parse_dt(row.get(key))
-                if candidate:
-                    last_points.append(candidate)
-        end_time = max(last_points) if last_points else now_local()
+        end_time = derived_last_activity or now_local()
+    elif derived_last_activity and derived_last_activity >= start_time and end_time > derived_last_activity:
+        end_time = derived_last_activity
     if end_time < start_time:
         end_time = start_time
 
@@ -1956,11 +2008,7 @@ def build_meeting_report_data(meeting_uuid):
         if not final_status:
             final_status, total_seconds = classify_row_for_meeting(row, start_time, end_time)
         else:
-            total_seconds = row.get("total_seconds") or 0
-            if row.get("current_join"):
-                current_join_dt = parse_dt(row.get("current_join"))
-                if current_join_dt:
-                    total_seconds += max(int((end_time - current_join_dt).total_seconds()), 0)
+            total_seconds = get_row_effective_total_seconds(row, end_time)
         total_seconds = max(0, min(int(total_seconds or 0), meeting_total_seconds))
 
         join_seen = bool(row.get("first_join") or row.get("last_leave") or row.get("current_join") or total_seconds > 0)
