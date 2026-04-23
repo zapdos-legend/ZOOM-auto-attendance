@@ -2878,6 +2878,53 @@ BASE_HTML = """
             .top-actions{gap:8px}
             .chip,.theme-switch{font-size:11px}
         }
+
+        .page-shell{max-width:1720px;margin:0 auto}
+        .content{padding:28px 30px 38px}
+        .hero{animation:fadeRise .55s ease}
+        .hero, .card, .mini-kpi, .mini-item, .table-wrap{position:relative}
+        .hero::after{box-shadow:0 0 80px rgba(129,140,248,.24)}
+        .card::before{
+            content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;
+            background:linear-gradient(135deg, rgba(96,165,250,.18), rgba(168,85,247,.18), rgba(34,211,238,.12));
+            -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+            -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;opacity:.82;
+        }
+        .card:hover{transform:translateY(-4px) scale(1.006)}
+        .wow-grid{display:grid;grid-template-columns:1.3fr .9fr;gap:16px}
+        .alert-rail{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0}
+        .alert-chip{padding:14px 16px;border-radius:18px;border:1px solid var(--surface-ring);background:linear-gradient(180deg,rgba(255,255,255,.14),transparent),var(--card-soft);box-shadow:var(--shadow-soft)}
+        .alert-chip strong{display:block;font-size:13px;margin-bottom:4px}
+        .alert-chip.ok{box-shadow:0 0 0 1px rgba(34,197,94,.18),0 0 30px rgba(34,197,94,.08)}
+        .alert-chip.warn{box-shadow:0 0 0 1px rgba(245,158,11,.18),0 0 30px rgba(245,158,11,.08)}
+        .alert-chip.danger{box-shadow:0 0 0 1px rgba(239,68,68,.18),0 0 30px rgba(239,68,68,.10)}
+        .alert-chip.info{box-shadow:0 0 0 1px rgba(59,130,246,.18),0 0 30px rgba(59,130,246,.08)}
+        .glow-card{box-shadow:0 16px 40px rgba(37,99,235,.12), 0 0 0 1px rgba(96,165,250,.08)}
+        .glow-card:hover{box-shadow:0 24px 54px rgba(79,70,229,.18), 0 0 0 1px rgba(129,140,248,.14)}
+        .metric{ text-shadow:0 0 24px rgba(96,165,250,.18)}
+        .hero-chip .big, .metric{letter-spacing:-.06em}
+        .table-wrap{overflow:auto hidden}
+        .table-wrap table{min-width:100%}
+        .table-wrap::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#3b82f6,#8b5cf6)}
+        .status-pulse{box-shadow:0 0 0 0 rgba(34,197,94,.5),0 0 22px rgba(34,197,94,.42)}
+        .live-ping{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.18);font-size:11px;font-weight:900}
+        .spotlight-bar{height:12px;border-radius:999px;background:rgba(148,163,184,.14);overflow:hidden;position:relative}
+        .spotlight-bar > span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#22c55e,#3b82f6,#8b5cf6);box-shadow:0 0 18px rgba(96,165,250,.24)}
+        .kpi-card .kpi-icon{box-shadow:0 0 0 1px rgba(99,102,241,.14),0 10px 28px rgba(59,130,246,.10)}
+        .mini-chart-shell{padding:10px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.08),transparent),rgba(2,6,23,.22);border:1px solid var(--line)}
+        .heatmap-wrap{display:grid;grid-template-columns:repeat(12, minmax(0,1fr));gap:6px}
+        .heat-cell{aspect-ratio:1/1;border-radius:10px;border:1px solid var(--surface-ring);display:grid;place-items:center;font-size:10px;color:var(--muted);transition:transform .16s ease, box-shadow .16s ease}
+        .heat-cell:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 12px 24px rgba(2,6,23,.18)}
+        .heat-good{background:rgba(34,197,94,.16)}
+        .heat-warn{background:rgba(245,158,11,.16)}
+        .heat-bad{background:rgba(239,68,68,.16)}
+        .heat-none{background:rgba(148,163,184,.08)}
+        .insight-item{border-left:3px solid rgba(96,165,250,.34)}
+        .hero-copy strong{color:#fff}
+        .badge, .chip, .theme-switch, .btn, button{backdrop-filter:blur(10px)}
+        @media (max-width: 1300px){.page-shell{max-width:1400px}.wow-grid{grid-template-columns:1fr}}
+        @media (max-width: 900px){.content{padding:18px}.alert-rail{grid-template-columns:1fr}.table-wrap{overflow:auto}.hero-stats{justify-content:flex-start}}
+
     </style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
@@ -3037,11 +3084,32 @@ BASE_HTML = """
         Chart.defaults.maintainAspectRatio = false;
     }
 
+
+    function enhanceWowEffects(){
+        document.querySelectorAll('.kpi-card, .hero-chip, .mini-kpi').forEach((el, idx) => {
+            el.classList.add('glow-card');
+            el.style.animation = `fadeRise ${0.28 + (idx * 0.04)}s ease`;
+        });
+        document.querySelectorAll('.table-wrap table tbody tr').forEach((row) => {
+            row.addEventListener('mouseenter', () => row.style.transform = 'translateX(2px)');
+            row.addEventListener('mouseleave', () => row.style.transform = '');
+        });
+        const hero = document.querySelector('.hero');
+        if (hero) {
+            hero.addEventListener('mousemove', (e) => {
+                const rect = hero.getBoundingClientRect();
+                hero.style.backgroundPosition = `${((e.clientX - rect.left) / rect.width) * 100}% 50%`;
+            });
+        }
+    }
+
+
     document.addEventListener('DOMContentLoaded', function(){
         applyAutoTooltips();
         animateMetrics();
         enhanceButtons();
         setupChartDefaults();
+        enhanceWowEffects();
     });
 })();
 </script>
@@ -3341,7 +3409,7 @@ def home():
                     <div class="badge info" style="margin-bottom:12px">Control Center</div>
                     <h1 class="hero-title">Zoom Attendance Command Dashboard</h1>
                     <div class="hero-copy">
-                        Monitor meetings, member participation, finalization quality, and reporting health from one premium control layer.
+                        Monitor meetings, member participation, finalization quality, and reporting health from one <strong>premium control layer</strong> with richer signals, smoother interactions, and a stronger live-ops feel.
                     </div>
                     <div class="row" style="margin-top:16px">
                         <span class="badge ok">Stable tracking</span>
@@ -3365,6 +3433,27 @@ def home():
                     </div>
                 </div>
             </div>
+        </div>
+
+        <div class="alert-rail">
+            <div class="alert-chip {{ 'ok' if live_info else 'info' }}">
+                <strong>{{ 'Live monitoring active' if live_info else 'System standing by' }}</strong>
+                <div class="muted">{{ 'Webhook stream is tracking a current live meeting.' if live_info else 'No live session is open right now, but the control center is healthy.' }}</div>
+            </div>
+            <div class="alert-chip {{ 'warn' if latest_meeting and (latest_meeting.unknown_participants or 0) > 0 else 'ok' }}">
+                <strong>Unknown participant watch</strong>
+                <div class="muted">{{ ((latest_meeting.unknown_participants or 0)|string) if latest_meeting else '0' }} unknown participant(s) detected in the latest meeting snapshot.</div>
+            </div>
+            <div class="alert-chip {{ 'danger' if health < 75 else 'ok' }}">
+                <strong>Attendance health signal</strong>
+                <div class="muted">{{ 'Attention is needed because attendance quality is below target.' if health < 75 else 'Attendance health is currently in a comfortable zone.' }}</div>
+            </div>
+        </div>
+
+        <div class="alert-rail">
+            <div class="alert-chip ok"><strong>Live engine status</strong><div class="muted">Participants are being recalculated in real time every refresh cycle.</div></div>
+            <div class="alert-chip {{ 'warn' if host_now != 'Yes' else 'ok' }}"><strong>Host presence</strong><div class="muted">{{ 'Host is not currently active in the meeting.' if host_now != 'Yes' else 'Host presence has been detected successfully.' }}</div></div>
+            <div class="alert-chip {{ 'danger' if unknown_live_count >= 3 else 'info' }}"><strong>Unknown participant watch</strong><div class="muted">{{ unknown_live_count }} unknown participant(s) are currently part of this session.</div></div>
         </div>
 
         <div class="grid">
@@ -3394,6 +3483,15 @@ def home():
             </div>
         </div>
 
+        <div class="alert-rail">
+            {% for alert in data.phase3_alerts %}
+            <div class="alert-chip {{ alert.level }}">
+                <strong>{{ alert.title }}</strong>
+                <div class="muted">{{ alert.text }}</div>
+            </div>
+            {% endfor %}
+        </div>
+
         <div class="grid-2" style="margin-top:16px">
             <div class="card">
                 <div class="section-title">
@@ -3420,11 +3518,11 @@ def home():
                     </div>
                     <div class="stack">
                         <div class="mini-kpi">
-                            <div class="label">Meeting progress to healthy attendance</div>
+                            <div class="label">Command spotlight progress</div>
                             <div class="value">{{ latest_meeting.present_count or 0 }} + {{ latest_meeting.late_count or 0 }}</div>
                             {% set spotlight_total = (latest_meeting.present_count or 0) + (latest_meeting.late_count or 0) + (latest_meeting.absent_count or 0) %}
-                            <div class="progress-track" style="margin-top:10px">
-                                <div class="progress-bar" style="width: {{ ((latest_meeting.present_count or 0) + (latest_meeting.late_count or 0)) / spotlight_total * 100 if spotlight_total else 0 }}%"></div>
+                            <div class="spotlight-bar" style="margin-top:10px">
+                                <span style="width: {{ ((latest_meeting.present_count or 0) + (latest_meeting.late_count or 0)) / spotlight_total * 100 if spotlight_total else 0 }}%"></span>
                             </div>
                         </div>
                         <div class="toolbar">
@@ -3640,7 +3738,7 @@ def live():
         <div class="hero">
             <div class="hero-grid">
                 <div>
-                    <div class="badge ok" style="margin-bottom:12px"><span class="status-pulse"></span> Live meeting in progress</div>
+                    <div class="live-ping" style="margin-bottom:12px"><span class="status-pulse"></span> LIVE MEETING IN PROGRESS</div>
                     <h1 class="hero-title">{{ meeting.topic or 'Untitled Meeting' }}</h1>
                     <div class="hero-copy">
                         Real-time board for participant flow, duration growth, joins, leaves, and member monitoring. This page refreshes automatically every 2 seconds.
