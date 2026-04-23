@@ -3199,6 +3199,12 @@ def index():
     return redirect(url_for("login"))
 
 
+@app.route("/favicon.ico")
+def favicon():
+    return Response(status=204)
+
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     login_error = None
@@ -3370,6 +3376,15 @@ def home():
         print(f"⚠️ home stale finalization skipped: {e}")
 
     live_info = read_live_snapshot()
+    host_now = "No"
+    unknown_live_count = 0
+
+    if live_info:
+        for p in live_info.get("participants", []):
+            if not p.get("is_member"):
+                unknown_live_count += 1
+            if p.get("is_host") and p.get("current_join") is not None:
+                host_now = "Yes"
 
     with db() as conn:
         with conn.cursor() as cur:
