@@ -2842,6 +2842,22 @@ BASE_HTML = """
         .login-error{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:12px;padding:10px 12px;margin:10px 0 14px 0;font-weight:800}
         .debug-box{background:#fff7ed;color:#9a3412;border:1px solid #fdba74;border-radius:12px;padding:14px;white-space:pre-wrap;word-break:break-word;font-family:monospace}
         .mobile-show{display:none}
+
+        .glass-panel{background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.04));border:1px solid rgba(148,163,184,.18);box-shadow:0 18px 40px rgba(2,6,23,.22)}
+        .ops-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+        .setting-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+        .setting-tile{padding:16px;border-radius:18px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.12),transparent),var(--card-soft)}
+        .activity-timeline{display:flex;flex-direction:column;gap:12px}
+        .activity-item{display:grid;grid-template-columns:56px 1fr;gap:12px;padding:14px;border-radius:18px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.10),transparent),var(--card-soft)}
+        .activity-dot{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;font-weight:900;background:linear-gradient(135deg,rgba(37,99,235,.22),rgba(124,58,237,.16));border:1px solid rgba(99,102,241,.18)}
+        .two-col{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(320px,.95fr);gap:16px}
+        .app-note{padding:14px 16px;border-radius:16px;border:1px solid rgba(96,165,250,.18);background:linear-gradient(180deg,rgba(59,130,246,.12),rgba(37,99,235,.05));color:var(--text)}
+        .mobile-actions{display:flex;gap:10px;flex-wrap:wrap}
+        .profile-shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,.85fr);gap:16px}
+        .stat-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+        .compact-kpi{padding:14px 16px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.10),transparent),var(--card-soft);border:1px solid var(--surface-ring)}
+        .compact-kpi .k{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+        .compact-kpi .v{font-size:22px;font-weight:900;margin-top:6px}
         @media (max-width:1200px){
             .hero-grid,.grid-3,.grid-2{grid-template-columns:1fr}
         }
@@ -3051,21 +3067,49 @@ def page(title, body, active="home"):
 def startup_once():
     global DB_INITIALIZED
     if not DB_INITIALIZED:
-        init_db()
-        fix_database_compatibility()
-        DB_INITIALIZED = True
+        try:
+            init_db()
+            fix_database_compatibility()
+            DB_INITIALIZED = True
+        except Exception as e:
+            print(f"⚠️ startup init skipped: {e}")
 
 
 @app.errorhandler(Exception)
 def handle_any_error(e):
     body = render_template_string(
         """
-        <div class="card" style="max-width:1100px;margin:10px auto">
-            <h2>Something went wrong</h2>
-            <p class="muted">Copy this error and send it to me.</p>
-            <div class="debug-box">{{ error_text }}</div>
-            <br>
-            <a class="btn" href="{{ url_for('login') }}">Back to Login</a>
+        <div class="hero">
+            <div class="hero-grid">
+                <div>
+                    <div class="badge danger" style="margin-bottom:12px">Recovery Screen</div>
+                    <h1 class="hero-title">Something went wrong, but the app is still safe</h1>
+                    <div class="hero-copy">The request failed gracefully. Copy the technical details below and send them for support if the issue repeats.</div>
+                </div>
+                <div class="hero-stats">
+                    <div class="hero-chip"><div class="small">Status</div><div class="big">Handled</div></div>
+                    <div class="hero-chip"><div class="small">Action</div><div class="big">Retry Safe</div></div>
+                </div>
+            </div>
+        </div>
+        <div class="two-col">
+            <div class="card glass-panel">
+                <h3 style="margin-top:0">Technical Details</h3>
+                <div class="debug-box">{{ error_text }}</div>
+            </div>
+            <div class="stack">
+                <div class="card">
+                    <h3 style="margin-top:0">Quick Recovery</h3>
+                    <div class="mini-list">
+                        <div class="mini-item"><div class="muted">Try opening Home again</div><div style="font-weight:900;margin-top:4px">Transient errors may clear automatically.</div></div>
+                        <div class="mini-item"><div class="muted">Check data quality</div><div style="font-weight:900;margin-top:4px">Legacy or invalid rows are now handled more safely.</div></div>
+                    </div>
+                    <div class="mobile-actions" style="margin-top:14px">
+                        <a class="btn" href="{{ url_for('home') }}">Go Home</a>
+                        <a class="btn secondary" href="{{ url_for('login') }}">Back to Login</a>
+                    </div>
+                </div>
+            </div>
         </div>
         """,
         error_text=str(e),
@@ -3136,7 +3180,7 @@ def login():
                 <p class="muted">Login to continue to your attendance dashboard.</p>
 
                 {% if login_error %}
-                    <div class='login-error'>{{ login_error }}</div>
+                    <div class='login-error'>{{ login_error }}</div>\n                    <div class='app-note'>Use your assigned role credentials. The UI is mobile-friendly and tuned for dark SaaS mode.</div>
                 {% endif %}
 
                 <form method='post'>
@@ -3200,17 +3244,37 @@ def profile():
     body = render_template_string(
         """
         <div class="hero">
-            <h2>My Profile</h2>
-            <div class="muted" style="color:#cbd5e1">Manage your account and password safely.</div>
+            <div class="hero-grid">
+                <div>
+                    <div class="badge info" style="margin-bottom:12px">Identity Center</div>
+                    <h1 class="hero-title">My Profile & Security</h1>
+                    <div class="hero-copy">Manage account identity, password security, and access posture from one polished control area.</div>
+                </div>
+                <div class="hero-stats">
+                    <div class="hero-chip"><div class="small">Username</div><div class="big">{{ session.get('username') }}</div></div>
+                    <div class="hero-chip"><div class="small">Role</div><div class="big">{{ session.get('role') }}</div></div>
+                </div>
+            </div>
         </div>
-        <div class="grid">
-            <div class="card">
-                <h3>Account Details</h3>
-                <p><b>Username:</b> {{ session.get('username') }}</p>
-                <p><b>Role:</b> {{ session.get('role') }}</p>
+        <div class="stat-strip">
+            <div class="compact-kpi"><div class="k">Account status</div><div class="v">Active</div></div>
+            <div class="compact-kpi"><div class="k">Session theme</div><div class="v">{{ session.get('theme', 'light')|title }}</div></div>
+            <div class="compact-kpi"><div class="k">Security mode</div><div class="v">Protected</div></div>
+        </div>
+        <div class="profile-shell" style="margin-top:16px">
+            <div class="card glass-panel">
+                <div class="section-title">
+                    <div><h3 style="margin:0">Account Snapshot</h3><p>Profile identity and quick recovery guidance.</p></div>
+                    <span class="badge ok">Stable</span>
+                </div>
+                <div class="mini-list">
+                    <div class="mini-item"><div class="muted">Username</div><div style="font-weight:900;margin-top:4px">{{ session.get('username') }}</div></div>
+                    <div class="mini-item"><div class="muted">Role</div><div style="font-weight:900;margin-top:4px">{{ session.get('role') }}</div></div>
+                    <div class="mini-item"><div class="muted">Recommendation</div><div style="font-weight:900;margin-top:4px">Change your password regularly and avoid sharing admin credentials.</div></div>
+                </div>
             </div>
             <div class="card">
-                <h3>Change Password</h3>
+                <div class="section-title"><div><h3 style="margin:0">Change Password</h3><p>Apply a new password without affecting current project data.</p></div></div>
                 <form method="post">
                     <label>Current Password</label>
                     <input type="password" name="current_password" required>
@@ -3218,6 +3282,7 @@ def profile():
                     <input type="password" name="new_password" required>
                     <label>Confirm New Password</label>
                     <input type="password" name="confirm_password" required>
+                    <div class="app-note" style="margin:10px 0 14px 0">Use at least 4 characters. Longer passwords are safer for admin roles.</div>
                     <button type="submit">Update Password</button>
                 </form>
             </div>
@@ -4846,22 +4911,46 @@ def settings():
     body = render_template_string(
         """
         <div class="hero">
-            <h2>Settings</h2>
-            <div class="muted" style="color:#cbd5e1">Control attendance rules and meeting finalization timing.</div>
+            <div class="hero-grid">
+                <div>
+                    <div class="badge info" style="margin-bottom:12px">System Controls</div>
+                    <h1 class="hero-title">Attendance Settings & Reliability Controls</h1>
+                    <div class="hero-copy">Tune thresholds, stale-meeting finalization, and attendance rules with a clearer production-safe settings experience.</div>
+                </div>
+                <div class="hero-stats">
+                    <div class="hero-chip"><div class="small">Present %</div><div class="big">{{ s.present_percentage }}</div></div>
+                    <div class="hero-chip"><div class="small">Late %</div><div class="big">{{ s.late_count_as_present_percentage }}</div></div>
+                </div>
+            </div>
         </div>
-
-        <div class='card'>
-            <form method='post'>
-                <label>Present Percentage</label>
-                <input name='present_percentage' value='{{ s.present_percentage }}'>
-                <label>Late Count As Present Percentage</label>
-                <input name='late_count_as_present_percentage' value='{{ s.late_count_as_present_percentage }}'>
-                <label>Late Threshold Minutes</label>
-                <input name='late_threshold_minutes' value='{{ s.late_threshold_minutes }}'>
-                <label>Meeting Finalize Seconds</label>
-                <input name='meeting_finalize_seconds' value='{{ s.meeting_finalize_seconds }}'>
-                <button type='submit'>Save Settings</button>
-            </form>
+        <div class="stat-strip">
+            <div class="compact-kpi"><div class="k">Finalize seconds</div><div class="v">{{ s.meeting_finalize_seconds }}</div></div>
+            <div class="compact-kpi"><div class="k">Late threshold</div><div class="v">{{ s.late_threshold_minutes }}m</div></div>
+            <div class="compact-kpi"><div class="k">Fallback cache</div><div class="v">Enabled</div></div>
+        </div>
+        <div class="two-col" style="margin-top:16px">
+            <div class="card glass-panel">
+                <div class="section-title"><div><h3 style="margin:0">Rule Configuration</h3><p>All values continue to use your existing settings table and logic.</p></div></div>
+                <form method='post'>
+                    <div class="setting-grid">
+                        <div class="setting-tile"><label>Present Percentage</label><input name='present_percentage' value='{{ s.present_percentage }}'></div>
+                        <div class="setting-tile"><label>Late Count As Present Percentage</label><input name='late_count_as_present_percentage' value='{{ s.late_count_as_present_percentage }}'></div>
+                        <div class="setting-tile"><label>Late Threshold Minutes</label><input name='late_threshold_minutes' value='{{ s.late_threshold_minutes }}'></div>
+                        <div class="setting-tile"><label>Meeting Finalize Seconds</label><input name='meeting_finalize_seconds' value='{{ s.meeting_finalize_seconds }}'></div>
+                    </div>
+                    <div class="mobile-actions" style="margin-top:14px"><button type='submit'>Save Settings</button></div>
+                </form>
+            </div>
+            <div class="stack">
+                <div class="card">
+                    <h3 style="margin-top:0">Reliability Notes</h3>
+                    <div class="mini-list">
+                        <div class="mini-item"><div class="muted">Startup flow</div><div style="font-weight:900;margin-top:4px">Initialization now fails gracefully instead of crashing the whole app.</div></div>
+                        <div class="mini-item"><div class="muted">Settings cache</div><div style="font-weight:900;margin-top:4px">Cached defaults keep the app usable even during temporary DB issues.</div></div>
+                        <div class="mini-item"><div class="muted">Legacy rows</div><div style="font-weight:900;margin-top:4px">Existing data stays compatible with old and new database values.</div></div>
+                    </div>
+                </div>
+            </div>
         </div>
         """,
         s=settings_map,
@@ -4880,23 +4969,56 @@ def activity():
     body = render_template_string(
         """
         <div class="hero">
-            <h2>Activity Log</h2>
-            <div class="muted" style="color:#cbd5e1">Track user actions and important admin events.</div>
+            <div class="hero-grid">
+                <div>
+                    <div class="badge info" style="margin-bottom:12px">Audit Trail</div>
+                    <h1 class="hero-title">Activity Timeline & System Events</h1>
+                    <div class="hero-copy">Track operator actions, webhook events, and system movement through a cleaner audit experience.</div>
+                </div>
+                <div class="hero-stats">
+                    <div class="hero-chip"><div class="small">Recent entries</div><div class="big">{{ rows|length }}</div></div>
+                    <div class="hero-chip"><div class="small">View mode</div><div class="big">Timeline</div></div>
+                </div>
+            </div>
         </div>
-
-        <div class='card'>
-            <div class="table-wrap">
-                <table>
-                    <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
-                    {% for a in rows %}
-                    <tr>
-                        <td>{{ fmt_dt(a.created_at) }}</td>
-                        <td>{{ a.username or '-' }}</td>
-                        <td>{{ a.action }}</td>
-                        <td class="long">{{ a.details }}</td>
-                    </tr>
+        <div class="two-col">
+            <div class="card glass-panel">
+                <div class="section-title"><div><h3 style="margin:0">Recent Activity Timeline</h3><p>Latest log entries in a quick-scan operational format.</p></div></div>
+                <div class="activity-timeline">
+                    {% for a in rows[:18] %}
+                    <div class="activity-item">
+                        <div class="activity-dot">{{ (a.action or '•')[:1]|upper }}</div>
+                        <div>
+                            <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                                <div style="font-weight:900">{{ a.action }}</div>
+                                <div class="muted">{{ fmt_dt(a.created_at) }}</div>
+                            </div>
+                            <div class="muted" style="margin-top:4px">{{ a.username or 'system' }}</div>
+                            <div style="margin-top:6px;font-size:13px">{{ a.details or '-' }}</div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="empty-state"><div class="empty-icon">📝</div><div style="font-weight:900;margin-bottom:6px">No activity yet</div><div class="muted">Once actions occur, the audit timeline will populate here.</div></div>
                     {% endfor %}
-                </table>
+                </div>
+            </div>
+            <div class="stack">
+                <div class="card">
+                    <h3 style="margin-top:0">Activity Table</h3>
+                    <div class="table-wrap">
+                        <table>
+                            <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
+                            {% for a in rows %}
+                            <tr>
+                                <td>{{ fmt_dt(a.created_at) }}</td>
+                                <td>{{ a.username or '-' }}</td>
+                                <td>{{ a.action }}</td>
+                                <td class="long">{{ a.details }}</td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
         """,
