@@ -2769,6 +2769,29 @@ BASE_HTML = """
             .top-actions{gap:8px}
             .chip,.theme-switch{font-size:11px}
         }
+
+        .command-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:16px 0 0}
+        .command-tile{padding:16px 18px;border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.05));border:1px solid rgba(255,255,255,.08);box-shadow:var(--shadow-soft)}
+        .command-tile .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+        .command-tile .strong{font-size:26px;font-weight:900;letter-spacing:-.04em;margin-top:6px}
+        .alert-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+        .alert-card{padding:16px 18px;border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.04));border:1px solid var(--surface-ring)}
+        .alert-card .title{font-size:13px;font-weight:900;margin-bottom:8px}
+        .glow-ring{box-shadow:0 0 0 1px rgba(99,102,241,.18),0 0 24px rgba(79,70,229,.12)}
+        .stat-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+        .micro{font-size:12px;color:var(--muted)}
+        .heatmap-grid{display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:6px}
+        .heat-cell{height:28px;border-radius:9px;border:1px solid var(--surface-ring);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800}
+        .heat-good{background:rgba(34,197,94,.24)}
+        .heat-warn{background:rgba(245,158,11,.24)}
+        .heat-bad{background:rgba(239,68,68,.24)}
+        .heat-none{background:rgba(148,163,184,.10)}
+        .score-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.18);font-size:12px;font-weight:800}
+        .panel-list{display:grid;gap:10px}
+        .panel-item{padding:12px 14px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.06)}
+        .hero-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+        .section-kicker{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:900}
+
     </style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
@@ -3177,208 +3200,143 @@ def home():
 
     body = render_template_string(
         """
-        <div class="hero">
-            <div class="hero-grid">
-                <div>
-                    <div class="badge info" style="margin-bottom:12px">Control Center</div>
-                    <h1 class="hero-title">Zoom Attendance Command Dashboard</h1>
-                    <div class="hero-copy">
-                        Monitor meetings, member participation, finalization quality, and reporting health from one premium control layer.
-                    </div>
-                    <div class="row" style="margin-top:16px">
-                        <span class="badge ok">Stable tracking</span>
-                        <span class="badge info">Reports ready</span>
-                        <span class="badge warn">Analytics enabled</span>
-                        <span class="badge gray">{{ 'Live meeting detected' if live_info else 'Waiting for next live session' }}</span>
-                    </div>
-                </div>
-                <div class="hero-stats">
-                    <div class="hero-chip">
-                        <div class="small">System Health</div>
-                        <div class="big">{{ health }}%</div>
-                    </div>
-                    <div class="hero-chip">
-                        <div class="small">Current State</div>
-                        <div class="big">{{ 'LIVE' if live_info else 'IDLE' }}</div>
-                    </div>
-                    <div class="hero-chip">
-                        <div class="small">Members</div>
-                        <div class="big">{{ active_members }}/{{ total_members }}</div>
-                    </div>
-                </div>
+<div class="hero glow-ring">
+    <div class="hero-grid">
+        <div>
+            <div class="badge info" style="margin-bottom:12px">Command Center</div>
+            <h1 class="hero-title">Zoom Attendance Command Center</h1>
+            <div class="hero-copy">
+                One premium control surface for live state, meeting health, alerts, exports, and recent operational activity.
+            </div>
+            <div class="hero-actions">
+                <a class="btn" href="{{ url_for('live') }}">Open Live Monitor</a>
+                <a class="btn secondary" href="{{ url_for('analytics') }}">Open Analytics</a>
+                <a class="btn success" href="{{ url_for('meetings') }}">Meeting Reports</a>
             </div>
         </div>
-
-        <div class="grid">
-            <div class="card kpi-card">
-                <div class="kpi-icon">📂</div>
-                <h4>Total Meetings</h4>
-                <div class="metric">{{ total_meetings }}</div>
-                <div class="metric-sub">Completed and live meetings recorded in PostgreSQL.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">👥</div>
-                <h4>Active Members</h4>
-                <div class="metric">{{ active_members }}</div>
-                <div class="metric-sub">Total members in directory: {{ total_members }}</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">🩺</div>
-                <h4>Attendance Health</h4>
-                <div class="metric">{{ health }}%</div>
-                <div class="metric-sub">Present plus late records across finalized attendance rows.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">📡</div>
-                <h4>Live Status</h4>
-                <div class="metric">{{ 'LIVE' if live_info else 'IDLE' }}</div>
-                <div class="metric-sub">Webhook monitoring status for current Zoom traffic.</div>
-            </div>
+        <div class="hero-stats">
+            <div class="hero-chip"><div class="small">Live State</div><div class="big">{{ 'LIVE' if live_info else 'IDLE' }}</div></div>
+            <div class="hero-chip"><div class="small">Health</div><div class="big">{{ health }}%</div></div>
+            <div class="hero-chip"><div class="small">Active Members</div><div class="big">{{ active_members }}/{{ total_members }}</div></div>
         </div>
+    </div>
+    <div class="command-strip">
+        <div class="command-tile"><div class="eyebrow">Meetings</div><div class="strong">{{ total_meetings }}</div><div class="micro">All tracked sessions in your platform</div></div>
+        <div class="command-tile"><div class="eyebrow">Attendance Mix</div><div class="strong">{{ present + late }}</div><div class="micro">Present + late classified rows</div></div>
+        <div class="command-tile"><div class="eyebrow">Absence Load</div><div class="strong">{{ absent }}</div><div class="micro">Rows currently marked absent</div></div>
+        <div class="command-tile"><div class="eyebrow">Operations</div><div class="strong">{{ recent_activity|length }}</div><div class="micro">Recent tracked admin or system events</div></div>
+    </div>
+</div>
 
-        <div class="grid-2" style="margin-top:16px">
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Latest Meeting Spotlight</h3>
-                        <p>Quick summary of the most recent tracked meeting.</p>
-                    </div>
-                    {% if latest_meeting %}
-                    <span class="badge gray">{{ fmt_dt(latest_meeting.start_time) }}</span>
-                    {% endif %}
-                </div>
-                {% if latest_meeting %}
-                    <div class="split-head" style="margin-bottom:14px">
-                        <div>
-                            <div style="font-size:22px;font-weight:900;letter-spacing:-.03em">{{ latest_meeting.topic or 'Untitled Meeting' }}</div>
-                            <div class="muted" style="margin-top:6px">Meeting ID: {{ latest_meeting.meeting_id or '-' }}</div>
-                        </div>
-                        <div class="row">
-                            <span class="badge ok">Present {{ latest_meeting.present_count or 0 }}</span>
-                            <span class="badge warn">Late {{ latest_meeting.late_count or 0 }}</span>
-                            <span class="badge danger">Absent {{ latest_meeting.absent_count or 0 }}</span>
-                            <span class="badge info">Unknown {{ latest_meeting.unknown_participants or 0 }}</span>
-                        </div>
-                    </div>
-                    <div class="stack">
-                        <div class="mini-kpi">
-                            <div class="label">Meeting progress to healthy attendance</div>
-                            <div class="value">{{ latest_meeting.present_count or 0 }} + {{ latest_meeting.late_count or 0 }}</div>
-                            {% set spotlight_total = (latest_meeting.present_count or 0) + (latest_meeting.late_count or 0) + (latest_meeting.absent_count or 0) %}
-                            <div class="progress-track" style="margin-top:10px">
-                                <div class="progress-bar" style="width: {{ ((latest_meeting.present_count or 0) + (latest_meeting.late_count or 0)) / spotlight_total * 100 if spotlight_total else 0 }}%"></div>
-                            </div>
-                        </div>
-                        <div class="toolbar">
-                            <a class="btn" href="{{ url_for('meetings') }}">Open Meetings</a>
-                            <a class="btn secondary" href="{{ url_for('analytics') }}">Open Analytics</a>
-                            <a class="btn success" href="{{ url_for('live') }}">Open Live</a>
-                        </div>
-                    </div>
-                {% else %}
-                    <div class="empty-state">
-                        <div class="empty-icon">📭</div>
-                        <h3 style="margin-bottom:8px">No meeting summary available</h3>
-                        <div class="muted">Once Zoom meetings are tracked and finalized, the latest meeting snapshot will appear here.</div>
-                    </div>
-                {% endif %}
-            </div>
-
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Quick Actions</h3>
-                        <p>Fast navigation into your most-used platform flows.</p>
-                    </div>
-                    <span class="badge {{ 'ok' if live_info else 'gray' }}">
-                        <span class="{{ 'status-pulse' if live_info else 'status-off' }}"></span>
-                        {{ 'Live now' if live_info else 'Idle now' }}
-                    </span>
-                </div>
-                <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
-                    <a class="card card-tight" href="{{ url_for('live') }}" style="text-decoration:none;color:inherit">
-                        <div class="kpi-icon">🟢</div>
-                        <h4 style="margin:0">Live Monitor</h4>
-                        <div class="muted">Track active participants, duration and live status.</div>
-                    </a>
-                    <a class="card card-tight" href="{{ url_for('analytics') }}" style="text-decoration:none;color:inherit">
-                        <div class="kpi-icon">📈</div>
-                        <h4 style="margin:0">Analytics</h4>
-                        <div class="muted">Open charts, health view, risk members and exports.</div>
-                    </a>
-                    <a class="card card-tight" href="{{ url_for('members') }}" style="text-decoration:none;color:inherit">
-                        <div class="kpi-icon">👥</div>
-                        <h4 style="margin:0">Members</h4>
-                        <div class="muted">Manage active members and import new people safely.</div>
-                    </a>
-                    <a class="card card-tight" href="{{ url_for('settings') }}" style="text-decoration:none;color:inherit">
-                        <div class="kpi-icon">⚙️</div>
-                        <h4 style="margin:0">Settings</h4>
-                        <div class="muted">Tune thresholds and finalization behavior.</div>
-                    </a>
-                </div>
-            </div>
+<div class="alert-grid" style="margin-top:16px">
+    <div class="alert-card">
+        <div class="title">Live Monitoring</div>
+        <div class="score-badge">{{ 'Meeting currently active' if live_info else 'Waiting for next meeting' }}</div>
+        <div class="micro" style="margin-top:10px">The platform automatically switches from idle to live mode when Zoom join events arrive.</div>
+    </div>
+    <div class="alert-card">
+        <div class="title">Latest Meeting Risk</div>
+        {% set unknown_count = latest_meeting.unknown_participants if latest_meeting else 0 %}
+        {% set host_present_now = latest_meeting.host_present if latest_meeting else False %}
+        <div class="score-badge">{{ 'Attention needed' if unknown_count and unknown_count > 2 else 'Healthy snapshot' }}</div>
+        <div class="micro" style="margin-top:10px">
+            {% if latest_meeting %}
+                Unknown participants: {{ unknown_count }} · Host detected: {{ 'Yes' if host_present_now else 'No' }}
+            {% else %}
+                No finalized meeting summary available yet.
+            {% endif %}
         </div>
+    </div>
+    <div class="alert-card">
+        <div class="title">Admin Flow</div>
+        <div class="score-badge">Fast actions enabled</div>
+        <div class="micro" style="margin-top:10px">Open Live, Analytics, Meetings, Members, and Settings from one place without changing workflow.</div>
+    </div>
+</div>
 
-        <div class="grid-2" style="margin-top:16px">
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Recent Meetings</h3>
-                        <p>Latest meeting sessions with participant counts and status.</p>
-                    </div>
-                    <a class="btn small secondary" href="{{ url_for('meetings') }}">See All</a>
-                </div>
-                <div class="table-wrap">
-                    <table>
-                        <tr>
-                            <th>Date</th>
-                            <th>Topic</th>
-                            <th>Status</th>
-                            <th>Participants</th>
-                            <th>Health</th>
-                        </tr>
-                        {% for m in recent_meetings %}
-                        {% set total_rows = (m.present_count or 0) + (m.late_count or 0) + (m.absent_count or 0) %}
-                        {% set meeting_health = (((m.present_count or 0) + (m.late_count or 0)) / total_rows * 100) if total_rows else 0 %}
-                        <tr>
-                            <td>{{ fmt_dt(m.start_time) }}</td>
-                            <td>{{ m.topic or 'Untitled Meeting' }}</td>
-                            <td>
-                                <span class="badge {{ 'ok' if m.status == 'live' else 'gray' }}">{{ m.status or '-' }}</span>
-                            </td>
-                            <td>{{ m.unique_participants or 0 }}</td>
-                            <td>{{ '%.1f'|format(meeting_health) }}%</td>
-                        </tr>
-                        {% endfor %}
-                    </table>
-                </div>
-            </div>
+<div class="grid" style="margin-top:16px">
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">📂</div><h4>Total Meetings</h4><div class="metric">{{ total_meetings }}</div><div class="metric-sub">Completed and live meetings recorded in PostgreSQL.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">👥</div><h4>Active Members</h4><div class="metric">{{ active_members }}</div><div class="metric-sub">Total member directory count: {{ total_members }}</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">🩺</div><h4>Attendance Health</h4><div class="metric">{{ health }}%</div><div class="metric-sub">Present plus late records across finalized attendance rows.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">📡</div><h4>Live Status</h4><div class="metric">{{ 'LIVE' if live_info else 'IDLE' }}</div><div class="metric-sub">Webhook monitoring status for current Zoom traffic.</div></div>
+</div>
 
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Recent Activity</h3>
-                        <p>Most recent system actions and webhook events.</p>
-                    </div>
-                    <a class="btn small secondary" href="{{ url_for('activity') }}">Open Log</a>
-                </div>
-                <div class="list-card">
-                    {% for item in recent_activity %}
-                    <div class="list-row">
-                        <div>
-                            <div style="font-weight:800">{{ item.action or '-' }}</div>
-                            <div class="muted">{{ item.username or 'system' }}</div>
-                        </div>
-                        <div style="text-align:right;max-width:58%">
-                            <div class="muted">{{ fmt_dt(item.created_at) }}</div>
-                            <div style="margin-top:4px;font-size:12px">{{ item.details or '-' }}</div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
+<div class="grid-2" style="margin-top:16px">
+    <div class="card glow-ring">
+        <div class="section-title">
+            <div>
+                <div class="section-kicker">Meeting Spotlight</div>
+                <h3 style="margin:4px 0 0 0">Latest Meeting Intelligence</h3>
+                <p>Fast attendance and risk summary from the most recent meeting.</p>
             </div>
+            {% if latest_meeting %}<span class="badge gray">{{ fmt_dt(latest_meeting.start_time) }}</span>{% endif %}
         </div>
+        {% if latest_meeting %}
+            <div style="font-size:24px;font-weight:900;letter-spacing:-.03em">{{ latest_meeting.topic or 'Untitled Meeting' }}</div>
+            <div class="micro" style="margin-top:6px">Meeting ID: {{ latest_meeting.meeting_id or '-' }}</div>
+            <div class="stat-pair" style="margin-top:14px">
+                <div class="mini-kpi"><div class="label">Present</div><div class="value">{{ latest_meeting.present_count or 0 }}</div></div>
+                <div class="mini-kpi"><div class="label">Late</div><div class="value">{{ latest_meeting.late_count or 0 }}</div></div>
+                <div class="mini-kpi"><div class="label">Absent</div><div class="value">{{ latest_meeting.absent_count or 0 }}</div></div>
+                <div class="mini-kpi"><div class="label">Unknown</div><div class="value">{{ latest_meeting.unknown_participants or 0 }}</div></div>
+            </div>
+            {% set spotlight_total = (latest_meeting.present_count or 0) + (latest_meeting.late_count or 0) + (latest_meeting.absent_count or 0) %}
+            <div style="margin-top:14px">
+                <div class="micro" style="margin-bottom:8px">Meeting health progress</div>
+                <div class="progress-track">
+                    <div class="progress-bar" style="width: {{ ((latest_meeting.present_count or 0) + (latest_meeting.late_count or 0)) / spotlight_total * 100 if spotlight_total else 0 }}%"></div>
+                </div>
+            </div>
+        {% else %}
+            <div class="empty-state"><div class="empty-icon">📭</div><h3 style="margin-bottom:8px">No meeting summary available</h3><div class="muted">Once Zoom meetings are tracked and finalized, the latest meeting snapshot will appear here.</div></div>
+        {% endif %}
+    </div>
+    <div class="card glow-ring">
+        <div class="section-title">
+            <div>
+                <div class="section-kicker">Operations</div>
+                <h3 style="margin:4px 0 0 0">Recent Activity Stream</h3>
+                <p>Most recent system actions and webhook events.</p>
+            </div>
+            <a class="btn small secondary" href="{{ url_for('activity') }}">Open Log</a>
+        </div>
+        <div class="list-card">
+            {% for item in recent_activity[:8] %}
+            <div class="list-row">
+                <div><div style="font-weight:800">{{ item.action or '-' }}</div><div class="muted">{{ item.username or 'system' }}</div></div>
+                <div style="text-align:right;max-width:58%"><div class="muted">{{ fmt_dt(item.created_at) }}</div><div style="margin-top:4px;font-size:12px">{{ item.details or '-' }}</div></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<div class="card glow-ring" style="margin-top:16px">
+    <div class="section-title">
+        <div>
+            <div class="section-kicker">Meeting Table</div>
+            <h3 style="margin:4px 0 0 0">Recent Meetings</h3>
+            <p>Latest meeting sessions with participants, current status, and health.</p>
+        </div>
+        <a class="btn small secondary" href="{{ url_for('meetings') }}">See All Meetings</a>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <tr><th>Date</th><th>Topic</th><th>Status</th><th>Participants</th><th>Health</th></tr>
+            {% for m in recent_meetings %}
+            {% set total_rows = (m.present_count or 0) + (m.late_count or 0) + (m.absent_count or 0) %}
+            {% set meeting_health = (((m.present_count or 0) + (m.late_count or 0)) / total_rows * 100) if total_rows else 0 %}
+            <tr>
+                <td>{{ fmt_dt(m.start_time) }}</td>
+                <td>{{ m.topic or 'Untitled Meeting' }}</td>
+                <td><span class="badge {{ 'ok' if m.status == 'live' else 'gray' }}">{{ m.status or '-' }}</span></td>
+                <td>{{ m.unique_participants or 0 }}</td>
+                <td>{{ '%.1f'|format(meeting_health) }}%</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
         """,
         total_meetings=total_meetings,
         total_members=total_members,
@@ -3478,157 +3436,104 @@ def live():
 
     body = render_template_string(
         """
-        <meta http-equiv='refresh' content='2'>
-        <div class="hero">
-            <div class="hero-grid">
-                <div>
-                    <div class="badge ok" style="margin-bottom:12px"><span class="status-pulse"></span> Live meeting in progress</div>
-                    <h1 class="hero-title">{{ meeting.topic or 'Untitled Meeting' }}</h1>
-                    <div class="hero-copy">
-                        Real-time board for participant flow, duration growth, joins, leaves, and member monitoring. This page refreshes automatically every 2 seconds.
-                    </div>
-                    <div class="row" style="margin-top:16px">
-                        <span class="badge info">Meeting ID {{ meeting.meeting_id or '-' }}</span>
-                        <span class="badge gray">Started {{ fmt_dt(meeting.start_time) }}</span>
-                        <span class="badge {{ 'ok' if host_now == 'Yes' else 'warn' }}">Host present {{ host_now }}</span>
-                    </div>
-                </div>
-                <div class="hero-stats">
-                    <div class="hero-chip">
-                        <div class="small">Active Now</div>
-                        <div class="big">{{ active_now }}</div>
-                    </div>
-                    <div class="hero-chip">
-                        <div class="small">Tracked Rows</div>
-                        <div class="big">{{ live_rows|length }}</div>
-                    </div>
-                    <div class="hero-chip">
-                        <div class="small">Not Joined</div>
-                        <div class="big">{{ not_joined|length }}</div>
-                    </div>
-                </div>
+<meta http-equiv='refresh' content='2'>
+{% if not live_rows is defined %}
+{% endif %}
+<div class="hero glow-ring">
+    <div class="hero-grid">
+        <div>
+            <div class="badge {{ 'ok' if meeting else 'gray' }}" style="margin-bottom:12px">
+                {% if meeting %}<span class="status-pulse"></span> Live engine active{% else %}Live monitor idle{% endif %}
+            </div>
+            <h1 class="hero-title">{{ meeting.topic if meeting else 'Waiting for the next Zoom session' }}</h1>
+            <div class="hero-copy">
+                {% if meeting %}
+                Real-time board for participant flow, duration growth, joins, leaves, member monitoring, and live meeting health.
+                {% else %}
+                The live dashboard auto-refreshes every 2 seconds. Start a meeting and send webhook events to see participants, durations, status, and live attendance flow here.
+                {% endif %}
+            </div>
+            <div class="hero-actions">
+                <a class="btn" href="{{ url_for('home') }}">Back to Home</a>
+                <a class="btn secondary" href="{{ url_for('meetings') }}">Meeting History</a>
             </div>
         </div>
+        <div class="hero-stats">
+            <div class="hero-chip"><div class="small">Active Now</div><div class="big">{{ active_now if meeting else 0 }}</div></div>
+            <div class="hero-chip"><div class="small">Tracked</div><div class="big">{{ live_rows|length if meeting else 0 }}</div></div>
+            <div class="hero-chip"><div class="small">Pending Members</div><div class="big">{{ not_joined|length if meeting else 0 }}</div></div>
+        </div>
+    </div>
+</div>
 
-        <div class="grid">
-            <div class="card kpi-card">
-                <div class="kpi-icon">🧍</div>
-                <h4>Participants Tracked</h4>
-                <div class="metric">{{ live_rows|length }}</div>
-                <div class="metric-sub">All rows currently associated with this live meeting UUID.</div>
+{% if not meeting %}
+<div class="empty-state">
+    <div class="empty-icon">📡</div>
+    <h3 style="margin:0 0 8px 0">No active live meeting right now</h3>
+    <div class="muted" style="max-width:700px;margin:0 auto">Once Zoom sends participant join and leave events, this page will transform into the real-time live operations board.</div>
+</div>
+{% else %}
+<div class="grid" style="margin-top:16px">
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">🧍</div><h4>Participants Tracked</h4><div class="metric">{{ live_rows|length }}</div><div class="metric-sub">All rows currently associated with this live meeting UUID.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">⚡</div><h4>Active Now</h4><div class="metric">{{ active_now }}</div><div class="metric-sub">Participants with an open current session right now.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">👥</div><h4>Member Participants</h4><div class="metric">{{ member_live_count }}</div><div class="metric-sub">Registered members mapped to the current live meeting.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">🛰️</div><h4>Unknown Participants</h4><div class="metric">{{ unknown_live_count }}</div><div class="metric-sub">Unmatched participants detected during the live session.</div></div>
+</div>
+
+<div class="grid-2" style="margin-top:16px;grid-template-columns:minmax(0,1.7fr) minmax(300px,.7fr)">
+    <div class="card glow-ring">
+        <div class="section-title">
+            <div><div class="section-kicker">Real-Time Board</div><h3 style="margin:4px 0 0 0">Live Participants</h3><p>Participant status, duration growth, rejoin count, and live presence.</p></div>
+            <span class="badge ok"><span class="status-pulse"></span> Auto refresh</span>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <tr><th>Name</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr>
+                {% for p in live_rows %}
+                <tr>
+                    <td><b>{{ p.participant_name }}</b></td>
+                    <td>{{ fmt_time_ampm(p.first_join) if p.first_join else '-' }}</td>
+                    <td>{{ fmt_time_ampm(p.last_leave) if p.last_leave else ('Live now' if p.is_active_now else '-') }}</td>
+                    <td>{{ p.duration_min }}</td>
+                    <td>{{ p.rejoin_count }}</td>
+                    <td>{% if p.is_active_now %}<span class="status-pill status-live"><span class="status-pulse"></span>{{ p.status }}</span>{% else %}<span class="badge {{ 'ok' if p.status == 'PRESENT' else 'warn' if p.status == 'LATE' else 'gray' if p.status == 'HOST' else 'danger' }}">{{ p.status }}</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+    <div class="stack">
+        <div class="card glow-ring">
+            <div class="section-title">
+                <div><div class="section-kicker">Snapshot</div><h3 style="margin:4px 0 0 0">Live Health Summary</h3><p>Operational indicators for this running meeting.</p></div>
             </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">⚡</div>
-                <h4>Active Now</h4>
-                <div class="metric">{{ active_now }}</div>
-                <div class="metric-sub">Participants with an open current session right now.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">👥</div>
-                <h4>Member Participants</h4>
-                <div class="metric">{{ member_live_count }}</div>
-                <div class="metric-sub">Registered members mapped to the current live meeting.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">🛰️</div>
-                <h4>Unknown Participants</h4>
-                <div class="metric">{{ unknown_live_count }}</div>
-                <div class="metric-sub">Unmatched participants detected during the live session.</div>
+            <div class="panel-list">
+                <div class="panel-item"><div class="micro">Meeting topic</div><div style="font-weight:900;margin-top:4px">{{ meeting.topic or 'Untitled Meeting' }}</div></div>
+                <div class="panel-item"><div class="micro">Meeting ID</div><div style="font-weight:900;margin-top:4px">{{ meeting.meeting_id or '-' }}</div></div>
+                <div class="panel-item"><div class="micro">Host currently active</div><div style="font-weight:900;margin-top:4px">{{ host_now }}</div></div>
+                <div class="panel-item"><div class="micro">Session started</div><div style="font-weight:900;margin-top:4px">{{ fmt_dt(meeting.start_time) }}</div></div>
             </div>
         </div>
-
-        <div class="grid-2" style="margin-top:16px;grid-template-columns:minmax(0,1.75fr) minmax(290px,.75fr)">
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Live Participants Board</h3>
-                        <p>Participant status, join and leave timing, duration growth, and rejoin count.</p>
-                    </div>
-                    <span class="badge ok"><span class="status-pulse"></span> Auto refresh</span>
-                </div>
-                <div class="table-wrap">
-                    <table>
-                        <tr>
-                            <th>Name</th>
-                            <th>Join</th>
-                            <th>Leave</th>
-                            <th>Duration</th>
-                            <th>Rejoins</th>
-                            <th>Status</th>
-                        </tr>
-                        {% for p in live_rows %}
-                        <tr>
-                            <td><b>{{ p.participant_name }}</b></td>
-                            <td>{{ fmt_time_ampm(p.first_join) if p.first_join else '-' }}</td>
-                            <td>{{ fmt_time_ampm(p.last_leave) if p.last_leave else ('Live now' if p.is_active_now else '-') }}</td>
-                            <td>{{ p.duration_min }}</td>
-                            <td>{{ p.rejoin_count }}</td>
-                            <td>
-                                {% if p.is_active_now %}
-                                    <span class="status-pill status-live"><span class="status-pulse"></span>{{ p.status }}</span>
-                                {% else %}
-                                    <span class="badge {{ 'ok' if p.status == 'PRESENT' else 'warn' if p.status == 'LATE' else 'gray' if p.status == 'HOST' else 'danger' }}">{{ p.status }}</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </table>
-                </div>
+        <div class="card glow-ring">
+            <div class="section-title">
+                <div><div class="section-kicker">Follow-up</div><h3 style="margin:4px 0 0 0">Members Not Yet Joined</h3><p>Active members still absent from the live session.</p></div>
             </div>
-
-            <div class="stack">
-                <div class="card">
-                    <div class="section-title">
-                        <div>
-                            <h3 style="margin:0">Live Health Snapshot</h3>
-                            <p>Operational indicators for this running meeting.</p>
-                        </div>
+            {% if not_joined %}
+                <div class="list-card">
+                    {% for m in not_joined[:12] %}
+                    <div class="list-row">
+                        <div><div style="font-weight:800">{{ member_display_name(m) }}</div><div class="muted">{{ m.email or m.phone or 'No contact info' }}</div></div>
+                        <span class="badge danger">Not joined</span>
                     </div>
-                    <div class="mini-list">
-                        <div class="mini-item">
-                            <div class="muted">Meeting topic</div>
-                            <div style="font-weight:900;margin-top:4px">{{ meeting.topic or 'Untitled Meeting' }}</div>
-                        </div>
-                        <div class="mini-item">
-                            <div class="muted">Host currently active</div>
-                            <div style="font-weight:900;margin-top:4px">{{ host_now }}</div>
-                        </div>
-                        <div class="mini-item">
-                            <div class="muted">Session started</div>
-                            <div style="font-weight:900;margin-top:4px">{{ fmt_dt(meeting.start_time) }}</div>
-                        </div>
-                    </div>
+                    {% endfor %}
                 </div>
-
-                <div class="card">
-                    <div class="section-title">
-                        <div>
-                            <h3 style="margin:0">Members Not Yet Joined</h3>
-                            <p>Active members still absent from the live session.</p>
-                        </div>
-                    </div>
-                    {% if not_joined %}
-                        <div class="list-card">
-                            {% for m in not_joined[:12] %}
-                            <div class="list-row">
-                                <div>
-                                    <div style="font-weight:800">{{ member_display_name(m) }}</div>
-                                    <div class="muted">{{ m.email or m.phone or 'No contact info' }}</div>
-                                </div>
-                                <span class="badge danger">Not joined</span>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    {% else %}
-                        <div class="empty-state" style="padding:22px 18px">
-                            <div class="empty-icon" style="width:58px;height:58px;font-size:22px">✅</div>
-                            <div style="font-weight:900;margin-bottom:6px">All active members joined</div>
-                            <div class="muted">No pending active member remains outside the current session.</div>
-                        </div>
-                    {% endif %}
-                </div>
-            </div>
+            {% else %}
+                <div class="empty-state" style="padding:22px 18px"><div class="empty-icon" style="width:58px;height:58px;font-size:22px">✅</div><div style="font-weight:900;margin-bottom:6px">All active members joined</div><div class="muted">No pending active member remains outside the current session.</div></div>
+            {% endif %}
         </div>
+    </div>
+</div>
+{% endif %}
         """,
         meeting=meeting,
         live_rows=rows_for_live,
@@ -4106,369 +4011,134 @@ def analytics():
 
     body = render_template_string(
         """
-        <div class="hero">
-            <div class="hero-grid">
-                <div>
-                    <div class="badge info" style="margin-bottom:12px">Analytics Studio</div>
-                    <h1 class="hero-title">Advanced Attendance Intelligence</h1>
-                    <div class="hero-copy">
-                        Explore attendance health, trend movement, member engagement, risk indicators, and exportable filtered views without changing your backend workflow.
-                    </div>
-                </div>
-                <div class="hero-stats">
-                    <div class="hero-chip">
-                        <div class="small">Rows</div>
-                        <div class="big">{{ data.summary.total_rows }}</div>
-                    </div>
-                    <div class="hero-chip">
-                        <div class="small">Health</div>
-                        <div class="big">{{ data.summary.attendance_health }}%</div>
-                    </div>
-                    <div class="hero-chip">
-                        <div class="small">Predicted Next</div>
-                        <div class="big">{{ data.summary.predicted_next_attendance }}</div>
-                    </div>
-                </div>
+<div class="hero glow-ring">
+    <div class="hero-grid">
+        <div>
+            <div class="badge info" style="margin-bottom:12px">Analytics Studio</div>
+            <h1 class="hero-title">Advanced Attendance Intelligence</h1>
+            <div class="hero-copy">
+                Explore attendance health, trend movement, member engagement, risk indicators, heatmaps, unknown matches, and exportable filtered views from one premium analytics surface.
             </div>
         </div>
-
-        <div class="card">
-            <div class="section-title">
-                <div>
-                    <h3 style="margin:0">Analytics Filters</h3>
-                    <p>Slice attendance by period, person, member, meeting, and participant type.</p>
-                </div>
-            </div>
-            <form method="get">
-                <div class="grid" style="grid-template-columns:1.1fr 1fr 1fr 1.15fr 1.1fr 1.1fr 1fr;">
-                    <div>
-                        <label>Period Mode</label>
-                        <select name="period_mode">
-                            <option value="day" {% if filters.period_mode == 'day' %}selected{% endif %}>Day</option>
-                            <option value="week" {% if filters.period_mode == 'week' %}selected{% endif %}>Week</option>
-                            <option value="month" {% if filters.period_mode == 'month' %}selected{% endif %}>Month</option>
-                            <option value="year" {% if filters.period_mode == 'year' %}selected{% endif %}>Year</option>
-                            <option value="custom" {% if filters.period_mode == 'custom' %}selected{% endif %}>Custom</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label>From Date</label>
-                        <input type="date" name="from_date" value="{{ filters.from_date }}">
-                    </div>
-                    <div>
-                        <label>To Date</label>
-                        <input type="date" name="to_date" value="{{ filters.to_date }}">
-                    </div>
-                    <div>
-                        <label>Meeting</label>
-                        <select name="meeting_uuid">
-                            <option value="">All meetings</option>
-                            {% for m in data.meetings %}
-                            <option value="{{ m.meeting_uuid }}" {% if filters.meeting_uuid == m.meeting_uuid %}selected{% endif %}>
-                                {{ m.topic or 'Untitled Meeting' }} - {{ fmt_dt(m.start_time) }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div>
-                        <label>Members</label>
-                        <select name="member_ids" multiple style="min-height:132px">
-                            {% for m in data.members %}
-                            <option value="{{ m.id }}" {% if m.id|string in filters.member_ids %}selected{% endif %}>{{ m.display_name or member_display_name(m) }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div>
-                        <label>Person Search</label>
-                        <input type="text" name="person_name" value="{{ filters.person_name }}" placeholder="type participant name">
-                    </div>
-                    <div>
-                        <label>Participant Type</label>
-                        <select name="participant_type">
-                            <option value="all" {% if filters.participant_type == 'all' %}selected{% endif %}>All</option>
-                            <option value="member" {% if filters.participant_type == 'member' %}selected{% endif %}>Member</option>
-                            <option value="unknown" {% if filters.participant_type == 'unknown' %}selected{% endif %}>Unknown</option>
-                            <option value="host" {% if filters.participant_type == 'host' %}selected{% endif %}>Host</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="toolbar" style="margin-top:8px">
-                    <button type="submit">Apply Filters</button>
-                    <a class="btn success" href="{{ export_csv_url }}">Export CSV</a>
-                    <a class="btn secondary" href="{{ export_pdf_url }}">Export PDF</a>
-                </div>
-            </form>
+        <div class="hero-stats">
+            <div class="hero-chip"><div class="small">Rows</div><div class="big">{{ data.summary.total_rows }}</div></div>
+            <div class="hero-chip"><div class="small">Health</div><div class="big">{{ data.summary.attendance_health }}%</div></div>
+            <div class="hero-chip"><div class="small">Risk Members</div><div class="big">{{ data.summary.risk_members_count }}</div></div>
         </div>
+    </div>
+</div>
 
-        <div class="grid" style="margin-top:16px">
-            <div class="card kpi-card">
-                <div class="kpi-icon">🧾</div>
-                <h4>Total Rows</h4>
-                <div class="metric">{{ data.summary.total_rows }}</div>
-                <div class="metric-sub">Attendance records matching the current filter state.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">✅</div>
-                <h4>Present</h4>
-                <div class="metric">{{ data.summary.present_rows }}</div>
-                <div class="metric-sub">Participants who met the present threshold.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">⏳</div>
-                <h4>Late</h4>
-                <div class="metric">{{ data.summary.late_rows }}</div>
-                <div class="metric-sub">Attended but below the required present duration.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">🚫</div>
-                <h4>Absent</h4>
-                <div class="metric">{{ data.summary.absent_rows }}</div>
-                <div class="metric-sub">Rows classified as absent in the filtered dataset.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">❓</div>
-                <h4>Unknown</h4>
-                <div class="metric">{{ data.summary.unknown_rows }}</div>
-                <div class="metric-sub">Participants not matched to a registered member.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">🔮</div>
-                <h4>Predicted Next</h4>
-                <div class="metric">{{ data.summary.predicted_next_attendance }}</div>
-                <div class="metric-sub">Simple average projection from recent meetings.</div>
-            </div>
+<div class="card glow-ring">
+    <div class="section-title">
+        <div><div class="section-kicker">Filters</div><h3 style="margin:4px 0 0 0">Analytics Filters</h3><p>Slice attendance by period, person, member, meeting, and participant type.</p></div>
+    </div>
+    <form method="get">
+        <div class="grid" style="grid-template-columns:1.1fr 1fr 1fr 1.15fr 1.1fr 1.1fr 1fr;">
+            <div><label>Period Mode</label><select name="period_mode"><option value="day" {% if filters.period_mode == 'day' %}selected{% endif %}>Day</option><option value="week" {% if filters.period_mode == 'week' %}selected{% endif %}>Week</option><option value="month" {% if filters.period_mode == 'month' %}selected{% endif %}>Month</option><option value="year" {% if filters.period_mode == 'year' %}selected{% endif %}>Year</option><option value="custom" {% if filters.period_mode == 'custom' %}selected{% endif %}>Custom</option></select></div>
+            <div><label>From Date</label><input type="date" name="from_date" value="{{ filters.from_date }}"></div>
+            <div><label>To Date</label><input type="date" name="to_date" value="{{ filters.to_date }}"></div>
+            <div><label>Meeting</label><select name="meeting_uuid"><option value="">All meetings</option>{% for m in data.meetings %}<option value="{{ m.meeting_uuid }}" {% if filters.meeting_uuid == m.meeting_uuid %}selected{% endif %}>{{ m.topic or 'Untitled Meeting' }} - {{ fmt_dt(m.start_time) }}</option>{% endfor %}</select></div>
+            <div><label>Members</label><select name="member_ids" multiple style="min-height:132px">{% for m in data.members %}<option value="{{ m.id }}" {% if m.id|string in filters.member_ids %}selected{% endif %}>{{ m.display_name or member_display_name(m) }}</option>{% endfor %}</select></div>
+            <div><label>Person Search</label><input type="text" name="person_name" value="{{ filters.person_name }}" placeholder="type participant name"></div>
+            <div><label>Participant Type</label><select name="participant_type"><option value="all" {% if filters.participant_type == 'all' %}selected{% endif %}>All</option><option value="member" {% if filters.participant_type == 'member' %}selected{% endif %}>Member</option><option value="unknown" {% if filters.participant_type == 'unknown' %}selected{% endif %}>Unknown</option><option value="host" {% if filters.participant_type == 'host' %}selected{% endif %}>Host</option></select></div>
         </div>
+        <div class="toolbar" style="margin-top:8px"><button type="submit">Apply Filters</button><a class="btn success" href="{{ export_csv_url }}">Export CSV</a><a class="btn secondary" href="{{ export_pdf_url }}">Export PDF</a><a class="btn purple" href="{{ url_for('analytics_reminder') + ('?' + export_query if export_query else '') }}">Reminder Hint</a></div>
+    </form>
+</div>
 
-        <div class="grid-2" style="margin-top:16px">
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Attendance Trend</h3>
-                        <p>Present, late and absent distribution over the selected period.</p>
-                    </div>
-                </div>
-                <div class="chart-wrap tall"><canvas id="trendChart"></canvas></div>
-            </div>
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Status Mix</h3>
-                        <p>How the current filtered rows are distributed by classification.</p>
-                    </div>
-                </div>
-                <div class="chart-wrap"><canvas id="statusMixChart"></canvas></div>
-            </div>
+<div class="grid" style="margin-top:16px">
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">🧾</div><h4>Total Rows</h4><div class="metric">{{ data.summary.total_rows }}</div><div class="metric-sub">Attendance records matching the current filter state.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">✅</div><h4>Present</h4><div class="metric">{{ data.summary.present_rows }}</div><div class="metric-sub">Participants who met the present threshold.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">⏳</div><h4>Late</h4><div class="metric">{{ data.summary.late_rows }}</div><div class="metric-sub">Attended but below the required present duration.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">🚫</div><h4>Absent</h4><div class="metric">{{ data.summary.absent_rows }}</div><div class="metric-sub">Rows classified as absent in the filtered dataset.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">❓</div><h4>Unknown</h4><div class="metric">{{ data.summary.unknown_rows }}</div><div class="metric-sub">Participants not matched to a registered member.</div></div>
+    <div class="card kpi-card glow-ring"><div class="kpi-icon">🔮</div><h4>Predicted Next</h4><div class="metric">{{ data.summary.predicted_next_attendance }}</div><div class="metric-sub">Simple average projection from recent meetings.</div></div>
+</div>
+
+<div class="grid-2" style="margin-top:16px">
+    <div class="card glow-ring"><div class="section-title"><div><div class="section-kicker">Trend</div><h3 style="margin:4px 0 0 0">Attendance Trend</h3><p>Present, late and absent distribution over the selected period.</p></div></div><div class="chart-wrap tall"><canvas id="trendChart"></canvas></div></div>
+    <div class="card glow-ring"><div class="section-title"><div><div class="section-kicker">Mix</div><h3 style="margin:4px 0 0 0">Status Mix</h3><p>How the current filtered rows are distributed by classification.</p></div></div><div class="chart-wrap"><canvas id="statusMixChart"></canvas></div></div>
+</div>
+
+<div class="grid-2" style="margin-top:16px">
+    <div class="card glow-ring">
+        <div class="section-title"><div><div class="section-kicker">Members</div><h3 style="margin:4px 0 0 0">Member Duration</h3><p>{{ member_chart.subtitle }}</p></div></div>
+        {% if member_chart.empty %}
+            <div class="empty-state" style="padding:24px 18px"><div class="empty-icon" style="width:58px;height:58px;font-size:22px">📊</div><div style="font-weight:900;margin-bottom:6px">No member duration data</div><div class="muted">Adjust filters or wait for tracked member attendance to appear.</div></div>
+        {% else %}
+            <div class="chart-wrap"><canvas id="memberDurationChart"></canvas></div>
+        {% endif %}
+    </div>
+    <div class="card glow-ring">
+        <div class="section-title"><div><div class="section-kicker">Health</div><h3 style="margin:4px 0 0 0">Meeting Health Snapshot</h3><p>Latest meeting comparison and summary performance indicators.</p></div></div>
+        <div class="stat-pair">
+            <div class="mini-kpi"><div class="label">Attendance Health</div><div class="value">{{ data.summary.attendance_health }}%</div></div>
+            <div class="mini-kpi"><div class="label">Health Delta</div><div class="value">{% if comparison_delta is not none %}{{ '+' if comparison_delta >= 0 else '' }}{{ comparison_delta }}{% else %}-{% endif %}</div></div>
         </div>
-
-        <div class="grid-2" style="margin-top:16px">
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Member Duration</h3>
-                        <p>{{ member_chart.subtitle }}</p>
-                    </div>
-                </div>
-                {% if member_chart.empty %}
-                    <div class="empty-state" style="padding:24px 18px">
-                        <div class="empty-icon" style="width:58px;height:58px;font-size:22px">📊</div>
-                        <div style="font-weight:900;margin-bottom:6px">No member duration data</div>
-                        <div class="muted">Adjust filters or wait for tracked member attendance to appear.</div>
-                    </div>
-                {% else %}
-                    <div class="chart-wrap"><canvas id="memberDurationChart"></canvas></div>
-                {% endif %}
-            </div>
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Health Snapshot</h3>
-                        <p>Latest meeting comparison and summary performance indicators.</p>
-                    </div>
-                </div>
-                <div class="stack">
-                    <div class="grid-2">
-                        <div class="mini-kpi">
-                            <div class="label">Attendance Health</div>
-                            <div class="value">{{ data.summary.attendance_health }}%</div>
-                        </div>
-                        <div class="mini-kpi">
-                            <div class="label">Health Delta</div>
-                            <div class="value">
-                                {% if comparison_delta is not none %}
-                                    {{ '+' if comparison_delta >= 0 else '' }}{{ comparison_delta }}
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mini-list">
-                        <div class="mini-item">
-                            <div class="muted">Latest meeting</div>
-                            <div style="font-weight:900;margin-top:4px">{{ latest_meeting.topic if latest_meeting else 'No meeting yet' }}</div>
-                            <div class="muted" style="margin-top:4px">{{ fmt_dt(latest_meeting.start_time) if latest_meeting else '-' }}</div>
-                        </div>
-                        <div class="mini-item">
-                            <div class="muted">Average attendance score</div>
-                            <div style="font-weight:900;margin-top:4px">{{ data.summary.avg_attendance_score }}</div>
-                        </div>
-                        <div class="mini-item">
-                            <div class="muted">Average engagement score</div>
-                            <div style="font-weight:900;margin-top:4px">{{ data.summary.avg_engagement_score }}</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        <div class="panel-list" style="margin-top:12px">
+            <div class="panel-item"><div class="micro">Latest meeting</div><div style="font-weight:900;margin-top:4px">{{ latest_meeting.topic if latest_meeting else 'No meeting yet' }}</div><div class="micro" style="margin-top:4px">{{ fmt_dt(latest_meeting.start_time) if latest_meeting else '-' }}</div></div>
+            <div class="panel-item"><div class="micro">Average attendance score</div><div style="font-weight:900;margin-top:4px">{{ data.summary.avg_attendance_score }}</div></div>
+            <div class="panel-item"><div class="micro">Average engagement score</div><div style="font-weight:900;margin-top:4px">{{ data.summary.avg_engagement_score }}</div></div>
         </div>
+    </div>
+</div>
 
-        <div class="grid-3" style="margin-top:16px">
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Top Members</h3>
-                        <p>Best overall performers based on attendance and engagement scores.</p>
-                    </div>
-                </div>
-                <div class="list-card">
-                    {% for item in data.top_people %}
-                    <div class="list-row">
-                        <div>
-                            <div style="font-weight:900">{{ item.name }}</div>
-                            <div class="muted">Attendance {{ item.attendance_score }} · Engagement {{ item.engagement_score }}</div>
-                        </div>
-                        <span class="badge ok">{{ item.overall_score }}</span>
-                    </div>
-                    {% else %}
-                    <div class="muted">No ranked members available.</div>
-                    {% endfor %}
-                </div>
-            </div>
+<div class="grid-3" style="margin-top:16px">
+    <div class="card glow-ring">
+        <div class="section-title"><div><div class="section-kicker">Leaders</div><h3 style="margin:4px 0 0 0">Top Members</h3><p>Best overall performers based on attendance and engagement scores.</p></div></div>
+        <div class="list-card">{% for item in data.top_people %}<div class="list-row"><div><div style="font-weight:900">{{ item.name }}</div><div class="muted">Attendance {{ item.attendance_score }} · Engagement {{ item.engagement_score }}</div></div><span class="badge ok">{{ item.overall_score }}</span></div>{% else %}<div class="muted">No ranked members available.</div>{% endfor %}</div>
+    </div>
+    <div class="card glow-ring">
+        <div class="section-title"><div><div class="section-kicker">Risk Engine</div><h3 style="margin:4px 0 0 0">Risk Members</h3><p>Members in warning or critical risk zone.</p></div></div>
+        <div class="list-card">{% for item in data.risk_table[:8] %}<div class="list-row"><div><div style="font-weight:900">{{ item.name }}</div><div class="muted">{{ item.risk.label }} · Overall {{ item.overall_score }}</div></div><span class="badge {{ 'danger' if item.risk.short == 'CRITICAL' else 'warn' }}">{{ item.risk.short }}</span></div>{% else %}<div class="muted">No members are currently in warning or critical state.</div>{% endfor %}</div>
+    </div>
+    <div class="card glow-ring">
+        <div class="section-title"><div><div class="section-kicker">Insights</div><h3 style="margin:4px 0 0 0">Smart Insights</h3><p>Auto-generated interpretation from the filtered dataset.</p></div></div>
+        <div class="insight-list">{% for line in data.summary.insight_lines %}<div class="insight-item">{{ line }}</div>{% else %}<div class="insight-item">Not enough data yet to generate analytics insights.</div>{% endfor %}{% if data.reminder_suggestion.count %}<div class="insight-item">Reminder suggestion: {{ data.reminder_suggestion.message }}</div>{% endif %}</div>
+    </div>
+</div>
 
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Risk Members</h3>
-                        <p>Members in warning or critical risk zone.</p>
-                    </div>
-                </div>
-                <div class="list-card">
-                    {% for item in data.risk_table[:8] %}
-                    <div class="list-row">
-                        <div>
-                            <div style="font-weight:900">{{ item.name }}</div>
-                            <div class="muted">{{ item.risk.label }} · Overall {{ item.overall_score }}</div>
-                        </div>
-                        <span class="badge {{ 'danger' if item.risk.short == 'CRITICAL' else 'warn' }}">{{ item.risk.short }}</span>
-                    </div>
-                    {% else %}
-                    <div class="muted">No members are currently in warning or critical state.</div>
-                    {% endfor %}
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Insights</h3>
-                        <p>Auto-generated interpretation from the filtered dataset.</p>
-                    </div>
-                </div>
-                <div class="insight-list">
-                    {% for line in data.summary.insight_lines %}
-                    <div class="insight-item">{{ line }}</div>
-                    {% else %}
-                    <div class="insight-item">Not enough data yet to generate analytics insights.</div>
-                    {% endfor %}
-                    {% if data.reminder_suggestion.count %}
-                    <div class="insight-item">Reminder suggestion: {{ data.reminder_suggestion.message }}</div>
-                    {% endif %}
-                </div>
-            </div>
+<div class="grid-2" style="margin-top:16px">
+    <div class="card glow-ring">
+        <div class="section-title"><div><div class="section-kicker">Heatmap</div><h3 style="margin:4px 0 0 0">Attendance Heatmap</h3><p>Daily attendance presence over the recent window.</p></div></div>
+        <div class="heatmap-grid">
+            {% for cell in data.heatmap %}
+            <div class="heat-cell {{ cell.css }}" title="{{ cell.title }}">{{ cell.day }}</div>
+            {% endfor %}
         </div>
+    </div>
+    <div class="card glow-ring">
+        <div class="section-title"><div><div class="section-kicker">Unknown Match</div><h3 style="margin:4px 0 0 0">Possible Member Matches</h3><p>Suggested mappings for unknown participant names.</p></div></div>
+        <div class="list-card">
+            {% for item in data.unknown_match_suggestions %}
+            <div class="list-row"><div><div style="font-weight:900">{{ item.unknown }}</div><div class="muted">Possible match: {{ item.member }}</div></div><span class="badge info">{{ item.score }}%</span></div>
+            {% else %}
+            <div class="muted">No strong unknown-to-member suggestions found.</div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
 
-        <script>
-        (() => {
-            const trendCanvas = document.getElementById('trendChart');
-            if (trendCanvas) {
-                new Chart(trendCanvas, {
-                    type: 'line',
-                    data: {
-                        labels: {{ trend.labels|tojson }},
-                        datasets: [
-                            {
-                                label: 'Present',
-                                data: {{ trend.present|tojson }},
-                                borderColor: '#22c55e',
-                                backgroundColor: 'rgba(34,197,94,.12)',
-                                fill: true
-                            },
-                            {
-                                label: 'Late',
-                                data: {{ trend.late|tojson }},
-                                borderColor: '#f59e0b',
-                                backgroundColor: 'rgba(245,158,11,.10)',
-                                fill: true
-                            },
-                            {
-                                label: 'Absent',
-                                data: {{ trend.absent|tojson }},
-                                borderColor: '#ef4444',
-                                backgroundColor: 'rgba(239,68,68,.08)',
-                                fill: true
-                            }
-                        ]
-                    },
-                    options: {
-                        interaction: {mode: 'index', intersect: false},
-                        plugins: {legend: {display: true}}
-                    }
-                });
-            }
-
-            const mixCanvas = document.getElementById('statusMixChart');
-            if (mixCanvas) {
-                new Chart(mixCanvas, {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['Present', 'Late', 'Absent'],
-                        datasets: [{
-                            data: [{{ data.summary.present_rows }}, {{ data.summary.late_rows }}, {{ data.summary.absent_rows }}],
-                            backgroundColor: ['#22c55e','#f59e0b','#ef4444'],
-                            borderWidth: 0,
-                            hoverOffset: 8
-                        }]
-                    },
-                    options: {
-                        cutout: '68%',
-                        plugins: {legend: {display: true}}
-                    }
-                });
-            }
-
-            const memberCanvas = document.getElementById('memberDurationChart');
-            if (memberCanvas) {
-                new Chart(memberCanvas, {
-                    type: 'bar',
-                    data: {
-                        labels: {{ member_chart.labels|tojson }},
-                        datasets: [{
-                            label: 'Minutes',
-                            data: {{ member_chart.chart_values|tojson }},
-                            borderRadius: 10,
-                            backgroundColor: ['rgba(37,99,235,.78)','rgba(79,70,229,.78)','rgba(124,58,237,.78)','rgba(34,197,94,.72)','rgba(8,145,178,.72)','rgba(245,158,11,.72)','rgba(239,68,68,.72)']
-                        }]
-                    },
-                    options: {
-                        plugins: {legend: {display: false}},
-                        scales: {
-                            x: {grid: {display: false}},
-                            y: {beginAtZero: true}
-                        }
-                    }
-                });
-            }
-        })();
-        </script>
+<script>
+(() => {
+    const trendCanvas = document.getElementById('trendChart');
+    if (trendCanvas) {
+        new Chart(trendCanvas, {
+            type: 'line',
+            data: {labels: {{ trend.labels|tojson }}, datasets: [{label: 'Present', data: {{ trend.present|tojson }}, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.12)', fill: true},{label: 'Late', data: {{ trend.late|tojson }}, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.10)', fill: true},{label: 'Absent', data: {{ trend.absent|tojson }}, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.08)', fill: true}]},
+            options: {interaction: {mode: 'index', intersect: false}, plugins: {legend: {display: true}}}
+        });
+    }
+    const mixCanvas = document.getElementById('statusMixChart');
+    if (mixCanvas) {
+        new Chart(mixCanvas, {type: 'doughnut', data: {labels: ['Present', 'Late', 'Absent'], datasets: [{data: [{{ data.summary.present_rows }}, {{ data.summary.late_rows }}, {{ data.summary.absent_rows }}], backgroundColor: ['#22c55e','#f59e0b','#ef4444'], borderWidth: 0, hoverOffset: 8}]}, options: {cutout: '68%', plugins: {legend: {display: true}}}});
+    }
+    const memberCanvas = document.getElementById('memberDurationChart');
+    if (memberCanvas) {
+        new Chart(memberCanvas, {type: 'bar', data: {labels: {{ member_chart.labels|tojson }}, datasets: [{label: 'Minutes', data: {{ member_chart.chart_values|tojson }}, borderRadius: 10, backgroundColor: ['rgba(37,99,235,.78)','rgba(79,70,229,.78)','rgba(124,58,237,.78)','rgba(34,197,94,.72)','rgba(8,145,178,.72)','rgba(245,158,11,.72)','rgba(239,68,68,.72)']}]}, options: {plugins: {legend: {display: false}}, scales: {x: {grid: {display: false}}, y: {beginAtZero: true}}}});
+    }
+})();
+</script>
         """,
         filters=data["filters"],
         data=data,
