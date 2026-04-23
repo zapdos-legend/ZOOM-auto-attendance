@@ -1,3 +1,2350 @@
+import csv
+import hashlib
+import hmac
+import io
+import os
+import time
+from difflib import SequenceMatcher
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from functools import wraps
+from zoneinfo import ZoneInfo
+from urllib.parse import urlencode
+
+from dotenv import load_dotenv
+from flask import (
+    Flask,
+    Response,
+    flash,
+    jsonify,
+    redirect,
+    render_template_string,
+    request,
+    send_file,
+    session,
+    url_for,
+)
+import psycopg
+from psycopg.rows import dict_row
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+load_dotenv()
+
+app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+TIMEZONE_NAME = os.getenv("TIMEZONE_NAME", "Asia/Kolkata")
+ZOOM_SECRET_TOKEN = os.getenv("ZOOM_SECRET_TOKEN", "")
+HOST_NAME_HINT = os.getenv("HOST_NAME_HINT", "host").strip().lower()
+
+DEFAULT_SETTINGS = {
+    "present_percentage": os.getenv("PRESENT_PERCENTAGE", "75"),
+    "late_count_as_present_percentage": os.getenv("LATE_COUNT_AS_PRESENT_PERCENTAGE", "30"),
+    "late_threshold_minutes": os.getenv("LATE_THRESHOLD_MINUTES", "10"),
+    "meeting_finalize_seconds": os.getenv("INACTIVITY_CONFIRM_SECONDS", "30"),
+}
+
+DB_INITIALIZED = False
+LAST_STALE_CHECK_TS = 0
+SETTINGS_CACHE = {}
+
+ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
+ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
+
+
+def now_local() -> datetime:
+    return datetime.now(ZoneInfo(TIMEZONE_NAME))
+
+
+def today_local() -> date:
+    return now_local().date()
+
+
+def parse_dt(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=ZoneInfo(TIMEZONE_NAME))
+        return value.astimezone(ZoneInfo(TIMEZONE_NAME))
+    text = str(value).replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=ZoneInfo(TIMEZONE_NAME))
+    return dt.astimezone(ZoneInfo(TIMEZONE_NAME))
+
+
+def fmt_dt(dt):
+    parsed = parse_dt(dt)
+    return parsed.strftime("%d-%m-%Y %H:%M:%S") if parsed else "-"
+
+
+def fmt_date(dt):
+    parsed = parse_dt(dt)
+    return parsed.strftime("%d-%m-%Y") if parsed else "-"
+
+
+def fmt_time(dt):
+    parsed = parse_dt(dt)
+    return parsed.strftime("%H:%M:%S") if parsed else "-"
+
+
+def fmt_time_ampm(dt):
+    parsed = parse_dt(dt)
+    return parsed.strftime("%I:%M:%S %p") if parsed else "-"
+
+
+def mins_from_seconds(value):
+    return round((value or 0) / 60, 2)
+
+
+def member_display_name(row):
+    if not row:
+        return "-"
+    return (row.get("full_name") or row.get("name") or "-").strip() or "-"
+
+
+def member_name_sql(conn):
+    has_full_name = column_exists(conn, "members", "full_name")
+    has_name = column_exists(conn, "members", "name")
+    if has_full_name and has_name:
+        return "COALESCE(NULLIF(full_name, ''), NULLIF(name, ''))"
+    if has_full_name:
+        return "full_name"
+    if has_name:
+        return "name"
+    return "NULL"
+
+
+def insert_member_record(cur, conn, full_name, email, phone, active_value):
+    has_full_name = column_exists(conn, "members", "full_name")
+    has_name = column_exists(conn, "members", "name")
+
+    if has_full_name and has_name:
+        cur.execute(
+            "INSERT INTO members(full_name, name, email, phone, active) VALUES (%s,%s,%s,%s,%s)",
+            (full_name, full_name, email, phone, active_value),
+        )
+    elif has_full_name:
+        cur.execute(
+            "INSERT INTO members(full_name, email, phone, active) VALUES (%s,%s,%s,%s)",
+            (full_name, email, phone, active_value),
+        )
+    elif has_name:
+        cur.execute(
+            "INSERT INTO members(name, email, phone, active) VALUES (%s,%s,%s,%s)",
+            (full_name, email, phone, active_value),
+        )
+
+
+def update_member_record(cur, conn, member_id, full_name, email, phone):
+    has_full_name = column_exists(conn, "members", "full_name")
+    has_name = column_exists(conn, "members", "name")
+
+    if has_full_name and has_name:
+        cur.execute(
+            "UPDATE members SET full_name=%s, name=%s, email=%s, phone=%s WHERE id=%s",
+            (full_name, full_name, email, phone, member_id),
+        )
+    elif has_full_name:
+        cur.execute(
+            "UPDATE members SET full_name=%s, email=%s, phone=%s WHERE id=%s",
+            (full_name, email, phone, member_id),
+        )
+    elif has_name:
+        cur.execute(
+            "UPDATE members SET name=%s, email=%s, phone=%s WHERE id=%s",
+            (full_name, email, phone, member_id),
+        )
+
+
+def slugify(text: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(text))
+    while "__" in safe:
+        safe = safe.replace("__", "_")
+    return safe.strip("_") or "report"
+
+
+def db():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is missing")
+    connect_timeout = os.getenv("DB_CONNECT_TIMEOUT", "5")
+    try:
+        connect_timeout = int(connect_timeout)
+    except Exception:
+        connect_timeout = 5
+    if connect_timeout <= 0:
+        connect_timeout = 5
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=connect_timeout)
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if session.get("role") != "admin":
+            flash("Admin access required.", "error")
+            return redirect(url_for("home"))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def can_edit_users():
+    return session.get("role") == "admin"
+
+
+def is_truthy(value) -> bool:
+    return str(value) in ("1", "True", "true", "t")
+
+
+def table_exists(conn, table_name: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema='public' AND table_name=%s
+            ) AS exists_flag
+            """,
+            (table_name,),
+        )
+        row = cur.fetchone()
+        return bool(row and row["exists_flag"])
+
+
+def column_exists(conn, table_name: str, column_name: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name=%s AND column_name=%s
+            ) AS exists_flag
+            """,
+            (table_name, column_name),
+        )
+        row = cur.fetchone()
+        return bool(row and row["exists_flag"])
+
+
+def column_data_type(conn, table_name: str, column_name: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name=%s AND column_name=%s
+            """,
+            (table_name, column_name),
+        )
+        row = cur.fetchone()
+        return (row["data_type"] if row else "").lower()
+
+
+def db_true_value(conn, table_name: str, column_name: str):
+    dtype = column_data_type(conn, table_name, column_name)
+    if dtype in ("integer", "smallint", "bigint", "numeric"):
+        return 1
+    return True
+
+
+def db_false_value(conn, table_name: str, column_name: str):
+    dtype = column_data_type(conn, table_name, column_name)
+    if dtype in ("integer", "smallint", "bigint", "numeric"):
+        return 0
+    return False
+
+
+def ensure_column(conn, table_name: str, column_name: str, definition_sql: str):
+    if not column_exists(conn, table_name, column_name):
+        with conn.cursor() as cur:
+            cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition_sql}")
+
+
+def ensure_index(conn, index_name: str, create_sql: str):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_indexes
+                WHERE schemaname='public' AND indexname=%s
+            ) AS exists_flag
+            """,
+            (index_name,),
+        )
+        row = cur.fetchone()
+        if not row or not row["exists_flag"]:
+            cur.execute(create_sql)
+
+
+def fix_database_compatibility():
+    with db() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    DO $$
+                    DECLARE
+                        col_type TEXT;
+                    BEGIN
+                        SELECT data_type
+                        INTO col_type
+                        FROM information_schema.columns
+                        WHERE table_schema='public'
+                          AND table_name='members'
+                          AND column_name='active';
+
+                        IF col_type IN ('integer', 'smallint', 'bigint', 'numeric') THEN
+                            ALTER TABLE members ALTER COLUMN active DROP DEFAULT;
+
+                            ALTER TABLE members
+                            ALTER COLUMN active TYPE BOOLEAN
+                            USING (
+                                CASE
+                                    WHEN active IS NULL THEN FALSE
+                                    WHEN active::integer = 1 THEN TRUE
+                                    ELSE FALSE
+                                END
+                            );
+
+                            ALTER TABLE members ALTER COLUMN active SET DEFAULT TRUE;
+                        ELSIF col_type = 'text' THEN
+                            ALTER TABLE members ALTER COLUMN active DROP DEFAULT;
+
+                            ALTER TABLE members
+                            ALTER COLUMN active TYPE BOOLEAN
+                            USING (
+                                CASE
+                                    WHEN lower(trim(active)) IN ('1','true','t','yes','y') THEN TRUE
+                                    ELSE FALSE
+                                END
+                            );
+
+                            ALTER TABLE members ALTER COLUMN active SET DEFAULT TRUE;
+                        END IF;
+                    END$$;
+                    """
+                )
+
+                cur.execute(
+                    """
+                    DO $$
+                    DECLARE
+                        col_type TEXT;
+                    BEGIN
+                        SELECT data_type
+                        INTO col_type
+                        FROM information_schema.columns
+                        WHERE table_schema='public'
+                          AND table_name='users'
+                          AND column_name='is_active';
+
+                        IF col_type IN ('integer', 'smallint', 'bigint', 'numeric') THEN
+                            ALTER TABLE users ALTER COLUMN is_active DROP DEFAULT;
+
+                            ALTER TABLE users
+                            ALTER COLUMN is_active TYPE BOOLEAN
+                            USING (
+                                CASE
+                                    WHEN is_active IS NULL THEN FALSE
+                                    WHEN is_active::integer = 1 THEN TRUE
+                                    ELSE FALSE
+                                END
+                            );
+
+                            ALTER TABLE users ALTER COLUMN is_active SET DEFAULT TRUE;
+                        ELSIF col_type = 'text' THEN
+                            ALTER TABLE users ALTER COLUMN is_active DROP DEFAULT;
+
+                            ALTER TABLE users
+                            ALTER COLUMN is_active TYPE BOOLEAN
+                            USING (
+                                CASE
+                                    WHEN lower(trim(is_active)) IN ('1','true','t','yes','y') THEN TRUE
+                                    ELSE FALSE
+                                END
+                            );
+
+                            ALTER TABLE users ALTER COLUMN is_active SET DEFAULT TRUE;
+                        END IF;
+                    END$$;
+                    """
+                )
+
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema='public'
+                              AND table_name='meetings'
+                              AND column_name='start_time'
+                              AND data_type='text'
+                        ) THEN
+                            ALTER TABLE meetings ALTER COLUMN start_time DROP DEFAULT;
+
+                            ALTER TABLE meetings
+                            ALTER COLUMN start_time TYPE TIMESTAMPTZ
+                            USING (
+                                CASE
+                                    WHEN start_time IS NULL OR btrim(start_time) = '' THEN NULL
+                                    WHEN btrim(start_time) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN start_time::timestamptz
+                                    WHEN btrim(start_time) ~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}' THEN to_timestamp(start_time, 'MM/DD/YYYY HH12:MI:SS AM')
+                                    ELSE NULL
+                                END
+                            );
+                        END IF;
+                    END$$;
+                    """
+                )
+
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema='public'
+                              AND table_name='meetings'
+                              AND column_name='end_time'
+                              AND data_type='text'
+                        ) THEN
+                            ALTER TABLE meetings ALTER COLUMN end_time DROP DEFAULT;
+
+                            ALTER TABLE meetings
+                            ALTER COLUMN end_time TYPE TIMESTAMPTZ
+                            USING (
+                                CASE
+                                    WHEN end_time IS NULL OR btrim(end_time) = '' THEN NULL
+                                    WHEN btrim(end_time) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN end_time::timestamptz
+                                    WHEN btrim(end_time) ~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}' THEN to_timestamp(end_time, 'MM/DD/YYYY HH12:MI:SS AM')
+                                    ELSE NULL
+                                END
+                            );
+                        END IF;
+                    END$$;
+                    """
+                )
+
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+
+def cast_setting_value(value, cast=str):
+    if value is None:
+        value = ""
+    try:
+        return cast(value)
+    except Exception:
+        try:
+            default_value = DEFAULT_SETTINGS.get(value)
+            if default_value is not None:
+                return cast(default_value)
+        except Exception:
+            pass
+        if cast is int:
+            try:
+                return int(float(value))
+            except Exception:
+                try:
+                    return int(float(DEFAULT_SETTINGS.get(str(value), 0)))
+                except Exception:
+                    return 0
+        if cast is float:
+            try:
+                return float(value)
+            except Exception:
+                try:
+                    return float(DEFAULT_SETTINGS.get(str(value), 0))
+                except Exception:
+                    return 0.0
+        if cast is bool:
+            return str(value).strip().lower() in ("1", "true", "t", "yes", "y", "on")
+        return str(value)
+
+
+def get_setting(name, cast=str):
+    cached_value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
+    value = cached_value
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM settings WHERE key=%s", (name,))
+                row = cur.fetchone()
+                if row and row.get("value") not in (None, ""):
+                    value = row["value"]
+                    SETTINGS_CACHE[name] = value
+                elif name not in SETTINGS_CACHE and value is not None:
+                    SETTINGS_CACHE[name] = value
+    except Exception as e:
+        print(f"⚠️ get_setting fallback for {name}: {e}")
+        value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
+    return cast_setting_value(value, cast)
+
+
+def set_setting(name, value):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO settings(key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()
+                """,
+                (name, str(value)),
+            )
+        conn.commit()
+    SETTINGS_CACHE[name] = str(value)
+
+
+def sync_special_user(conn, username: str, password: str, role: str):
+    if not username or not password:
+        return
+
+    username = username.strip()
+    password_hash = hash_password(password)
+    true_val = db_true_value(conn, "users", "is_active")
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE username=%s", (username,))
+        existing = cur.fetchone()
+
+        if existing:
+            needs_update = (
+                existing["password_hash"] != password_hash
+                or existing["role"] != role
+                or not is_truthy(existing["is_active"])
+            )
+            if needs_update:
+                cur.execute(
+                    "UPDATE users SET password_hash=%s, role=%s, is_active=%s WHERE username=%s",
+                    (password_hash, role, true_val, username),
+                )
+        else:
+            cur.execute(
+                "INSERT INTO users(username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)",
+                (username, password_hash, role, true_val),
+            )
+
+
+def maybe_finalize_stale_live_meetings(force=False):
+    global LAST_STALE_CHECK_TS
+    now_ts = time.time()
+    if not force and now_ts - LAST_STALE_CHECK_TS < 12:
+        return
+    LAST_STALE_CHECK_TS = now_ts
+    try:
+        finalize_stale_live_meetings()
+    except Exception as e:
+        print(f"⚠️ finalize_stale_live_meetings skipped: {e}")
+
+
+def finalize_stale_live_meetings():
+    finalize_seconds = get_setting("meeting_finalize_seconds", int)
+    if finalize_seconds <= 0:
+        finalize_seconds = cast_setting_value(DEFAULT_SETTINGS.get("meeting_finalize_seconds", "30"), int)
+        if finalize_seconds <= 0:
+            finalize_seconds = 30
+    threshold_time = now_local() - timedelta(seconds=finalize_seconds)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM meetings WHERE status='live' ORDER BY id DESC")
+            meetings = cur.fetchall()
+
+            for meeting in meetings:
+                meeting_uuid = meeting.get("meeting_uuid")
+                if not meeting_uuid:
+                    continue
+
+                cur.execute(
+                    "SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY updated_at DESC NULLS LAST, id DESC",
+                    (meeting_uuid,),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    continue
+
+                anybody_live = any(r.get("current_join") is not None for r in rows)
+                if anybody_live:
+                    continue
+
+                last_activity = get_meeting_rows_last_activity(rows)
+
+                if last_activity and last_activity <= threshold_time:
+                    try:
+                        finalize_meeting(meeting_uuid, last_activity)
+                    except Exception as e:
+                        print(f"⚠️ finalize_meeting skipped for {meeting_uuid}: {e}")
+
+
+def init_db():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'viewer',
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS members (
+                    id SERIAL PRIMARY KEY,
+                    full_name TEXT NOT NULL,
+                    email TEXT,
+                    phone TEXT,
+                    tags TEXT,
+                    active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS meetings (
+                    id SERIAL PRIMARY KEY,
+                    meeting_uuid TEXT UNIQUE,
+                    meeting_id TEXT,
+                    topic TEXT,
+                    host_name TEXT,
+                    start_time TIMESTAMPTZ,
+                    end_time TIMESTAMPTZ,
+                    status TEXT NOT NULL DEFAULT 'live',
+                    source TEXT NOT NULL DEFAULT 'webhook',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    finalized_at TIMESTAMPTZ,
+                    unique_participants INTEGER NOT NULL DEFAULT 0,
+                    member_participants INTEGER NOT NULL DEFAULT 0,
+                    unknown_participants INTEGER NOT NULL DEFAULT 0,
+                    present_count INTEGER NOT NULL DEFAULT 0,
+                    late_count INTEGER NOT NULL DEFAULT 0,
+                    absent_count INTEGER NOT NULL DEFAULT 0,
+                    host_present BOOLEAN NOT NULL DEFAULT FALSE,
+                    notes TEXT
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS attendance (
+                    id SERIAL PRIMARY KEY,
+                    meeting_uuid TEXT NOT NULL,
+                    participant_name TEXT NOT NULL,
+                    participant_email TEXT,
+                    participant_key TEXT NOT NULL,
+                    first_join TIMESTAMPTZ,
+                    last_leave TIMESTAMPTZ,
+                    total_seconds INTEGER NOT NULL DEFAULT 0,
+                    rejoin_count INTEGER NOT NULL DEFAULT 0,
+                    current_join TIMESTAMPTZ,
+                    is_member BOOLEAN NOT NULL DEFAULT FALSE,
+                    member_id INTEGER REFERENCES members(id) ON DELETE SET NULL,
+                    is_host BOOLEAN NOT NULL DEFAULT FALSE,
+                    status TEXT DEFAULT 'JOINED',
+                    final_status TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(meeting_uuid, participant_key)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+
+        if table_exists(conn, "users"):
+            ensure_column(conn, "users", "role", "TEXT NOT NULL DEFAULT 'viewer'")
+            ensure_column(conn, "users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE")
+            ensure_column(conn, "users", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+        if table_exists(conn, "settings"):
+            ensure_column(conn, "settings", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+        if table_exists(conn, "members"):
+            ensure_column(conn, "members", "email", "TEXT")
+            ensure_column(conn, "members", "phone", "TEXT")
+            ensure_column(conn, "members", "tags", "TEXT")
+            ensure_column(conn, "members", "active", "BOOLEAN NOT NULL DEFAULT TRUE")
+            ensure_column(conn, "members", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+        if table_exists(conn, "meetings"):
+            ensure_column(conn, "meetings", "meeting_uuid", "TEXT")
+            ensure_column(conn, "meetings", "meeting_id", "TEXT")
+            ensure_column(conn, "meetings", "topic", "TEXT")
+            ensure_column(conn, "meetings", "host_name", "TEXT")
+            ensure_column(conn, "meetings", "start_time", "TIMESTAMPTZ")
+            ensure_column(conn, "meetings", "end_time", "TIMESTAMPTZ")
+            ensure_column(conn, "meetings", "status", "TEXT NOT NULL DEFAULT 'live'")
+            ensure_column(conn, "meetings", "source", "TEXT NOT NULL DEFAULT 'webhook'")
+            ensure_column(conn, "meetings", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            ensure_column(conn, "meetings", "finalized_at", "TIMESTAMPTZ")
+            ensure_column(conn, "meetings", "unique_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "member_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "unknown_participants", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "present_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "late_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "absent_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "meetings", "host_present", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "meetings", "notes", "TEXT")
+
+        if table_exists(conn, "attendance"):
+            ensure_column(conn, "attendance", "meeting_uuid", "TEXT")
+            ensure_column(conn, "attendance", "participant_name", "TEXT")
+            ensure_column(conn, "attendance", "participant_email", "TEXT")
+            ensure_column(conn, "attendance", "participant_key", "TEXT")
+            ensure_column(conn, "attendance", "first_join", "TIMESTAMPTZ")
+            ensure_column(conn, "attendance", "last_leave", "TIMESTAMPTZ")
+            ensure_column(conn, "attendance", "total_seconds", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "attendance", "rejoin_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(conn, "attendance", "current_join", "TIMESTAMPTZ")
+            ensure_column(conn, "attendance", "is_member", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "attendance", "member_id", "INTEGER")
+            ensure_column(conn, "attendance", "is_host", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "attendance", "status", "TEXT DEFAULT 'JOINED'")
+            ensure_column(conn, "attendance", "final_status", "TEXT")
+            ensure_column(conn, "attendance", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            ensure_column(conn, "attendance", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+        if table_exists(conn, "activity_log"):
+            ensure_column(conn, "activity_log", "username", "TEXT")
+            ensure_column(conn, "activity_log", "action", "TEXT")
+            ensure_column(conn, "activity_log", "details", "TEXT")
+            ensure_column(conn, "activity_log", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+
+        ensure_index(conn, "idx_attendance_meeting_uuid", "CREATE INDEX idx_attendance_meeting_uuid ON attendance(meeting_uuid)")
+        ensure_index(conn, "idx_attendance_member_id", "CREATE INDEX idx_attendance_member_id ON attendance(member_id)")
+        ensure_index(conn, "idx_meetings_status", "CREATE INDEX idx_meetings_status ON meetings(status)")
+
+        with conn.cursor() as cur:
+            for key, value in DEFAULT_SETTINGS.items():
+                cur.execute(
+                    "INSERT INTO settings(key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+                    (key, value),
+                )
+
+        admin_username = os.getenv("ADMIN_USERNAME", "admin").strip()
+        admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+        viewer_username = os.getenv("VIEWER_USERNAME", "viewer").strip()
+        viewer_password = os.getenv("VIEWER_PASSWORD", "viewer123")
+
+        sync_special_user(conn, admin_username, admin_password, "admin")
+        sync_special_user(conn, viewer_username, viewer_password, "viewer")
+
+        conn.commit()
+
+
+def log_activity(action, details=""):
+    username = session.get("username") if session else None
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO activity_log(username, action, details) VALUES (%s, %s, %s)",
+                    (username, action, details[:2000]),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def find_member(name: str, email: str | None = None):
+    norm_name = (name or "").strip().lower()
+    norm_email = (email or "").strip().lower()
+    with db() as conn:
+        with conn.cursor() as cur:
+            name_sql = member_name_sql(conn)
+            if norm_email:
+                cur.execute(
+                    f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} AND lower(email)=%s LIMIT 1",
+                    (norm_email,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row
+            cur.execute(
+                f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} AND lower(COALESCE({name_sql}, ''))=%s LIMIT 1",
+                (norm_name,),
+            )
+            row = cur.fetchone()
+            if row:
+                return row
+    return None
+
+
+def participant_key(name, email=None):
+    if email:
+        return f"email::{email.strip().lower()}"
+    return f"name::{(name or '').strip().lower()}"
+
+
+def ensure_meeting(payload_object):
+    meeting_uuid = str(payload_object.get("uuid") or "").strip()
+    meeting_id = str(payload_object.get("id") or payload_object.get("meeting_id") or "").strip()
+    topic = (payload_object.get("topic") or payload_object.get("meeting_topic") or "Zoom Meeting").strip()
+    host_name = (payload_object.get("host_name") or payload_object.get("host_email") or "").strip()
+    start_time = parse_dt(payload_object.get("start_time")) or now_local()
+
+    lookup_uuid = meeting_uuid or meeting_id
+    if not lookup_uuid and not meeting_id:
+        return None
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            if lookup_uuid:
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (lookup_uuid,))
+                row = cur.fetchone()
+                if row:
+                    cur.execute(
+                        """
+                        UPDATE meetings
+                        SET meeting_id=COALESCE(NULLIF(%s, ''), meeting_id),
+                            topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
+                            host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
+                            start_time=COALESCE(start_time, %s)
+                        WHERE id=%s
+                        RETURNING *
+                        """,
+                        (meeting_id, topic, topic, host_name, host_name, start_time, row["id"]),
+                    )
+                    row = cur.fetchone()
+                    conn.commit()
+                    return row
+
+            if meeting_id:
+                cur.execute(
+                    "SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY id DESC LIMIT 1",
+                    (meeting_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    cur.execute(
+                        """
+                        UPDATE meetings
+                        SET topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
+                            host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
+                            start_time=COALESCE(start_time, %s)
+                        WHERE id=%s
+                        RETURNING *
+                        """,
+                        (topic, topic, host_name, host_name, start_time, row["id"]),
+                    )
+                    row = cur.fetchone()
+                    conn.commit()
+                    return row
+
+            cur.execute(
+                """
+                INSERT INTO meetings(meeting_uuid, meeting_id, topic, host_name, start_time, status)
+                VALUES (%s, %s, %s, %s, %s, 'live') RETURNING *
+                """,
+                (lookup_uuid or meeting_id, meeting_id, topic, host_name, start_time),
+            )
+            row = cur.fetchone()
+        conn.commit()
+
+    return row
+
+
+def get_row_visible_span_seconds(row, end_time=None):
+    first_join_dt = parse_dt(row.get("first_join"))
+    if not first_join_dt:
+        return None
+    last_point_dt = parse_dt(row.get("last_leave")) or parse_dt(row.get("current_join")) or parse_dt(end_time)
+    if not last_point_dt:
+        return None
+    if last_point_dt < first_join_dt:
+        return 0
+    return max(int((last_point_dt - first_join_dt).total_seconds()), 0)
+
+
+def get_row_effective_total_seconds(row, end_time=None):
+    total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
+    current_join_dt = parse_dt(row.get("current_join"))
+    end_dt = parse_dt(end_time)
+    if current_join_dt:
+        if end_dt and current_join_dt > end_dt:
+            current_join_dt = end_dt
+        if end_dt and current_join_dt:
+            total_seconds += max(int((end_dt - current_join_dt).total_seconds()), 0)
+
+    visible_span_seconds = get_row_visible_span_seconds(row, end_time)
+    if visible_span_seconds is not None and total_seconds > visible_span_seconds:
+        total_seconds = visible_span_seconds
+
+    return max(total_seconds, 0)
+
+
+def get_meeting_rows_last_activity(attendance_rows):
+    last_activity = None
+    for row in attendance_rows or []:
+        candidate = parse_dt(row.get("last_leave")) or parse_dt(row.get("current_join")) or parse_dt(row.get("first_join"))
+        if candidate and (last_activity is None or candidate > last_activity):
+            last_activity = candidate
+    return last_activity
+
+
+def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type):
+    is_host = bool(HOST_NAME_HINT and HOST_NAME_HINT in (participant_name or "").strip().lower())
+    member = find_member(participant_name, participant_email)
+    key = participant_key(participant_name, participant_email)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            is_member_db_value = db_true_value(conn, "attendance", "is_member") if member else db_false_value(conn, "attendance", "is_member")
+            is_host_db_value = db_true_value(conn, "attendance", "is_host") if is_host else db_false_value(conn, "attendance", "is_host")
+            has_meeting_pk = column_exists(conn, "attendance", "meeting_pk")
+            meeting_pk = None
+
+            if has_meeting_pk:
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                meeting = cur.fetchone()
+                if not meeting:
+                    print("❌ Meeting not found, skipping participant")
+                    return
+                meeting_pk = meeting.get("id")
+                if not meeting_pk:
+                    print("⚠️ Skipping attendance insert: meeting_pk missing")
+                    return
+
+            cur.execute(
+                "SELECT * FROM attendance WHERE meeting_uuid=%s AND participant_key=%s",
+                (meeting_uuid, key),
+            )
+            row = cur.fetchone()
+
+            if not row:
+                first_join = event_time if event_type == "join" else None
+                current_join = event_time if event_type == "join" else None
+                last_leave = event_time if event_type == "leave" else None
+
+                try:
+                    if has_meeting_pk:
+                        cur.execute(
+                            """
+                            INSERT INTO attendance(
+                                meeting_pk, meeting_uuid, participant_name, participant_email, participant_key,
+                                first_join, last_leave, current_join, total_seconds, rejoin_count,
+                                is_member, member_id, is_host, status, updated_at
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0,0,%s,%s,%s,%s,NOW())
+                            RETURNING *
+                            """,
+                            (
+                                meeting_pk,
+                                meeting_uuid,
+                                participant_name,
+                                participant_email,
+                                key,
+                                first_join,
+                                last_leave,
+                                current_join,
+                                is_member_db_value,
+                                member["id"] if member else None,
+                                is_host_db_value,
+                                "JOINED" if event_type == "join" else "LEFT",
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO attendance(
+                                meeting_uuid, participant_name, participant_email, participant_key,
+                                first_join, last_leave, current_join, total_seconds, rejoin_count,
+                                is_member, member_id, is_host, status, updated_at
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,0,0,%s,%s,%s,%s,NOW())
+                            RETURNING *
+                            """,
+                            (
+                                meeting_uuid,
+                                participant_name,
+                                participant_email,
+                                key,
+                                first_join,
+                                last_leave,
+                                current_join,
+                                is_member_db_value,
+                                member["id"] if member else None,
+                                is_host_db_value,
+                                "JOINED" if event_type == "join" else "LEFT",
+                            ),
+                        )
+                    row = cur.fetchone()
+                except Exception as e:
+                    print("❌ ATTENDANCE INSERT FAILED:", str(e))
+                    raise
+
+            if event_type == "join":
+                rejoin_count = row["rejoin_count"] or 0
+                had_previous_session = (
+                    row.get("first_join") is not None
+                    and row.get("current_join") is None
+                    and (
+                        row.get("last_leave") is not None
+                        or (row.get("total_seconds") or 0) > 0
+                    )
+                )
+                if had_previous_session:
+                    rejoin_count += 1
+
+                if has_meeting_pk:
+                    cur.execute(
+                        """
+                        UPDATE attendance
+                        SET participant_name=%s,
+                            participant_email=%s,
+                            first_join=COALESCE(first_join, %s),
+                            current_join=%s,
+                            rejoin_count=%s,
+                            is_member=%s,
+                            member_id=%s,
+                            is_host=%s,
+                            meeting_pk=%s,
+                            status='JOINED',
+                            updated_at=NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            participant_name,
+                            participant_email,
+                            event_time,
+                            event_time,
+                            rejoin_count,
+                            is_member_db_value,
+                            member["id"] if member else None,
+                            is_host_db_value,
+                            meeting_pk,
+                            row["id"],
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE attendance
+                        SET participant_name=%s,
+                            participant_email=%s,
+                            first_join=COALESCE(first_join, %s),
+                            current_join=%s,
+                            rejoin_count=%s,
+                            is_member=%s,
+                            member_id=%s,
+                            is_host=%s,
+                            status='JOINED',
+                            updated_at=NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            participant_name,
+                            participant_email,
+                            event_time,
+                            event_time,
+                            rejoin_count,
+                            is_member_db_value,
+                            member["id"] if member else None,
+                            is_host_db_value,
+                            row["id"],
+                        ),
+                    )
+            else:
+                total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
+                current_join_dt = parse_dt(row.get("current_join"))
+                if current_join_dt:
+                    if event_time < current_join_dt:
+                        delta = 0
+                    else:
+                        delta = int((event_time - current_join_dt).total_seconds())
+                    total_seconds += max(delta, 0)
+
+                visible_span_seconds = get_row_visible_span_seconds(
+                    {
+                        "first_join": row.get("first_join"),
+                        "last_leave": event_time,
+                        "current_join": None,
+                    },
+                    event_time,
+                )
+                if visible_span_seconds is not None and total_seconds > visible_span_seconds:
+                    total_seconds = visible_span_seconds
+
+                if has_meeting_pk:
+                    cur.execute(
+                        """
+                        UPDATE attendance
+                        SET participant_name=%s,
+                            participant_email=%s,
+                            last_leave=%s,
+                            current_join=NULL,
+                            total_seconds=%s,
+                            is_member=%s,
+                            member_id=%s,
+                            is_host=%s,
+                            meeting_pk=%s,
+                            status='LEFT',
+                            updated_at=NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            participant_name,
+                            participant_email,
+                            event_time,
+                            total_seconds,
+                            is_member_db_value,
+                            member["id"] if member else None,
+                            is_host_db_value,
+                            meeting_pk,
+                            row["id"],
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE attendance
+                        SET participant_name=%s,
+                            participant_email=%s,
+                            last_leave=%s,
+                            current_join=NULL,
+                            total_seconds=%s,
+                            is_member=%s,
+                            member_id=%s,
+                            is_host=%s,
+                            status='LEFT',
+                            updated_at=NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            participant_name,
+                            participant_email,
+                            event_time,
+                            total_seconds,
+                            is_member_db_value,
+                            member["id"] if member else None,
+                            is_host_db_value,
+                            row["id"],
+                        ),
+                    )
+        conn.commit()
+
+    refresh_live_meeting_summary(meeting_uuid)
+
+
+def classify_row_for_meeting(row, start_time, end_time, present_percentage=None, late_pct=None):
+    if present_percentage is None:
+        present_percentage = get_setting("present_percentage", int)
+    if late_pct is None:
+        late_pct = get_setting("late_count_as_present_percentage", int)
+
+    start_dt = parse_dt(start_time) or now_local()
+    end_dt = parse_dt(end_time) or start_dt
+    if end_dt < start_dt:
+        end_dt = start_dt
+
+    total = get_row_effective_total_seconds(row, end_dt)
+
+    meeting_seconds = max(int((end_dt - start_dt).total_seconds()), 0)
+    required_present = meeting_seconds * present_percentage / 100.0
+    required_late = meeting_seconds * late_pct / 100.0
+
+    if row.get("is_host"):
+        return "HOST", total
+    if total >= required_present:
+        return "PRESENT", total
+    if total >= required_late:
+        return "LATE", total
+    return "ABSENT", total
+
+
+def finalize_meeting(meeting_uuid, ended_at=None):
+    ended_at = parse_dt(ended_at) or now_local()
+    present_percentage = get_setting("present_percentage", int)
+    late_pct = get_setting("late_count_as_present_percentage", int)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+            meeting = cur.fetchone()
+            if not meeting:
+                return None
+
+            start_time = parse_dt(meeting["start_time"]) or ended_at
+
+            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
+            rows = cur.fetchall()
+
+            derived_last_activity = get_meeting_rows_last_activity(rows)
+            if derived_last_activity and derived_last_activity >= start_time:
+                if ended_at > derived_last_activity:
+                    end_time = derived_last_activity
+                else:
+                    end_time = ended_at
+            else:
+                end_time = ended_at
+
+            if end_time < start_time:
+                end_time = start_time
+
+            present_count = 0
+            late_count = 0
+            absent_count = 0
+            member_participants = 0
+            unknown_participants = 0
+            host_present = False
+
+            for row in rows:
+                final_status, total = classify_row_for_meeting(row, start_time, end_time, present_percentage, late_pct)
+
+                if final_status == "PRESENT":
+                    present_count += 1
+                elif final_status == "LATE":
+                    late_count += 1
+                elif final_status == "ABSENT":
+                    absent_count += 1
+
+                if row.get("is_member"):
+                    member_participants += 1
+                else:
+                    unknown_participants += 1
+
+                if row.get("is_host"):
+                    host_present = True
+
+                cur.execute(
+                    """
+                    UPDATE attendance
+                    SET total_seconds=%s,
+                        last_leave=COALESCE(last_leave, %s),
+                        current_join=NULL,
+                        final_status=%s,
+                        updated_at=NOW()
+                    WHERE id=%s
+                    """,
+                    (total, end_time, final_status, row["id"]),
+                )
+
+            cur.execute(
+                """
+                UPDATE meetings
+                SET end_time=%s,
+                    status='ended',
+                    finalized_at=NOW(),
+                    unique_participants=%s,
+                    member_participants=%s,
+                    unknown_participants=%s,
+                    present_count=%s,
+                    late_count=%s,
+                    absent_count=%s,
+                    host_present=%s
+                WHERE meeting_uuid=%s
+                RETURNING *
+                """,
+                (
+                    end_time,
+                    len(rows),
+                    member_participants,
+                    unknown_participants,
+                    present_count,
+                    late_count,
+                    absent_count,
+                    host_present,
+                    meeting_uuid,
+                ),
+            )
+            updated = cur.fetchone()
+        conn.commit()
+    return updated
+
+
+def refresh_live_meeting_summary(meeting_uuid):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s", (meeting_uuid,))
+            rows = cur.fetchall()
+
+            member_participants = sum(1 for r in rows if r["is_member"])
+            unknown_participants = sum(1 for r in rows if not r["is_member"])
+            host_present = any(r["is_host"] and r["current_join"] is not None for r in rows)
+
+            cur.execute(
+                """
+                UPDATE meetings
+                SET unique_participants=%s,
+                    member_participants=%s,
+                    unknown_participants=%s,
+                    host_present=%s
+                WHERE meeting_uuid=%s
+                """,
+                (len(rows), member_participants, unknown_participants, host_present, meeting_uuid),
+            )
+        conn.commit()
+
+
+def get_live_status_for_row(row, meeting_start):
+    now_dt = now_local()
+    start_dt = parse_dt(meeting_start) or now_dt
+    status, total = classify_row_for_meeting(row, start_dt, now_dt)
+    return status, total
+
+
+def read_live_snapshot():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM meetings
+                WHERE status='live' AND meeting_uuid IS NOT NULL AND meeting_uuid <> ''
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            )
+            meeting = cur.fetchone()
+
+            if not meeting:
+                return None
+
+            meeting_uuid = meeting.get("meeting_uuid")
+            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
+            participants = cur.fetchall()
+
+            cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY full_name")
+            members = cur.fetchall()
+
+    joined_member_ids = {p["member_id"] for p in participants if p.get("member_id") and p.get("first_join")}
+    not_joined_members = [m for m in members if m["id"] not in joined_member_ids]
+    active_now = [p for p in participants if p.get("current_join") is not None]
+
+    return {
+        "meeting": meeting,
+        "participants": participants,
+        "active_now": active_now,
+        "not_joined_members": not_joined_members,
+    }
+
+
+def normalize_period_dates(filters):
+    period_mode = filters.get("period_mode", "custom")
+    from_date = filters.get("from_date", "")
+    to_date = filters.get("to_date", "")
+
+    today = today_local()
+
+    if period_mode == "day":
+        from_date = today.isoformat()
+        to_date = today.isoformat()
+    elif period_mode == "week":
+        start = today - timedelta(days=today.weekday())
+        from_date = start.isoformat()
+        to_date = today.isoformat()
+    elif period_mode == "month":
+        start = today.replace(day=1)
+        from_date = start.isoformat()
+        to_date = today.isoformat()
+    elif period_mode == "year":
+        start = today.replace(month=1, day=1)
+        from_date = start.isoformat()
+        to_date = today.isoformat()
+
+    return from_date, to_date
+
+
+def compute_trend(rows, period_mode="custom"):
+    buckets = defaultdict(lambda: {"present": 0, "late": 0, "absent": 0, "unknown": 0})
+
+    for r in rows:
+        dt = parse_dt(r.get("start_time"))
+        if not dt:
+            continue
+
+        if period_mode == "year":
+            label = dt.strftime("%b")
+        elif period_mode == "month":
+            label = f"W{((dt.day - 1) // 7) + 1}"
+        elif period_mode == "week":
+            label = dt.strftime("%a")
+        else:
+            label = dt.strftime("%d-%m")
+
+        status = r.get("final_status")
+        if status == "PRESENT":
+            buckets[label]["present"] += 1
+        elif status == "LATE":
+            buckets[label]["late"] += 1
+        elif status == "ABSENT":
+            buckets[label]["absent"] += 1
+
+        if not r.get("is_member"):
+            buckets[label]["unknown"] += 1
+
+    labels = list(buckets.keys())
+    return {
+        "labels": labels,
+        "present": [buckets[k]["present"] for k in labels],
+        "late": [buckets[k]["late"] for k in labels],
+        "absent": [buckets[k]["absent"] for k in labels],
+        "unknown": [buckets[k]["unknown"] for k in labels],
+    }
+
+
+def predict_next_attendance(meeting_compare):
+    if not meeting_compare:
+        return 0
+    recent = meeting_compare[:5]
+    totals = [m.get("present", 0) + m.get("late", 0) + m.get("absent", 0) for m in recent]
+    return round(sum(totals) / len(totals)) if totals else 0
+
+
+
+
+def clamp_score(value, minimum=0, maximum=100):
+    try:
+        value = float(value)
+    except Exception:
+        value = 0.0
+    return round(max(minimum, min(maximum, value)), 2)
+
+
+def calculate_attendance_score(present_count, late_count, absent_count):
+    total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
+    if total <= 0:
+        return 0.0
+    raw = (int(present_count or 0) * 10) + (int(late_count or 0) * 5) - (int(absent_count or 0) * 10)
+    raw_min = total * -10
+    raw_max = total * 10
+    if raw_max == raw_min:
+        return 0.0
+    normalized = ((raw - raw_min) / (raw_max - raw_min)) * 100.0
+    return clamp_score(normalized)
+
+
+def calculate_engagement_score(minutes_attended, rejoins, meetings_count, present_count, late_count, absent_count, avg_minutes_reference):
+    meetings_count = max(int(meetings_count or 0), 0)
+    if meetings_count <= 0:
+        return 0.0
+    avg_minutes_reference = max(float(avg_minutes_reference or 0), 1.0)
+    minutes_attended = max(float(minutes_attended or 0), 0.0)
+    rejoins = max(float(rejoins or 0), 0.0)
+    attended_ratio = min(minutes_attended / (avg_minutes_reference * meetings_count), 1.25)
+    attended_component = min(attended_ratio / 1.25, 1.0) * 55.0
+    consistency_ratio = ((int(present_count or 0) * 1.0) + (int(late_count or 0) * 0.6)) / meetings_count
+    consistency_component = min(max(consistency_ratio, 0.0), 1.0) * 30.0
+    rejoins_per_meeting = rejoins / meetings_count
+    rejoin_component = max(0.0, 15.0 - min(rejoins_per_meeting * 7.5, 15.0))
+    return clamp_score(attended_component + consistency_component + rejoin_component)
+
+
+def get_risk_level(score):
+    score = clamp_score(score)
+    if score >= 80:
+        return {"label": "Safe", "emoji": "🟢", "css": "ok", "short": "SAFE"}
+    if score >= 50:
+        return {"label": "Warning", "emoji": "🟡", "css": "warn", "short": "WARNING"}
+    return {"label": "Critical", "emoji": "🔴", "css": "danger", "short": "CRITICAL"}
+
+
+def normalize_name_for_match(value):
+    return " ".join("".join(ch.lower() if ch.isalnum() else " " for ch in str(value or "")).split())
+
+
+def suggest_unknown_matches(unknown_board, members, limit=8):
+    suggestions = []
+    member_pool = []
+    for m in members or []:
+        member_name = member_display_name(m)
+        member_norm = normalize_name_for_match(member_name)
+        if member_norm:
+            member_pool.append((member_name, member_norm, m.get("id")))
+
+    for item in unknown_board or []:
+        unknown_name = item.get("name") or ""
+        unknown_norm = normalize_name_for_match(unknown_name)
+        if not unknown_norm:
+            continue
+        best = None
+        best_score = 0.0
+        for member_name, member_norm, member_id in member_pool:
+            ratio = SequenceMatcher(None, unknown_norm, member_norm).ratio()
+            if unknown_norm in member_norm or member_norm in unknown_norm:
+                ratio = max(ratio, 0.86)
+            if ratio > best_score:
+                best_score = ratio
+                best = {"unknown": unknown_name, "member": member_name, "member_id": member_id, "score": round(ratio * 100, 1)}
+        if best and best_score >= 0.65:
+            suggestions.append(best)
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
+def build_heatmap_data(rows, member_ids=None):
+    member_ids = {int(x) for x in (member_ids or []) if str(x).isdigit()}
+    status_priority = {"ABSENT": 0, "LATE": 1, "PRESENT": 2, "HOST": 2}
+    day_map = {}
+    filtered_rows = []
+    for r in rows or []:
+        if member_ids and int(r.get("member_id") or 0) not in member_ids:
+            continue
+        filtered_rows.append(r)
+
+    for r in filtered_rows:
+        dt = parse_dt(r.get("start_time")) or parse_dt(r.get("first_join"))
+        if not dt:
+            continue
+        day_key = dt.date().isoformat()
+        status = r.get("final_status") or ("HOST" if r.get("is_host") else None) or "ABSENT"
+        current = day_map.get(day_key)
+        if current is None or status_priority.get(status, 0) >= status_priority.get(current, 0):
+            day_map[day_key] = status
+
+    if day_map:
+        end_day = max(datetime.fromisoformat(k).date() for k in day_map.keys())
+    else:
+        end_day = today_local()
+    start_day = end_day - timedelta(days=83)
+    cells = []
+    current = start_day
+    while current <= end_day:
+        day_key = current.isoformat()
+        status = day_map.get(day_key)
+        if status == "PRESENT" or status == "HOST":
+            css = "heat-good"
+            title = f"{day_key}: Present"
+        elif status == "LATE":
+            css = "heat-warn"
+            title = f"{day_key}: Late / weak participation"
+        elif status == "ABSENT":
+            css = "heat-bad"
+            title = f"{day_key}: Absent"
+        else:
+            css = "heat-none"
+            title = f"{day_key}: No record"
+        cells.append({"date": day_key, "css": css, "title": title, "day": current.strftime("%d")})
+        current += timedelta(days=1)
+    return cells
+
+
+def build_insight_lines(summary, meeting_compare, leaderboard, risk_table):
+    lines = []
+    if summary.get("attendance_health") is not None:
+        lines.append(f"Attendance health is {summary['attendance_health']}% across the filtered dataset.")
+    if summary.get("risk_members_count", 0) > 0:
+        lines.append(f"{summary['risk_members_count']} member(s) currently fall into Warning or Critical risk level.")
+    if leaderboard:
+        top = leaderboard[0]
+        lines.append(f"Top ranked member is {top['name']} with attendance score {top['attendance_score']} and engagement score {top['engagement_score']}.")
+    if len(meeting_compare) >= 2:
+        latest = meeting_compare[0]
+        previous = meeting_compare[1]
+        delta = round((latest.get('health') or 0) - (previous.get('health') or 0), 2)
+        direction = 'improved' if delta >= 0 else 'dropped'
+        lines.append(f"Latest meeting health {direction} by {abs(delta)} points compared with the previous meeting.")
+    if risk_table:
+        critical = [r for r in risk_table if r['risk']['short'] == 'CRITICAL']
+        if critical:
+            lines.append(f"Critical attention is needed for {', '.join(r['name'] for r in critical[:3])}.")
+    return lines[:6]
+
+
+def build_filter_query(filters):
+    query_items = []
+    for key, value in filters.items():
+        if key == "member_ids":
+            for item in value or []:
+                if str(item).strip():
+                    query_items.append(("member_ids", str(item).strip()))
+        else:
+            if value not in (None, ""):
+                query_items.append((key, str(value)))
+    return urlencode(query_items, doseq=True)
+
+
+def analytics_data(filters):
+    period_mode = filters.get("period_mode", "custom")
+    from_date, to_date = normalize_period_dates(filters)
+    filters["from_date"] = from_date
+    filters["to_date"] = to_date
+
+    raw_member_ids = filters.get("member_ids") or []
+    if isinstance(raw_member_ids, str):
+        raw_member_ids = [raw_member_ids]
+    member_ids = []
+    for item in raw_member_ids:
+        item_text = str(item).strip()
+        if item_text.isdigit():
+            member_ids.append(int(item_text))
+    filters["member_ids"] = [str(item) for item in member_ids]
+
+    where = ["1=1"]
+    params = []
+
+    if from_date:
+        where.append("CAST(m.start_time AS TEXT)::date >= %s")
+        params.append(from_date)
+    if to_date:
+        where.append("CAST(m.start_time AS TEXT)::date <= %s")
+        params.append(to_date)
+    if filters.get("meeting_uuid"):
+        where.append("a.meeting_uuid = %s")
+        params.append(filters["meeting_uuid"])
+    if member_ids:
+        where.append("a.member_id = ANY(%s)")
+        params.append(member_ids)
+    if filters.get("person_name"):
+        where.append("lower(a.participant_name) LIKE %s")
+        params.append(f"%{filters['person_name'].strip().lower()}%")
+    if filters.get("participant_type") == "member":
+        where.append("CAST(a.is_member AS TEXT) IN ('1','true','t','True','TRUE')")
+    elif filters.get("participant_type") == "unknown":
+        where.append("COALESCE(CAST(a.is_member AS TEXT), '0') NOT IN ('1','true','t','True','TRUE')")
+    elif filters.get("participant_type") == "host":
+        where.append("CAST(a.is_host AS TEXT) IN ('1','true','t','True','TRUE')")
+
+    sql = f"""
+        SELECT
+            a.*, m.topic, m.start_time, m.end_time, m.meeting_id, m.id AS meeting_row_id
+        FROM attendance a
+        JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+        WHERE {' AND '.join(where)}
+        ORDER BY m.id DESC, a.participant_name ASC
+    """
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+            member_name_expr = member_name_sql(conn)
+            cur.execute(f"SELECT *, {member_name_expr} AS display_name FROM members ORDER BY COALESCE({member_name_expr}, '')")
+            all_members = cur.fetchall()
+
+            cur.execute(f"SELECT *, {member_name_expr} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
+            members = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT id, meeting_uuid, topic, start_time
+                FROM meetings
+                WHERE meeting_uuid IS NOT NULL AND meeting_uuid <> ''
+                ORDER BY id DESC
+                LIMIT 300
+                """
+            )
+            meetings = cur.fetchall()
+
+    total_rows = len(rows)
+    present_rows = sum(1 for r in rows if r.get("final_status") == "PRESENT")
+    late_rows = sum(1 for r in rows if r.get("final_status") == "LATE")
+    absent_rows = sum(1 for r in rows if r.get("final_status") == "ABSENT")
+    unknown_rows = sum(1 for r in rows if not r.get("is_member"))
+    member_rows = total_rows - unknown_rows
+    avg_minutes = round(sum((r.get("total_seconds") or 0) for r in rows) / 60 / total_rows, 2) if total_rows else 0
+    avg_rejoins = round(sum((r.get("rejoin_count") or 0) for r in rows) / total_rows, 2) if total_rows else 0
+    attendance_health = round(((present_rows + late_rows) / total_rows) * 100, 2) if total_rows else 0
+
+    by_person = {}
+    by_meeting = {}
+
+    for r in rows:
+        key = r.get("participant_name") or "Unknown Participant"
+        by_person.setdefault(
+            key,
+            {
+                "name": key,
+                "meetings": 0,
+                "minutes": 0.0,
+                "present": 0,
+                "late": 0,
+                "absent": 0,
+                "rejoins": 0,
+                "is_member": bool(r.get("is_member")),
+                "member_id": r.get("member_id"),
+                "is_host": bool(r.get("is_host")),
+            },
+        )
+        by_person[key]["meetings"] += 1
+        by_person[key]["minutes"] += (r.get("total_seconds") or 0) / 60
+        by_person[key]["rejoins"] += (r.get("rejoin_count") or 0)
+        if r.get("final_status") == "PRESENT":
+            by_person[key]["present"] += 1
+        elif r.get("final_status") == "LATE":
+            by_person[key]["late"] += 1
+        elif r.get("final_status") == "ABSENT":
+            by_person[key]["absent"] += 1
+
+        mk = r.get("meeting_uuid") or f"meeting_{r.get('meeting_row_id')}"
+        by_meeting.setdefault(
+            mk,
+            {
+                "meeting_uuid": r.get("meeting_uuid"),
+                "topic": r.get("topic") or "Untitled Meeting",
+                "start_time": r.get("start_time"),
+                "present": 0,
+                "late": 0,
+                "absent": 0,
+                "unknown": 0,
+                "total": 0,
+                "health": 0,
+            },
+        )
+        by_meeting[mk]["total"] += 1
+        if r.get("final_status") == "PRESENT":
+            by_meeting[mk]["present"] += 1
+        elif r.get("final_status") == "LATE":
+            by_meeting[mk]["late"] += 1
+        elif r.get("final_status") == "ABSENT":
+            by_meeting[mk]["absent"] += 1
+        if not r.get("is_member"):
+            by_meeting[mk]["unknown"] += 1
+
+    meeting_compare = list(by_meeting.values())[:30]
+    for m in meeting_compare:
+        total = m["total"] or 1
+        m["health"] = round(((m["present"] + m["late"]) / total) * 100, 2)
+
+    trend = compute_trend(rows, period_mode)
+    prediction = predict_next_attendance(meeting_compare)
+
+    selected_member_map = {int(m["id"]): member_display_name(m) for m in members if m.get("id") is not None}
+
+    chart_rows = []
+    chart_where = ["CAST(a.is_member AS TEXT) IN ('1','true','t','True','TRUE')", "a.member_id IS NOT NULL"]
+    chart_params = []
+    if from_date:
+        chart_where.append("CAST(m.start_time AS TEXT)::date >= %s")
+        chart_params.append(from_date)
+    if to_date:
+        chart_where.append("CAST(m.start_time AS TEXT)::date <= %s")
+        chart_params.append(to_date)
+    if filters.get("meeting_uuid"):
+        chart_where.append("a.meeting_uuid = %s")
+        chart_params.append(filters["meeting_uuid"])
+    if member_ids:
+        chart_where.append("a.member_id = ANY(%s)")
+        chart_params.append(member_ids)
+    if filters.get("person_name"):
+        chart_where.append("lower(a.participant_name) LIKE %s")
+        chart_params.append(f"%{filters['person_name'].strip().lower()}%")
+    if filters.get("participant_type") == "host":
+        chart_where.append("CAST(a.is_host AS TEXT) IN ('1','true','t','True','TRUE')")
+
+    chart_sql = f"""
+        SELECT a.member_id, a.participant_name, a.total_seconds, a.current_join, a.first_join, a.last_leave,
+               a.rejoin_count, a.final_status, a.is_member, m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
+        FROM attendance a
+        JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+        WHERE {' AND '.join(chart_where)}
+        ORDER BY m.id DESC, a.participant_name ASC
+    """
+
+    latest_meeting_label = None
+    if not member_ids and not filters.get("meeting_uuid") and not from_date and not to_date and not filters.get("person_name") and filters.get("participant_type", "all") in ("all", "member"):
+        latest_meeting_uuid = meetings[0]["meeting_uuid"] if meetings else None
+        if latest_meeting_uuid:
+            chart_rows = [r for r in rows if r.get("meeting_uuid") == latest_meeting_uuid and r.get("is_member")]
+            if not chart_rows:
+                with db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT a.member_id, a.participant_name, a.total_seconds, a.current_join, a.first_join, a.last_leave,
+                                   a.rejoin_count, a.final_status, a.is_member, m.meeting_uuid, m.start_time, m.topic, m.id AS meeting_row_id
+                            FROM attendance a
+                            JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+                            WHERE CAST(a.is_member AS TEXT) IN ('1','true','t','True','TRUE') AND a.member_id IS NOT NULL AND a.meeting_uuid = %s
+                            ORDER BY a.participant_name ASC
+                            """,
+                            (latest_meeting_uuid,),
+                        )
+                        chart_rows = cur.fetchall()
+            latest_meeting = meetings[0] if meetings else None
+            if latest_meeting:
+                latest_meeting_label = f"{latest_meeting.get('topic') or 'Latest Meeting'} - {fmt_dt(latest_meeting.get('start_time'))}"
+        chart_mode = "latest_meeting_all_members"
+    else:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(chart_sql, chart_params)
+                chart_rows = cur.fetchall()
+        chart_mode = "filtered_selection"
+
+    member_duration_map = defaultdict(float)
+    member_label_map = {}
+    for r in chart_rows:
+        member_id = r.get("member_id")
+        if not member_id:
+            continue
+        duration_seconds = r.get("total_seconds") or 0
+        if r.get("current_join"):
+            chart_end = now_local()
+            current_join = parse_dt(r.get("current_join"))
+            if current_join:
+                duration_seconds += max(int((chart_end - current_join).total_seconds()), 0)
+        member_duration_map[int(member_id)] += duration_seconds / 60.0
+        member_label_map[int(member_id)] = selected_member_map.get(int(member_id), r.get("participant_name") or f"Member {member_id}")
+
+    if member_ids:
+        ordered_member_ids = [mid for mid in member_ids if mid in member_label_map or mid in selected_member_map]
+    else:
+        ordered_member_ids = sorted(member_duration_map.keys(), key=lambda mid: member_label_map.get(mid, "").lower())
+
+    member_duration_labels = []
+    member_duration_values = []
+    for mid in ordered_member_ids:
+        label = member_label_map.get(mid) or selected_member_map.get(mid)
+        if not label:
+            continue
+        member_duration_labels.append(label)
+        member_duration_values.append(round(member_duration_map.get(mid, 0), 2))
+
+    member_duration_chart = {
+        "labels": member_duration_labels,
+        "chart_values": member_duration_values,
+        "empty": len(member_duration_labels) == 0,
+        "subtitle": (
+            f"Showing all members for latest meeting: {latest_meeting_label}" if chart_mode == "latest_meeting_all_members" and latest_meeting_label else
+            "Showing selected members based on your current filters." if member_ids else
+            "Showing members based on your current filters."
+        ),
+    }
+
+    avg_minutes_reference = avg_minutes if avg_minutes > 0 else max((sum(member_duration_values) / len(member_duration_values)) if member_duration_values else 0, 1)
+
+    enriched_people = []
+    for person in by_person.values():
+        attendance_score = calculate_attendance_score(person["present"], person["late"], person["absent"])
+        engagement_score = calculate_engagement_score(
+            person["minutes"],
+            person["rejoins"],
+            person["meetings"],
+            person["present"],
+            person["late"],
+            person["absent"],
+            avg_minutes_reference,
+        )
+        overall_score = clamp_score((attendance_score * 0.6) + (engagement_score * 0.4))
+        risk = get_risk_level(overall_score)
+        person["attendance_score"] = attendance_score
+        person["engagement_score"] = engagement_score
+        person["overall_score"] = overall_score
+        person["risk"] = risk
+        enriched_people.append(person)
+
+    leaderboard = sorted(
+        [p for p in enriched_people if p.get("is_member")],
+        key=lambda x: (x["overall_score"], x["attendance_score"], x["engagement_score"], x["minutes"]),
+        reverse=True,
+    )
+    risk_table = sorted(
+        [p for p in leaderboard if p["risk"]["short"] in ("CRITICAL", "WARNING")],
+        key=lambda x: (x["risk"]["short"] != "CRITICAL", x["overall_score"], x["minutes"]),
+    )
+    top_people = leaderboard[:5]
+    low_people = sorted(
+        [p for p in leaderboard],
+        key=lambda x: (x["overall_score"], x["attendance_score"], -x["absent"], x["minutes"]),
+    )[:5]
+    unknown_board = sorted([v for v in enriched_people if not v["is_member"]], key=lambda x: x["meetings"], reverse=True)[:10]
+
+    avg_attendance_score = round(sum(p["attendance_score"] for p in leaderboard) / len(leaderboard), 2) if leaderboard else 0
+    avg_engagement_score = round(sum(p["engagement_score"] for p in leaderboard) / len(leaderboard), 2) if leaderboard else 0
+    risk_members_count = sum(1 for p in leaderboard if p["risk"]["short"] in ("CRITICAL", "WARNING"))
+    critical_members = [p for p in leaderboard if p["risk"]["short"] == "CRITICAL"]
+    warning_members = [p for p in leaderboard if p["risk"]["short"] == "WARNING"]
+
+    latest_meeting_summary = meeting_compare[0] if meeting_compare else None
+    previous_meeting_summary = meeting_compare[1] if len(meeting_compare) > 1 else None
+    comparison_delta = None
+    if latest_meeting_summary and previous_meeting_summary:
+        comparison_delta = round((latest_meeting_summary.get("health") or 0) - (previous_meeting_summary.get("health") or 0), 2)
+
+    heatmap = build_heatmap_data(rows, member_ids=member_ids)
+    unknown_match_suggestions = suggest_unknown_matches(unknown_board, members)
+    reminder_suggestion = {
+        "count": len(critical_members) + len(warning_members),
+        "message": f"⚠️ {len(critical_members) + len(warning_members)} members missed or underperformed in the latest filtered view." if (critical_members or warning_members) else "No urgent reminder suggestion right now.",
+        "names": [p["name"] for p in (critical_members + warning_members)[:6]],
+    }
+    insight_lines = build_insight_lines(
+        {
+            "attendance_health": attendance_health,
+            "risk_members_count": risk_members_count,
+        },
+        meeting_compare,
+        leaderboard,
+        risk_table,
+    )
+
+    summary = {
+        "total_rows": total_rows,
+        "present_rows": present_rows,
+        "late_rows": late_rows,
+        "absent_rows": absent_rows,
+        "unknown_rows": unknown_rows,
+        "member_rows": member_rows,
+        "avg_minutes": avg_minutes,
+        "avg_rejoins": avg_rejoins,
+        "predicted_next_attendance": prediction,
+        "attendance_health": attendance_health,
+        "avg_attendance_score": avg_attendance_score,
+        "avg_engagement_score": avg_engagement_score,
+        "risk_members_count": risk_members_count,
+        "critical_members_count": len(critical_members),
+        "warning_members_count": len(warning_members),
+        "safe_members_count": sum(1 for p in leaderboard if p["risk"]["short"] == "SAFE"),
+        "insight_lines": insight_lines,
+    }
+
+    return {
+        "filters": filters,
+        "rows": rows,
+        "members": members,
+        "all_members": all_members,
+        "meetings": meetings,
+        "summary": summary,
+        "top_people": top_people,
+        "low_people": low_people,
+        "unknown_board": unknown_board,
+        "meeting_compare": meeting_compare,
+        "trend": trend,
+        "member_duration_chart": member_duration_chart,
+        "leaderboard": leaderboard[:10],
+        "risk_table": risk_table[:12],
+        "heatmap": heatmap,
+        "unknown_match_suggestions": unknown_match_suggestions,
+        "reminder_suggestion": reminder_suggestion,
+        "latest_meeting_summary": latest_meeting_summary,
+        "previous_meeting_summary": previous_meeting_summary,
+        "comparison_delta": comparison_delta,
+    }
+
+
+
+def build_meeting_report_data(meeting_uuid):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+            meeting = cur.fetchone()
+            if not meeting:
+                return None
+
+            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
+            attendance_rows = cur.fetchall()
+
+            cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY id")
+            active_members = cur.fetchall()
+
+    start_time = parse_dt(meeting.get("start_time")) or now_local()
+    end_time = parse_dt(meeting.get("end_time"))
+    derived_last_activity = get_meeting_rows_last_activity(attendance_rows)
+    if not end_time:
+        end_time = derived_last_activity or now_local()
+    elif derived_last_activity and derived_last_activity >= start_time and end_time > derived_last_activity:
+        end_time = derived_last_activity
+    if end_time < start_time:
+        end_time = start_time
+
+    meeting_total_seconds = max(int((end_time - start_time).total_seconds()), 0)
+    present_threshold_minutes = round(meeting_total_seconds / 60 * get_setting("present_percentage", int) / 100.0, 2)
+    late_summary_threshold_minutes = round(max((end_time - start_time).total_seconds(), 0) / 60 * get_setting("late_count_as_present_percentage", int) / 100.0, 2)
+
+    joined_member_ids = set()
+    joined_actual_count = 0
+    report_rows = []
+    present_members_count = 0
+    absent_members_count = 0
+    unknown_participants_count = 0
+
+    for row in attendance_rows:
+        final_status = row.get("final_status")
+        if not final_status:
+            final_status, total_seconds = classify_row_for_meeting(row, start_time, end_time)
+        else:
+            total_seconds = get_row_effective_total_seconds(row, end_time)
+        total_seconds = max(0, min(int(total_seconds or 0), meeting_total_seconds))
+
+        join_seen = bool(row.get("first_join") or row.get("last_leave") or row.get("current_join") or total_seconds > 0)
+        if join_seen:
+            joined_actual_count += 1
+
+        if row.get("member_id"):
+            joined_member_ids.add(row.get("member_id"))
+
+        display_status = "HOST" if row.get("is_host") else final_status
+
+        if row.get("is_member") and final_status == "PRESENT":
+            present_members_count += 1
+        if (not row.get("is_member")) and join_seen:
+            unknown_participants_count += 1
+
+        report_rows.append(
+            {
+                "participant_name": row.get("participant_name") or "-",
+                "join_display": fmt_time_ampm(row.get("first_join")) if row.get("first_join") else "-",
+                "leave_display": fmt_time_ampm(row.get("last_leave")) if row.get("last_leave") else "-",
+                "duration_minutes": mins_from_seconds(total_seconds),
+                "rejoin_count": row.get("rejoin_count") or 0,
+                "status": display_status,
+                "is_unknown_joined": (not row.get("is_member")) and join_seen,
+            }
+        )
+
+    for member in active_members:
+        if member.get("id") not in joined_member_ids:
+            absent_members_count += 1
+            report_rows.append(
+                {
+                    "participant_name": member_display_name(member),
+                    "join_display": "-",
+                    "leave_display": "-",
+                    "duration_minutes": 0.0,
+                    "rejoin_count": 0,
+                    "status": "ABSENT",
+                    "is_unknown_joined": False,
+                }
+            )
+
+    def status_order(item):
+        order = {"HOST": 0, "PRESENT": 1, "LATE": 2, "ABSENT": 3}
+        return (order.get(item["status"], 99), item["participant_name"].lower())
+
+    report_rows = sorted(report_rows, key=status_order)
+
+    summary = {
+        "topic": meeting.get("topic") or "Zoom Meeting",
+        "meeting_id": meeting.get("meeting_id") or "-",
+        "date": fmt_date(start_time),
+        "start_time": fmt_time_ampm(start_time),
+        "end_time": fmt_time_ampm(end_time),
+        "meeting_duration_minutes": mins_from_seconds(int((end_time - start_time).total_seconds())),
+        "total_participants": joined_actual_count,
+        "total_members": len(active_members),
+        "total_present_members": present_members_count,
+        "total_absent_members": absent_members_count,
+        "total_unknown_participants": unknown_participants_count,
+        "present_threshold_minutes": present_threshold_minutes,
+        "late_summary_threshold_minutes": late_summary_threshold_minutes,
+    }
+    return {"meeting": meeting, "rows": report_rows, "summary": summary}
+
+
+def build_meeting_pdf_filename(report_data):
+    summary = report_data["summary"]
+    date_part = summary.get("date") or fmt_date(now_local())
+    start_part = (summary.get("start_time") or "-").replace(":", "-").replace(" ", "_")
+    end_part = (summary.get("end_time") or "-").replace(":", "-").replace(" ", "_")
+    return f"{date_part}_from_{start_part}_to_{end_part}.pdf"
+
+
+def export_meeting_pdf_bytes(title, report_data):
+    meeting = report_data["meeting"]
+    rows = report_data["rows"]
+    summary = report_data["summary"]
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
+    styles = getSampleStyleSheet()
+    elements = []
+
+    title_style = styles["Title"]
+    title_style.alignment = 1
+    elements.append(Paragraph(f"<b>{title}</b>", title_style))
+    elements.append(Spacer(1, 12))
+
+    info_lines = [
+        f"Topic: {summary['topic']}",
+        f"Meeting ID: {summary['meeting_id']}",
+        f"Date: {summary['date']}",
+        f"Start Time: {summary['start_time']}",
+        f"End Time: {summary['end_time']}",
+        f"Total Meeting Duration: {summary['meeting_duration_minutes']} minutes",
+    ]
+    for line in info_lines:
+        elements.append(Paragraph(line, styles["Normal"]))
+
+    elements.append(Spacer(1, 10))
+
+    table_data = [["Name", "Join", "Leave", "Duration", "Rejoins", "Status"]]
+    for row in rows:
+        name_value = row["participant_name"]
+        if row["is_unknown_joined"]:
+            name_value = f'<font color="red">{name_value}</font>'
+        table_data.append(
+            [
+                Paragraph(name_value, styles["Normal"]),
+                row["join_display"],
+                row["leave_display"],
+                str(row["duration_minutes"]),
+                str(row["rejoin_count"]),
+                row["status"],
+            ]
+        )
+
+    table = Table(table_data, repeatRows=1, colWidths=[190, 75, 75, 60, 55, 65])
+    table_style = TableStyle(
+        [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]
+    )
+
+    for i in range(1, len(table_data)):
+        status = rows[i - 1]["status"]
+        if status == "PRESENT":
+            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.green)
+        elif status == "LATE":
+            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.orange)
+        elif status == "ABSENT":
+            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
+        elif status == "HOST":
+            table_style.add("TEXTCOLOR", (5, i), (5, i), colors.HexColor("#1d4ed8"))
+
+    table.setStyle(table_style)
+    elements.append(table)
+    elements.append(Spacer(1, 12))
+
+    summary_lines = [
+        f"Total Participants: {summary['total_participants']}",
+        f"Total Members: {summary['total_members']}",
+        f"Total Present Members: {summary['total_present_members']}",
+        f"Total Absent Members: {summary['total_absent_members']}",
+        f"Total Unknown Participants: {summary['total_unknown_participants']}",
+    ]
+    for line in summary_lines:
+        elements.append(Paragraph(line, styles["Normal"]))
+
+    elements.append(Spacer(1, 10))
+
+    criteria_data = [[
+        Paragraph(
+            "<b>■ Attendance Criteria</b><br/>"
+            "■ Present = Duration ≥ 75% of total meeting duration<br/>"
+            "■ Late = Duration &lt; 75% of total meeting duration<br/>"
+            "■ Absent = Did not join the meeting (for added members only)<br/><br/>"
+            f"<b>■ Present Threshold For This Meeting: {summary['present_threshold_minutes']} minutes</b><br/>"
+            f"<b>■ Late counted as present in summary if Duration &gt; {summary['late_summary_threshold_minutes']} minutes</b>",
+            styles["Normal"],
+        )
+    ]]
+    criteria_table = Table(criteria_data, colWidths=[540])
+    criteria_table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    elements.append(criteria_table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def export_csv_bytes(rows):
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "Meeting Topic",
+            "Meeting ID",
+            "Meeting Start",
+            "Participant",
+            "Email",
+            "Member",
+            "Host",
+            "First Join",
+            "Last Leave",
+            "Duration (Min)",
+            "Rejoins",
+            "Final Status",
+        ]
+    )
+    for r in rows:
+        writer.writerow(
+            [
+                r.get("topic") or "",
+                r.get("meeting_id") or "",
+                fmt_dt(r.get("start_time")),
+                r.get("participant_name") or "",
+                r.get("participant_email") or "",
+                "Yes" if r.get("is_member") else "No",
+                "Yes" if r.get("is_host") else "No",
+                fmt_dt(r.get("first_join")),
+                fmt_dt(r.get("last_leave")),
+                mins_from_seconds(r.get("total_seconds")),
+                r.get("rejoin_count") or 0,
+                r.get("final_status") or "-",
+            ]
+        )
+    return out.getvalue().encode("utf-8")
+
+
+def export_pdf_bytes(title, rows, summary):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
+    styles = getSampleStyleSheet()
+    elements = [Paragraph(f"<b>{title}</b>", styles["Title"]), Spacer(1, 12)]
+
+    elements.append(Paragraph(f"Generated: {fmt_dt(now_local())}", styles["Normal"]))
+    elements.append(
+        Paragraph(
+            f"Total: {summary.get('total_rows', 0)} | Present: {summary.get('present_rows', 0)} | Late: {summary.get('late_rows', 0)} | "
+            f"Absent: {summary.get('absent_rows', 0)} | Unknown: {summary.get('unknown_rows', 0)} | Avg Minutes: {summary.get('avg_minutes', 0)}",
+            styles["Normal"],
+        )
+    )
+    elements.append(
+        Paragraph(
+            f"Attendance Health: {summary.get('attendance_health', 0)}% | Avg Attendance Score: {summary.get('avg_attendance_score', 0)} | "
+            f"Avg Engagement Score: {summary.get('avg_engagement_score', 0)} | Risk Members: {summary.get('risk_members_count', 0)}",
+            styles["Normal"],
+        )
+    )
+    elements.append(Spacer(1, 12))
+
+    for insight in summary.get("insight_lines", [])[:4]:
+        elements.append(Paragraph(f"• {insight}", styles["Normal"]))
+    if summary.get("insight_lines"):
+        elements.append(Spacer(1, 10))
+
+    data = [["Topic", "Participant", "Member", "Duration", "Rejoins", "Status"]]
+    for r in rows[:140]:
+        data.append(
+            [
+                (r.get("topic") or "")[:20],
+                (r.get("participant_name") or "")[:18],
+                "Yes" if r.get("is_member") else "No",
+                str(mins_from_seconds(r.get("total_seconds"))),
+                str(r.get("rejoin_count") or 0),
+                r.get("final_status") or ("HOST" if r.get("is_host") else "-"),
+            ]
+        )
+
+    table = Table(data, repeatRows=1, colWidths=[120, 110, 55, 65, 55, 70])
+    style = TableStyle(
+        [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ]
+    )
+
+    for i in range(1, len(data)):
+        status = data[i][5]
+        if status == "PRESENT":
+            style.add("TEXTCOLOR", (5, i), (5, i), colors.green)
+        elif status == "LATE":
+            style.add("TEXTCOLOR", (5, i), (5, i), colors.orange)
+        elif status == "ABSENT":
+            style.add("TEXTCOLOR", (5, i), (5, i), colors.red)
+        elif status == "HOST":
+            style.add("TEXTCOLOR", (5, i), (5, i), colors.HexColor("#1d4ed8"))
+
+    table.setStyle(style)
+    elements.append(table)
+    elements.append(Spacer(1, 12))
+
+    criteria_data = [[
+        Paragraph(
+            "<b>Attendance intelligence notes</b><br/>"
+            "• Attendance Score model: Present = +10, Late = +5, Absent = -10, normalized to 0–100<br/>"
+            "• Engagement Score model: duration quality + lower rejoins + consistency, normalized to 0–100<br/>"
+            "• Risk Level: 80–100 Safe, 50–79 Warning, below 50 Critical<br/>"
+            "• Green = healthy, Yellow = caution, Red = poor / critical, Blue = informational.",
+            styles["Normal"],
+        )
+    ]]
+    criteria_table = Table(criteria_data, colWidths=[540])
+    criteria_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 1, colors.black),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(criteria_table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+
+def verify_zoom_signature(req):
+    if not ZOOM_SECRET_TOKEN:
+        return True
+    timestamp = req.headers.get("x-zm-request-timestamp", "")
+    signature = req.headers.get("x-zm-signature", "")
+    body = req.get_data(as_text=True)
+    message = f"v0:{timestamp}:{body}".encode("utf-8")
+    secret = ZOOM_SECRET_TOKEN.encode("utf-8")
+    computed = "v0=" + hmac.new(secret, message, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(computed, signature)
+
+
 BASE_HTML = """
 <!DOCTYPE html>
 <html>
@@ -491,7 +2838,7 @@ BASE_HTML = """
     function applyAutoTooltips(){
         const selectors = 'th, h4, .label-with-tip';
         document.querySelectorAll(selectors).forEach((el) => {
-            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\s+/g,' ').trim();
+            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\s+/g,' ').trim();
             if (!raw || el.querySelector('.tooltip')) return;
             if (!tooltipMap[raw]) return;
             const tip = document.createElement('span');
@@ -506,7 +2853,7 @@ BASE_HTML = """
         document.querySelectorAll('.metric').forEach((el) => {
             if (el.dataset.animated === '1') return;
             const raw = (el.textContent || '').trim();
-            const match = raw.match(/^-?\d+(?:\.\d+)?/);
+            const match = raw.match(/^-?\\d+(?:\\.\\d+)?/);
             if (!match) return;
             const value = parseFloat(match[0]);
             if (!Number.isFinite(value)) return;
