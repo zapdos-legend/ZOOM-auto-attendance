@@ -3199,12 +3199,6 @@ def index():
     return redirect(url_for("login"))
 
 
-@app.route("/favicon.ico")
-def favicon():
-    return Response(status=204)
-
-
-
 @app.route("/login", methods=["GET", "POST"])
 def login():
     login_error = None
@@ -3376,15 +3370,6 @@ def home():
         print(f"⚠️ home stale finalization skipped: {e}")
 
     live_info = read_live_snapshot()
-    host_now = "No"
-    unknown_live_count = 0
-
-    if live_info:
-        for p in live_info.get("participants", []):
-            if not p.get("is_member"):
-                unknown_live_count += 1
-            if p.get("is_host") and p.get("current_join") is not None:
-                host_now = "Yes"
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -3415,6 +3400,15 @@ def home():
     total_classified = present + late + absent
     health = round(((present + late) / total_classified) * 100, 2) if total_classified else 0
     latest_meeting = recent_meetings[0] if recent_meetings else None
+
+    host_now = "No"
+    unknown_live_count = 0
+    if live_info and live_info.get("participants"):
+        for participant_row in live_info.get("participants") or []:
+            if participant_row.get("is_host") and participant_row.get("current_join") is not None:
+                host_now = "Yes"
+            if participant_row.get("current_join") is not None and not participant_row.get("is_member"):
+                unknown_live_count += 1
 
     body = render_template_string(
         """
@@ -5139,6 +5133,11 @@ def activity():
         fmt_dt=fmt_dt,
     )
     return page("Activity", body, "activity")
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return Response(status=204)
 
 
 @app.route("/health")
