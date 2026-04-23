@@ -1,3 +1,17 @@
+
+# ===== DARK SAAS THEME INJECTION (SAFE) =====
+DARK_THEME_CSS = '''
+<style>
+body { background: linear-gradient(135deg,#0b0f1a,#111827); color:#e5e7eb; font-family: Inter, sans-serif;}
+.card { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border-radius:12px; padding:16px; box-shadow:0 8px 30px rgba(0,0,0,0.4);}
+button { background: linear-gradient(90deg,#6366f1,#8b5cf6); color:white; border:none; padding:10px 16px; border-radius:8px;}
+button:hover { opacity:0.9; }
+table { background: rgba(255,255,255,0.03); border-radius:10px;}
+th { position: sticky; top:0; background:#111827;}
+</style>
+'''
+# ===== END THEME =====
+
 import csv
 import hashlib
 import hmac
