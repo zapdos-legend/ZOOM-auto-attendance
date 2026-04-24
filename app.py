@@ -1,3 +1,4 @@
+# UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
 # UI_UPDATE_V3_ANALYTICS_TABS_DARK_REGISTER_APPLIED = True
 # UI_UPDATE_V5_NOTIFICATION_CONTROL_FIX_APPLIED = True
@@ -3441,6 +3442,113 @@ BASE_HTML = """
             --chip-bg:rgba(255,255,255,.06);
             --bg-grid:rgba(148,163,184,.08);
         }
+
+        /* ===== GLOBAL THEME SYSTEM LAYER (SAFE: variables only, no structure changes) ===== */
+        body[data-app-theme="default-saas-dark"]{
+            --nav:#020617;--nav-2:#111827;--bg1:#06111f;--bg2:#0b1220;--bg3:#101a2f;
+            --card:#0f172a;--card-soft:rgba(15,23,42,.72);--card-solid:#0f172a;--text:#e5eefc;--muted:#9fb2d3;
+            --line:#24334d;--line-strong:#334155;--primary:#60a5fa;--primary2:#3b82f6;--primary3:#8b5cf6;
+            --success:#22c55e;--warn:#fbbf24;--danger:#ef4444;--cyan:#22d3ee;--soft:#16233b;
+            --shadow:0 20px 54px rgba(2,6,23,.42);--shadow-soft:0 14px 32px rgba(2,6,23,.30);
+            --surface-ring:rgba(148,163,184,.16);--hero-grad:linear-gradient(135deg,#020617 0%,#1d4ed8 56%,#6d28d9 100%);
+            --hero-glow:rgba(96,165,250,.16);--btn-grad:linear-gradient(135deg,#1d4ed8 0%,#4f46e5 54%,#7c3aed 100%);
+            --chip-bg:rgba(255,255,255,.06);--bg-grid:rgba(148,163,184,.08);
+        }
+        body[data-app-theme="notion-clean"]{
+            --nav:#111827;--nav-2:#1f2937;--bg1:#f7f6f3;--bg2:#fbfaf7;--bg3:#efece6;
+            --card:#ffffff;--card-soft:rgba(255,255,255,.82);--card-solid:#ffffff;--text:#1f2937;--muted:#6b7280;
+            --line:#e5e7eb;--line-strong:#d1d5db;--primary:#111827;--primary2:#374151;--primary3:#6b7280;
+            --success:#15803d;--warn:#b45309;--danger:#b91c1c;--cyan:#0f766e;--soft:#f3f4f6;
+            --shadow:0 18px 42px rgba(17,24,39,.08);--shadow-soft:0 10px 26px rgba(17,24,39,.06);
+            --surface-ring:rgba(17,24,39,.10);--hero-grad:linear-gradient(135deg,#111827 0%,#374151 100%);
+            --hero-glow:rgba(17,24,39,.10);--btn-grad:linear-gradient(135deg,#111827,#374151);
+            --chip-bg:rgba(255,255,255,.15);--bg-grid:rgba(107,114,128,.10);
+        }
+        body[data-app-theme="stripe-glow"]{
+            --nav:#0f172a;--nav-2:#312e81;--bg1:#f6f8ff;--bg2:#eef4ff;--bg3:#f8f0ff;
+            --card:#ffffff;--card-soft:rgba(255,255,255,.78);--card-solid:#ffffff;--text:#0f172a;--muted:#64748b;
+            --line:#dbeafe;--line-strong:#bfdbfe;--primary:#635bff;--primary2:#7c3aed;--primary3:#06b6d4;
+            --success:#10b981;--warn:#f59e0b;--danger:#ef4444;--cyan:#06b6d4;--soft:#eef2ff;
+            --shadow:0 24px 60px rgba(99,91,255,.18);--shadow-soft:0 14px 34px rgba(99,91,255,.13);
+            --surface-ring:rgba(99,91,255,.18);--hero-grad:linear-gradient(135deg,#635bff 0%,#7c3aed 48%,#06b6d4 100%);
+            --hero-glow:rgba(99,91,255,.22);--btn-grad:linear-gradient(135deg,#635bff,#7c3aed,#06b6d4);
+            --chip-bg:rgba(255,255,255,.18);--bg-grid:rgba(99,91,255,.10);
+        }
+        body[data-app-theme="vercel-minimal"]{
+            --nav:#000000;--nav-2:#111111;--bg1:#ffffff;--bg2:#fafafa;--bg3:#f5f5f5;
+            --card:#ffffff;--card-soft:rgba(255,255,255,.92);--card-solid:#ffffff;--text:#000000;--muted:#666666;
+            --line:#e5e5e5;--line-strong:#cfcfcf;--primary:#000000;--primary2:#111111;--primary3:#404040;
+            --success:#15803d;--warn:#b45309;--danger:#dc2626;--cyan:#0369a1;--soft:#f5f5f5;
+            --shadow:0 16px 44px rgba(0,0,0,.08);--shadow-soft:0 10px 24px rgba(0,0,0,.06);
+            --surface-ring:rgba(0,0,0,.10);--hero-grad:linear-gradient(135deg,#000000,#262626);
+            --hero-glow:rgba(0,0,0,.10);--btn-grad:linear-gradient(135deg,#000,#262626);
+            --chip-bg:rgba(255,255,255,.13);--bg-grid:rgba(0,0,0,.06);
+        }
+        body[data-app-theme="netflix-dark"]{
+            --nav:#050505;--nav-2:#141414;--bg1:#050505;--bg2:#111111;--bg3:#1f0a0a;
+            --card:#141414;--card-soft:rgba(20,20,20,.78);--card-solid:#141414;--text:#f5f5f5;--muted:#a3a3a3;
+            --line:#2b2b2b;--line-strong:#404040;--primary:#e50914;--primary2:#b20710;--primary3:#f97316;
+            --success:#22c55e;--warn:#fbbf24;--danger:#ef4444;--cyan:#f97316;--soft:#1f1f1f;
+            --shadow:0 24px 60px rgba(0,0,0,.55);--shadow-soft:0 14px 32px rgba(0,0,0,.38);
+            --surface-ring:rgba(229,9,20,.22);--hero-grad:linear-gradient(135deg,#050505 0%,#7f1d1d 54%,#e50914 100%);
+            --hero-glow:rgba(229,9,20,.20);--btn-grad:linear-gradient(135deg,#e50914,#b20710);
+            --chip-bg:rgba(255,255,255,.07);--bg-grid:rgba(229,9,20,.07);
+        }
+        body[data-app-theme="college-formal"]{
+            --nav:#172554;--nav-2:#1e3a8a;--bg1:#eef2ff;--bg2:#f8fafc;--bg3:#e0e7ff;
+            --card:#ffffff;--card-soft:rgba(255,255,255,.82);--card-solid:#ffffff;--text:#172554;--muted:#475569;
+            --line:#cbd5e1;--line-strong:#94a3b8;--primary:#1d4ed8;--primary2:#1e40af;--primary3:#7c2d12;
+            --success:#166534;--warn:#a16207;--danger:#b91c1c;--cyan:#155e75;--soft:#e0e7ff;
+            --shadow:0 18px 48px rgba(30,58,138,.13);--shadow-soft:0 12px 28px rgba(30,58,138,.10);
+            --surface-ring:rgba(30,58,138,.16);--hero-grad:linear-gradient(135deg,#172554 0%,#1d4ed8 65%,#f59e0b 100%);
+            --hero-glow:rgba(30,64,175,.16);--btn-grad:linear-gradient(135deg,#1e3a8a,#1d4ed8);
+            --chip-bg:rgba(255,255,255,.16);--bg-grid:rgba(30,58,138,.09);
+        }
+        body[data-app-theme="purple-neon"]{
+            --nav:#12001f;--nav-2:#2e1065;--bg1:#0b0014;--bg2:#160024;--bg3:#25003d;
+            --card:#160024;--card-soft:rgba(22,0,36,.78);--card-solid:#160024;--text:#f5e8ff;--muted:#d8b4fe;
+            --line:#4c1d95;--line-strong:#6d28d9;--primary:#c084fc;--primary2:#a855f7;--primary3:#22d3ee;
+            --success:#4ade80;--warn:#fde047;--danger:#fb7185;--cyan:#22d3ee;--soft:#2e1065;
+            --shadow:0 24px 72px rgba(168,85,247,.24);--shadow-soft:0 14px 34px rgba(168,85,247,.18);
+            --surface-ring:rgba(192,132,252,.24);--hero-grad:linear-gradient(135deg,#160024 0%,#7e22ce 50%,#22d3ee 100%);
+            --hero-glow:rgba(192,132,252,.28);--btn-grad:linear-gradient(135deg,#a855f7,#7e22ce,#22d3ee);
+            --chip-bg:rgba(255,255,255,.07);--bg-grid:rgba(192,132,252,.09);
+        }
+        body[data-app-theme="light-professional"]{
+            --nav:#0f172a;--nav-2:#1e293b;--bg1:#f8fafc;--bg2:#ffffff;--bg3:#eef2f7;
+            --card:#ffffff;--card-soft:rgba(255,255,255,.86);--card-solid:#ffffff;--text:#0f172a;--muted:#64748b;
+            --line:#e2e8f0;--line-strong:#cbd5e1;--primary:#2563eb;--primary2:#1d4ed8;--primary3:#0f766e;
+            --success:#16a34a;--warn:#d97706;--danger:#dc2626;--cyan:#0891b2;--soft:#f1f5f9;
+            --shadow:0 18px 46px rgba(15,23,42,.09);--shadow-soft:0 12px 28px rgba(15,23,42,.07);
+            --surface-ring:rgba(148,163,184,.18);--hero-grad:linear-gradient(135deg,#0f172a 0%,#2563eb 58%,#0f766e 100%);
+            --hero-glow:rgba(37,99,235,.14);--btn-grad:linear-gradient(135deg,#2563eb,#1d4ed8);
+            --chip-bg:rgba(255,255,255,.14);--bg-grid:rgba(148,163,184,.10);
+        }
+        body[data-app-theme="default-saas-dark"],body[data-app-theme="netflix-dark"],body[data-app-theme="purple-neon"]{color-scheme:dark}
+        body[data-app-theme="default-saas-dark"] .sidebar,body[data-app-theme="netflix-dark"] .sidebar,body[data-app-theme="purple-neon"] .sidebar{
+            background:linear-gradient(180deg,rgba(7,17,31,.55),rgba(7,17,31,.42));
+        }
+        body[data-app-theme="notion-clean"] .sidebar,body[data-app-theme="stripe-glow"] .sidebar,body[data-app-theme="vercel-minimal"] .sidebar,body[data-app-theme="college-formal"] .sidebar,body[data-app-theme="light-professional"] .sidebar{
+            background:linear-gradient(180deg,rgba(255,255,255,.72),rgba(255,255,255,.50));
+        }
+        body[data-app-theme="netflix-dark"] .topbar{background:linear-gradient(90deg,#050505,#7f1d1d,#e50914)}
+        body[data-app-theme="purple-neon"] .topbar{background:linear-gradient(90deg,#12001f,#7e22ce,#22d3ee)}
+        body[data-app-theme="vercel-minimal"] .topbar{background:linear-gradient(90deg,#000,#18181b)}
+        body[data-app-theme="notion-clean"] .topbar{background:linear-gradient(90deg,#111827,#374151)}
+        body[data-app-theme="college-formal"] .topbar{background:linear-gradient(90deg,#172554,#1d4ed8,#92400e)}
+        body[data-app-theme="light-professional"] .topbar{background:linear-gradient(90deg,#0f172a,#2563eb,#0f766e)}
+        .global-theme-control{
+            display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:999px;
+            color:#fff;background:rgba(15,23,42,.28);border:1px solid rgba(255,255,255,.14);
+            box-shadow:inset 0 1px 0 rgba(255,255,255,.10);font-size:12px;font-weight:800;
+        }
+        .global-theme-control select{
+            height:28px;max-width:166px;border:0;outline:0;border-radius:999px;padding:0 28px 0 10px;
+            font-weight:900;color:var(--text);background:var(--card-solid);box-shadow:0 6px 16px rgba(2,6,23,.12);
+        }
+        @media (max-width: 900px){.global-theme-control{width:100%;justify-content:space-between}.global-theme-control select{max-width:210px}}
+        /* ===== END GLOBAL THEME SYSTEM LAYER ===== */
+
         *{box-sizing:border-box}
         html{scroll-behavior:smooth}
         body{
@@ -3867,6 +3975,14 @@ BASE_HTML = """
     </style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
+
+<script>
+(function(){
+    const allowedThemes = ['default-saas-dark','notion-clean','stripe-glow','vercel-minimal','netflix-dark','college-formal','purple-neon','light-professional'];
+    const savedTheme = localStorage.getItem('zoomAttendanceGlobalTheme') || 'default-saas-dark';
+    document.body.setAttribute('data-app-theme', allowedThemes.includes(savedTheme) ? savedTheme : 'default-saas-dark');
+})();
+</script>
 <div class="app-bg">
     <div class="bg-grid"></div>
     <div class="orb orb-1"></div>
@@ -3888,6 +4004,19 @@ BASE_HTML = """
             <span class="chip chip-user">👋 {{ session.get('username') }} ({{ session.get('role') }})</span>
             {% endif %}
             {% if session.get('user_id') %}
+            <label class="global-theme-control" title="Switch full app theme">
+                🎨 Theme
+                <select id="globalThemeSelect" aria-label="Global theme selector">
+                    <option value="default-saas-dark">Default SaaS Dark</option>
+                    <option value="notion-clean">Notion Clean</option>
+                    <option value="stripe-glow">Stripe Glow</option>
+                    <option value="vercel-minimal">Vercel Minimal</option>
+                    <option value="netflix-dark">Netflix Dark</option>
+                    <option value="college-formal">College Formal</option>
+                    <option value="purple-neon">Purple Neon</option>
+                    <option value="light-professional">Light Professional</option>
+                </select>
+            </label>
             <a href="{{ url_for('toggle_theme') }}" class="theme-switch">{{ 'Light Mode' if session.get('theme') == 'dark' else 'Dark Mode' }}</a>
             <a href="{{ url_for('profile') }}" class="chip">🙍 Profile</a>
             <a href="{{ url_for('logout') }}" class="chip">🚪 Logout</a>
@@ -4005,6 +4134,27 @@ BASE_HTML = """
         });
     }
 
+
+    function setupGlobalThemeSystem(){
+        const allowedThemes = ['default-saas-dark','notion-clean','stripe-glow','vercel-minimal','netflix-dark','college-formal','purple-neon','light-professional'];
+        const select = document.getElementById('globalThemeSelect');
+        const savedTheme = localStorage.getItem('zoomAttendanceGlobalTheme') || 'default-saas-dark';
+        const currentTheme = allowedThemes.includes(savedTheme) ? savedTheme : 'default-saas-dark';
+        document.body.setAttribute('data-app-theme', currentTheme);
+        if(select){
+            select.value = currentTheme;
+            select.addEventListener('change', function(){
+                const nextTheme = allowedThemes.includes(this.value) ? this.value : 'default-saas-dark';
+                localStorage.setItem('zoomAttendanceGlobalTheme', nextTheme);
+                document.body.setAttribute('data-app-theme', nextTheme);
+                if(window.Chart){
+                    setupChartDefaults();
+                    window.dispatchEvent(new CustomEvent('zoom-theme-changed', {detail:{theme: nextTheme}}));
+                }
+            });
+        }
+    }
+
     function setupChartDefaults(){
         if (!window.Chart) return;
         const dark = document.body.classList.contains('dark');
@@ -4053,6 +4203,7 @@ BASE_HTML = """
     }
 
     document.addEventListener('DOMContentLoaded', function(){
+        setupGlobalThemeSystem();
         applyAutoTooltips();
         animateMetrics();
         enhanceButtons();
