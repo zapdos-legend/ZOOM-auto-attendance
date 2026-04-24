@@ -1,4 +1,5 @@
 
+# UI_UPDATE_V3_ANALYTICS_TABS_DARK_REGISTER_APPLIED = True
 # ===== DARK SAAS THEME INJECTION (SAFE) =====
 DARK_THEME_CSS = '''
 <style>
@@ -4682,7 +4683,7 @@ def live():
             </div>
         </div>
 
-        <div class="grid" style="margin-top:16px">
+        <div class="grid analytics-anchor-section" id="analyticsOverview" style="margin-top:16px">
             <div class="card kpi-card"><div class="kpi-icon">🔴</div><h4>Live Pulse</h4><div class="metric">{{ 'ACTIVE' if active_now else 'WAITING' }}</div><div class="metric-sub">Blinking board status with auto-refresh.</div></div>
             <div class="card kpi-card"><div class="kpi-icon">👥</div><h4>Live Participants Counter</h4><div class="metric">{{ active_now }}</div><div class="metric-sub">Participants currently inside the meeting.</div></div>
             <div class="card kpi-card"><div class="kpi-icon">🧑</div><h4>Host Status</h4><div class="metric">{{ 'Present' if host_now == 'Yes' else 'Absent' }}</div><div class="metric-sub">Current host visibility based on live webhook flow.</div></div>
@@ -5363,8 +5364,27 @@ def analytics():
         .participant-chart-grid{grid-template-columns:minmax(0,1fr) 260px!important;}
         .chart-big{height:360px!important}.chart-small{height:330px!important;}
         .checkbox-select-menu{z-index:9999!important;}
+        /* ANALYTICS_TABS_V3: organized navigation without removing old analytics */
+        .analytics-tab-shell{position:sticky;top:78px;z-index:70;margin:16px 0 14px;padding:10px;border-radius:18px;background:rgba(2,6,23,.72);border:1px solid rgba(96,165,250,.22);backdrop-filter:blur(16px);box-shadow:0 18px 45px rgba(0,0,0,.28)}
+        .analytics-tab-nav{display:flex;gap:10px;overflow-x:auto;scrollbar-width:thin;padding:2px}
+        .analytics-tab-nav a{flex:0 0 auto;text-decoration:none;color:#cbd5e1;background:rgba(15,23,42,.9);border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:11px 14px;font-size:13px;font-weight:950;transition:transform .18s ease,background .18s ease,border-color .18s ease,box-shadow .18s ease,color .18s ease}
+        .analytics-tab-nav a:hover,.analytics-tab-nav a.active{transform:translateY(-2px);color:#fff;background:linear-gradient(135deg,#2563eb,#7c3aed);border-color:rgba(191,219,254,.55);box-shadow:0 14px 30px rgba(37,99,235,.28)}
+        .analytics-anchor-section{scroll-margin-top:154px;animation:analyticsFadeIn .24s ease both}
+        @keyframes analyticsFadeIn{from{opacity:.72;transform:translateY(6px)}to{opacity:1;transform:none}}
+        html{scroll-behavior:smooth}
         </style>
-        <div class="dash-showcase" id="graphAnalyticsSection">
+        <div class="analytics-tab-shell" id="analyticsTabsV3">
+            <nav class="analytics-tab-nav" aria-label="Analytics sections">
+                <a class="active" href="#analyticsOverview">Overview</a>
+                <a href="#graphAnalyticsSection">Graph Analytics</a>
+                <a href="{{ url_for('attendance_register') }}">Register</a>
+                <a href="#analyticsMembers">Members</a>
+                <a href="#analyticsRisk">Risk</a>
+                <a href="#analyticsTrends">Trends</a>
+                <a href="#analyticsReports">Reports</a>
+            </nav>
+        </div>
+        <div class="dash-showcase analytics-anchor-section" id="graphAnalyticsSection">
             <aside class="dash-mini-sidebar">
                 <div class="dash-mini-brand">📊 Analytical<br>Dashboard</div>
                 <nav class="dash-mini-nav">
@@ -5507,7 +5527,7 @@ def analytics():
             </div>
         </div>
 
-        <div class="grid-2" style="margin-top:16px">
+        <div class="grid-2 analytics-anchor-section" id="analyticsTrends" style="margin-top:16px">
             <div class="card">
                 <div class="section-title">
                     <div>
@@ -5593,7 +5613,7 @@ def analytics():
             <div class="card">
                 <div class="section-title">
                     <div>
-                        <h3 style="margin:0">Top Members</h3>
+                        <h3 id="analyticsMembers" class="analytics-anchor-section" style="margin:0">Top Members</h3>
                         <p>Top performers ranked by weighted attendance score, consistency and duration.</p>
                     </div>
                 </div>
@@ -5615,7 +5635,7 @@ def analytics():
             <div class="card">
                 <div class="section-title">
                     <div>
-                        <h3 style="margin:0">Risk Members</h3>
+                        <h3 id="analyticsRisk" class="analytics-anchor-section" style="margin:0">Risk Members</h3>
                         <p>Members in warning or critical risk zone.</p>
                     </div>
                 </div>
@@ -5658,7 +5678,7 @@ def analytics():
             <div class="card">
                 <div class="section-title">
                     <div>
-                        <h3 style="margin:0">Operational Alerts</h3>
+                        <h3 id="analyticsReports" class="analytics-anchor-section" style="margin:0">Operational Alerts</h3>
                         <p>Auto-detected reminders, unknown spikes, and meeting health warnings.</p>
                     </div>
                     <a class="btn warn small" href="{{ url_for('analytics_reminder', **request.args) }}">Trigger Reminder Suggestion</a>
@@ -5746,6 +5766,27 @@ def analytics():
 
 
         <script>
+        (() => {
+            const tabShell = document.getElementById('analyticsTabsV3');
+            if (tabShell) {
+                const tabLinks = Array.from(tabShell.querySelectorAll('a[href^="#"]'));
+                const sections = tabLinks.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+                tabLinks.forEach(link => link.addEventListener('click', () => {
+                    tabLinks.forEach(a => a.classList.remove('active'));
+                    link.classList.add('active');
+                }));
+                if ('IntersectionObserver' in window && sections.length) {
+                    const observer = new IntersectionObserver(entries => {
+                        const visible = entries.filter(e => e.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];
+                        if (!visible) return;
+                        const active = tabLinks.find(a => a.getAttribute('href') === '#' + visible.target.id);
+                        if (active) { tabLinks.forEach(a => a.classList.remove('active')); active.classList.add('active'); }
+                    }, {rootMargin:'-35% 0px -55% 0px', threshold:[.1,.25,.5]});
+                    sections.forEach(section => observer.observe(section));
+                }
+            }
+        })();
+
         (() => {
             const graphSection = document.getElementById('graphAnalyticsSection');
             const gaXAxis = document.getElementById('gaXAxis');
@@ -6317,23 +6358,31 @@ def attendance_register():
         .reg-side-note,.reg-feature-box{display:none!important;}
         .register-book{background:linear-gradient(135deg,#3a2418,#6b4428 45%,#2b1b12)!important;border:1px solid rgba(255,232,180,.18)!important;box-shadow:0 24px 70px rgba(0,0,0,.42), inset 0 0 0 3px rgba(255,255,255,.08)!important;}
         .register-paper{background:linear-gradient(180deg,#fffaf0,#fff7df)!important;border-color:#d6bd8b!important;color:#172033!important;}
-        .register-heading span{background:linear-gradient(90deg,#166534,#15803d)!important;color:white!important;letter-spacing:.2px;}
-        .register-table-wrap{background:#fffaf0!important;border-color:#d6bd8b!important;}
-        .register-table th{background:#0f2f24!important;color:#fff7ed!important;border-color:#c9ad78!important;font-weight:950;}
-        .register-table th.reg-total-head{background:#123d64!important;}
-        .register-table td{background:#fff8e8!important;color:#172033!important;border-color:#ddc89a!important;}
-        .register-table .sticky-member{background:#fff0c7!important;color:#111827!important;box-shadow:2px 0 0 rgba(0,0,0,.08)!important;}
-        .register-table td.reg-total-cell{background:#e0f2fe!important;color:#0f172a!important;font-weight:950;}
-        .register-table td.reg-p{background:#dcfce7!important;color:#166534!important;font-weight:1000!important;}
-        .register-table td.reg-l{background:#fef3c7!important;color:#b45309!important;font-weight:1000!important;}
-        .register-table td.reg-a{background:#fee2e2!important;color:#b91c1c!important;font-weight:1000!important;}
-        .register-table td.reg-u{background:#e5e7eb!important;color:#374151!important;font-weight:1000!important;}
-        .register-table td.reg-empty{background:#fffdf4!important;color:#d6c7a2!important;}
-        .register-table td.reg-p,.register-table td.reg-l,.register-table td.reg-a,.register-table td.reg-u{border-radius:7px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.04);}
-        .reg-month-pill{background:#fff7df!important;color:#172033!important;border-color:#d6bd8b!important;}
-        .reg-controls input,.reg-controls select{background:#fffdf4!important;color:#172033!important;border-color:#d6bd8b!important;}
-        .reg-pagination{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;color:#334155;font-weight:800}
-        .reg-pagination a,.reg-pagination span{padding:7px 10px;border-radius:8px;background:#fff7df;border:1px solid #d6bd8b;color:#172033;text-decoration:none}
+        /* DARK_REGISTER_THEME_V3: darker register with colorful P/L/A/U cells */
+        .reg-dashboard-shell{background:radial-gradient(circle at top,#13213b 0%,#07111f 46%,#030712 100%)!important;color:#e5e7eb!important;}
+        .register-book{background:linear-gradient(135deg,rgba(15,23,42,.96),rgba(2,6,23,.98))!important;border:1px solid rgba(59,130,246,.32)!important;box-shadow:0 28px 70px rgba(0,0,0,.55)!important;}
+        .register-paper{background:rgba(8,13,27,.96)!important;border:1px solid rgba(148,163,184,.20)!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.03)!important;}
+        .register-heading span{background:linear-gradient(90deg,#0f766e,#2563eb,#7c3aed)!important;color:white!important;letter-spacing:.3px;box-shadow:0 14px 34px rgba(37,99,235,.35)!important;}
+        .register-table-wrap{background:#07111f!important;border-color:rgba(59,130,246,.35)!important;box-shadow:0 18px 45px rgba(0,0,0,.42)!important;}
+        .register-table{border-spacing:4px!important;background:#07111f!important;}
+        .register-table th{background:linear-gradient(180deg,#10223f,#0b162b)!important;color:#eaf2ff!important;border:1px solid rgba(96,165,250,.34)!important;font-weight:950;}
+        .register-table th.reg-total-head{background:linear-gradient(180deg,#1e3a8a,#172554)!important;color:#dbeafe!important;}
+        .register-table td{background:#111827!important;color:#e5e7eb!important;border:1px solid rgba(148,163,184,.20)!important;}
+        .register-table .sticky-member{background:#0b1220!important;color:#f8fafc!important;box-shadow:4px 0 16px rgba(0,0,0,.35)!important;}
+        .register-table td.sticky-member{background:#0f172a!important;color:#f8fafc!important;}
+        .register-table td.reg-total-cell{background:#1e293b!important;color:#bfdbfe!important;font-weight:950!important;}
+        .register-table td.reg-p{background:linear-gradient(135deg,#064e3b,#16a34a)!important;color:#ecfdf5!important;font-weight:1000!important;text-shadow:0 1px 2px rgba(0,0,0,.35);}
+        .register-table td.reg-l{background:linear-gradient(135deg,#78350f,#f59e0b)!important;color:#fff7ed!important;font-weight:1000!important;text-shadow:0 1px 2px rgba(0,0,0,.30);}
+        .register-table td.reg-a{background:linear-gradient(135deg,#7f1d1d,#ef4444)!important;color:#fff1f2!important;font-weight:1000!important;text-shadow:0 1px 2px rgba(0,0,0,.30);}
+        .register-table td.reg-u{background:linear-gradient(135deg,#334155,#94a3b8)!important;color:#f8fafc!important;font-weight:1000!important;text-shadow:0 1px 2px rgba(0,0,0,.35);}
+        .register-table td.reg-empty{background:#101827!important;color:#334155!important;}
+        .register-table td.reg-p,.register-table td.reg-l,.register-table td.reg-a,.register-table td.reg-u{border-radius:8px!important;box-shadow:0 4px 12px rgba(0,0,0,.20),inset 0 0 0 1px rgba(255,255,255,.12)!important;}
+        .reg-month-pill{background:#0f172a!important;color:#dbeafe!important;border-color:rgba(96,165,250,.45)!important;}
+        .reg-controls input,.reg-controls select{background:#0b1220!important;color:#e5e7eb!important;border-color:rgba(96,165,250,.35)!important;}
+        .reg-controls label{color:#bfdbfe!important;}
+        .reg-side-note,.reg-feature-box{background:rgba(15,23,42,.86)!important;color:#dbeafe!important;border-color:rgba(96,165,250,.25)!important;box-shadow:0 18px 40px rgba(0,0,0,.38)!important;}
+        .reg-pagination{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;color:#cbd5e1;font-weight:800}
+        .reg-pagination a,.reg-pagination span{padding:7px 10px;border-radius:8px;background:#0f172a;border:1px solid rgba(96,165,250,.35);color:#dbeafe;text-decoration:none}
         .reg-pagination .disabled{opacity:.45}
         </style>
         <div class="reg-dashboard-shell">
