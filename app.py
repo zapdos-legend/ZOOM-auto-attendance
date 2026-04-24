@@ -908,6 +908,36 @@ def init_db():
                 )
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS smart_alert_states (
+                    alert_key TEXT PRIMARY KEY,
+                    alert_type TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    current_state TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS smart_alert_logs (
+                    id SERIAL PRIMARY KEY,
+                    alert_key TEXT NOT NULL,
+                    alert_type TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    previous_state TEXT,
+                    current_state TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    email_sent BOOLEAN NOT NULL DEFAULT FALSE,
+                    push_sent INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
 
         if table_exists(conn, "users"):
             ensure_column(conn, "users", "role", "TEXT NOT NULL DEFAULT 'viewer'")
@@ -979,6 +1009,9 @@ def init_db():
         ensure_index(conn, "idx_attendance_meeting_uuid", "CREATE INDEX idx_attendance_meeting_uuid ON attendance(meeting_uuid)")
         ensure_index(conn, "idx_attendance_member_id", "CREATE INDEX idx_attendance_member_id ON attendance(member_id)")
         ensure_index(conn, "idx_meetings_status", "CREATE INDEX idx_meetings_status ON meetings(status)")
+        if table_exists(conn, "smart_alert_logs"):
+            ensure_index(conn, "idx_smart_alert_logs_key", "CREATE INDEX idx_smart_alert_logs_key ON smart_alert_logs(alert_key)")
+            ensure_index(conn, "idx_smart_alert_logs_created", "CREATE INDEX idx_smart_alert_logs_created ON smart_alert_logs(created_at)")
 
         with conn.cursor() as cur:
             for key, value in DEFAULT_SETTINGS.items():
@@ -1515,6 +1548,10 @@ def finalize_meeting(meeting_uuid, ended_at=None):
             )
             updated = cur.fetchone()
         conn.commit()
+    try:
+        evaluate_smart_alerts_for_meeting(meeting_uuid)
+    except Exception as e:
+        print(f"⚠️ Smart alert evaluation skipped: {e}")
     return updated
 
 
@@ -1853,6 +1890,186 @@ def graph_analytics_payload():
     }
 
 
+
+
+
+SMART_ALERT_EMAIL_TO = os.getenv("SMART_ALERT_EMAIL_TO", os.getenv("EMAIL_RECEIVER", "")).strip()
+UNKNOWN_SPIKE_COUNT = int(os.getenv("UNKNOWN_SPIKE_COUNT", "5") or "5")
+UNKNOWN_SPIKE_PERCENT = float(os.getenv("UNKNOWN_SPIKE_PERCENT", "30") or "30")
+
+
+def _alert_entity(member=None, meeting=None):
+    if member:
+        return "member", str(member.get("id") or member.get("member_id") or member.get("name") or "unknown")
+    if meeting:
+        return "meeting", str(meeting.get("meeting_uuid") or meeting.get("id") or "unknown")
+    return "system", "global"
+
+
+def trigger_alert(member=None, alert_type="general", state="active", message="", title=None, meeting=None):
+    """Send smart alert only when alert state changes; store every state-change log."""
+    try:
+        entity_type, entity_id = _alert_entity(member=member, meeting=meeting)
+        alert_key = f"{entity_type}:{entity_id}:{alert_type}"
+        title = title or f"Smart Alert: {alert_type.replace('_', ' ').title()}"
+        state = str(state or "active")
+        message = message or title
+        previous_state = None
+        should_send = False
+
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT current_state FROM smart_alert_states WHERE alert_key=%s", (alert_key,))
+                row = cur.fetchone()
+                previous_state = row.get("current_state") if row else None
+                should_send = previous_state != state
+                if not should_send:
+                    return {"sent": False, "reason": "state_unchanged", "alert_key": alert_key}
+                cur.execute(
+                    """
+                    INSERT INTO smart_alert_states(alert_key, alert_type, entity_type, entity_id, current_state, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,NOW())
+                    ON CONFLICT (alert_key)
+                    DO UPDATE SET current_state=EXCLUDED.current_state, updated_at=NOW()
+                    """,
+                    (alert_key, alert_type, entity_type, entity_id, state),
+                )
+            conn.commit()
+
+        recipient = (member or {}).get("email") or SMART_ALERT_EMAIL_TO
+        email_sent = False
+        if recipient:
+            email_sent, _ = send_email(
+                recipient,
+                title,
+                message,
+                f"<h2>{title}</h2><p>{message}</p><p><b>State:</b> {state}</p>",
+            )
+        push_result = send_push_notification(title, message, click_url=url_for("analytics", _external=True))
+        push_sent = int((push_result or {}).get("sent", 0))
+
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO smart_alert_logs(alert_key, alert_type, entity_type, entity_id, previous_state, current_state, title, message, email_sent, push_sent)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (alert_key, alert_type, entity_type, entity_id, previous_state, state, title, message, bool(email_sent), push_sent),
+                )
+            conn.commit()
+        return {"sent": True, "alert_key": alert_key, "email_sent": bool(email_sent), "push_sent": push_sent}
+    except Exception as exc:
+        print(f"⚠️ Smart alert skipped: {exc}")
+        return {"sent": False, "error": str(exc)}
+
+
+def _member_alert_people_for_meeting(conn, meeting_uuid):
+    with conn.cursor() as cur:
+        name_expr = member_name_sql(conn)
+        cur.execute(
+            f"""
+            SELECT m.id, {name_expr} AS name, m.email,
+                   COUNT(a.id) AS meetings,
+                   SUM(CASE WHEN a.final_status IN ('PRESENT','HOST') THEN 1 ELSE 0 END) AS present,
+                   SUM(CASE WHEN a.final_status='LATE' THEN 1 ELSE 0 END) AS late,
+                   SUM(CASE WHEN a.final_status='ABSENT' THEN 1 ELSE 0 END) AS absent,
+                   COALESCE(SUM(a.total_seconds),0)/60.0 AS minutes,
+                   COALESCE(SUM(a.rejoin_count),0) AS rejoins,
+                   MAX(a.last_leave) AS last_seen
+            FROM members m
+            JOIN attendance target ON target.member_id=m.id AND target.meeting_uuid=%s
+            LEFT JOIN attendance a ON a.member_id=m.id
+            WHERE {ACTIVE_MEMBER_SQL}
+            GROUP BY m.id, name, m.email
+            ORDER BY name
+            """,
+            (meeting_uuid,),
+        )
+        people = cur.fetchall()
+        for person in people:
+            cur.execute(
+                """
+                SELECT final_status, total_seconds
+                FROM attendance
+                WHERE member_id=%s
+                ORDER BY COALESCE(last_leave, first_join, created_at) ASC
+                LIMIT 20
+                """,
+                (person.get("id"),),
+            )
+            points = []
+            for row in cur.fetchall():
+                st = str(row.get("final_status") or "").upper()
+                if st in ("PRESENT", "HOST"):
+                    points.append(100)
+                elif st == "LATE":
+                    points.append(60)
+                elif st == "ABSENT":
+                    points.append(0)
+            person["score_points"] = points
+        return people
+
+
+def evaluate_smart_alerts_for_meeting(meeting_uuid):
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+                meeting = cur.fetchone()
+                if not meeting:
+                    return
+                total_participants = int(meeting.get("unique_participants") or 0)
+                unknown_count = int(meeting.get("unknown_participants") or 0)
+                host_present = bool(meeting.get("host_present"))
+
+            if not host_present:
+                trigger_alert(
+                    alert_type="host_absent",
+                    state="host_absent",
+                    meeting=meeting,
+                    title="🚨 Host absent detected",
+                    message=f"Host was not detected in meeting: {meeting.get('topic') or meeting_uuid}.",
+                )
+            else:
+                trigger_alert(alert_type="host_absent", state="resolved", meeting=meeting, title="✅ Host alert resolved", message="Host is detected again.")
+
+            unknown_pct = (unknown_count / total_participants * 100.0) if total_participants else 0.0
+            if unknown_count >= UNKNOWN_SPIKE_COUNT or unknown_pct >= UNKNOWN_SPIKE_PERCENT:
+                trigger_alert(
+                    alert_type="unknown_participant_spike",
+                    state=f"unknown_{unknown_count}_{round(unknown_pct,1)}",
+                    meeting=meeting,
+                    title="⚠️ Unknown participant spike",
+                    message=f"Meeting has {unknown_count} unknown participants ({round(unknown_pct,1)}%).",
+                )
+
+            people = _member_alert_people_for_meeting(conn, meeting_uuid)
+            avg_ref = 1.0
+            if people:
+                avg_ref = max(sum(float(p.get("minutes") or 0) for p in people) / max(len(people), 1), 1.0)
+            for person in people:
+                intel = build_member_intelligence(person, avg_ref)
+                risk_short = intel.get("risk", {}).get("short")
+                if risk_short in ("CRITICAL", "WARNING"):
+                    trigger_alert(
+                        member=person,
+                        alert_type="member_risk",
+                        state=risk_short.lower(),
+                        title=f"{intel['risk']['emoji']} {risk_short.title()} risk: {person.get('name')}",
+                        message=f"{person.get('name')} is now in {risk_short} risk. Overall score: {intel.get('overall_score')}%. Attendance score: {intel.get('attendance_score')}%.",
+                    )
+                trend_short = intel.get("trend", {}).get("short")
+                if trend_short == "DECLINING":
+                    trigger_alert(
+                        member=person,
+                        alert_type="declining_trend",
+                        state="declining",
+                        title=f"📉 Declining trend: {person.get('name')}",
+                        message=f"{person.get('name')} attendance trend is declining. Delta: {intel.get('trend', {}).get('delta')}.",
+                    )
+    except Exception as exc:
+        print(f"⚠️ evaluate_smart_alerts_for_meeting skipped: {exc}")
 
 def predict_next_attendance(meeting_compare):
     if not meeting_compare:
@@ -5082,6 +5299,18 @@ def analytics():
         @media(max-width:1180px){.dash-showcase{grid-template-columns:1fr}.dash-mini-sidebar,.side-help{position:static}.analytics-layout,.bottom-grid,.participant-chart-grid{grid-template-columns:1fr}.dash-main-title{flex-direction:column}.dash-title-pill{width:100%;font-size:18px}.control-stack{border-left:0;padding-left:0}}
         </style>
 
+
+        <style>
+        /* Compact graph analytics: remove helper panels and give charts more space */
+        .dash-mini-sidebar,.dash-actions,.side-help{display:none!important;}
+        .dash-showcase{grid-template-columns:minmax(0,1fr)!important;}
+        .analytics-layout{grid-template-columns:minmax(0,1fr)!important;}
+        .bottom-grid{grid-template-columns:minmax(0,1fr)!important;}
+        .bottom-grid > .dash-card:nth-child(2){display:none!important;}
+        .participant-chart-grid{grid-template-columns:minmax(0,1fr) 260px!important;}
+        .chart-big{height:360px!important}.chart-small{height:330px!important;}
+        .checkbox-select-menu{z-index:9999!important;}
+        </style>
         <div class="dash-showcase" id="graphAnalyticsSection">
             <aside class="dash-mini-sidebar">
                 <div class="dash-mini-brand">📊 Analytical<br>Dashboard</div>
@@ -5544,7 +5773,12 @@ def analytics():
                 refreshLabel();
             }
             document.addEventListener('click', () => document.querySelectorAll('.checkbox-select.open').forEach(el => el.classList.remove('open')));
-            document.querySelectorAll('.checkbox-select').forEach(setupCheckboxSelect);
+            document.querySelectorAll('.checkbox-select').forEach(box => {
+                box.addEventListener('click', (event) => event.stopPropagation());
+                const menu = box.querySelector('.checkbox-select-menu');
+                if (menu) menu.addEventListener('click', (event) => event.stopPropagation());
+                setupCheckboxSelect(box);
+            });
 
             function updateGraphFilterVisibility() {
                 if (!gaXAxis) return;
@@ -5894,12 +6128,14 @@ def attendance_register_payload(year=None, month=None, search=""):
             cells.append(mark)
         counted = totals["P"] + totals["L"] + totals["A"] + totals["U"]
         attendance_pct = round(((totals["P"] + totals["L"] * 0.5) / counted) * 100, 2) if counted else 0
+        total_meetings = counted
         rows.append({
             "id": mid,
             "name": member.get("display_name") or f"Member {mid}",
             "email": member.get("email") or "",
             "cells": cells,
             "totals": totals,
+            "total_meetings": total_meetings,
             "attendance_pct": attendance_pct,
         })
 
@@ -5941,6 +6177,24 @@ def attendance_register():
         @media(max-width:1180px){.reg-dashboard-shell{grid-template-columns:1fr}.reg-side-note,.reg-feature-box{position:static}.register-heading span{font-size:17px;padding:8px 14px}}
         </style>
 
+
+        <style>
+        /* Dark register book: same structure, only dark professional theme + more width */
+        .reg-dashboard-shell{grid-template-columns:minmax(0,1fr)!important;}
+        .reg-side-note,.reg-feature-box{display:none!important;}
+        .register-book{background:linear-gradient(135deg,#07111f,#0f172a 60%,#111827)!important;border:1px solid rgba(96,165,250,.22)!important;box-shadow:0 24px 70px rgba(0,0,0,.45)!important;}
+        .register-paper{background:rgba(15,23,42,.92)!important;border-color:rgba(148,163,184,.22)!important;color:#e5e7eb!important;}
+        .register-table th{background:#111827!important;color:#dbeafe!important;border-color:rgba(148,163,184,.28)!important;}
+        .register-table td{background:rgba(15,23,42,.84)!important;color:#e5e7eb!important;border-color:rgba(148,163,184,.16)!important;}
+        .register-table .sticky-member{background:#0b1220!important;color:#e5e7eb!important;}
+        .reg-empty{background:rgba(30,41,59,.65)!important;}
+        .reg-p{background:rgba(34,197,94,.16)!important;color:#86efac!important;font-weight:950;}
+        .reg-l{background:rgba(245,158,11,.16)!important;color:#fde68a!important;font-weight:950;}
+        .reg-a{background:rgba(239,68,68,.16)!important;color:#fca5a5!important;font-weight:950;}
+        .reg-u{background:rgba(148,163,184,.15)!important;color:#cbd5e1!important;font-weight:950;}
+        .reg-month-pill{background:#111827!important;color:#e5e7eb!important;border-color:rgba(148,163,184,.32)!important;}
+        .reg-controls input,.reg-controls select{background:#0b1220!important;color:#e5e7eb!important;border-color:rgba(148,163,184,.28)!important;}
+        </style>
         <div class="reg-dashboard-shell">
             <aside class="reg-side-note">
                 <b>MONTHLY REGISTER VIEW</b>
@@ -5989,7 +6243,8 @@ def attendance_register():
                             <tbody>
                                 {% for row in data.rows %}
                                 <tr>
-                                    <td class="sticky-member reg-member" data-name="{{ row.name }}" data-present="{{ row.totals.P }}" data-late="{{ row.totals.L }}" data-absent="{{ row.totals.A }}" data-unknown="{{ row.totals.U }}" data-percent="{{ row.attendance_pct }}">{{ row.name }}</td>
+                                    <td class="sticky-member reg-member" data-name="{{ row.name }}" data-present="{{ row.totals.P }}" data-late="{{ row.totals.L }}" data-absent="{{ row.totals.A }}" data-unknown="{{ row.totals.U }}" data-total="{{ row.total_meetings }}" data-percent="{{ row.attendance_pct }}">{{ row.name }}</td>
+                                    <td>{{ row.total_meetings }}</td>
                                     {% for cell in row.cells %}<td class="reg-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}">{{ cell or '' }}</td>{% endfor %}
                                     <td>{{ row.totals.P }}</td><td>{{ row.totals.L }}</td><td>{{ row.totals.A }}</td><td>{{ row.totals.U }}</td><td>{{ row.attendance_pct }}%</td>
                                 </tr>
@@ -6017,6 +6272,7 @@ def attendance_register():
             <div class="modal-card">
                 <div class="section-title"><h3 id="regModalName" style="margin:0">Member</h3><button type="button" id="regModalClose">Close</button></div>
                 <div class="grid-2">
+                    <div class="mini-kpi"><div class="label">Total Meetings</div><div class="value" id="regModalTotal">0</div></div>
                     <div class="mini-kpi"><div class="label">Total Present</div><div class="value" id="regModalP">0</div></div>
                     <div class="mini-kpi"><div class="label">Total Late</div><div class="value" id="regModalL">0</div></div>
                     <div class="mini-kpi"><div class="label">Total Absent</div><div class="value" id="regModalA">0</div></div>
@@ -6032,6 +6288,7 @@ def attendance_register():
             document.querySelectorAll('.reg-member').forEach(cell => {
                 cell.addEventListener('click', () => {
                     document.getElementById('regModalName').textContent = cell.dataset.name || 'Member';
+                    document.getElementById('regModalTotal').textContent = cell.dataset.total || '0';
                     document.getElementById('regModalP').textContent = cell.dataset.present || '0';
                     document.getElementById('regModalL').textContent = cell.dataset.late || '0';
                     document.getElementById('regModalA').textContent = cell.dataset.absent || '0';
