@@ -3729,6 +3729,7 @@ def page(title, body, active="home"):
         {"key": "members", "label": "👥 Members", "href": url_for("members")},
         {"key": "users", "label": "🔐 Users", "href": url_for("users")},
         {"key": "analytics", "label": "📊 Analytics", "href": url_for("analytics")},
+        {"key": "attendance_register", "label": "📒 Attendance Register", "href": url_for("attendance_register")},
         {"key": "meetings", "label": "📂 Meetings", "href": url_for("meetings")},
         {"key": "settings", "label": "⚙️ Settings", "href": url_for("settings")},
         {"key": "activity", "label": "📝 Activity", "href": url_for("activity")},
@@ -5054,6 +5055,26 @@ def analytics():
             </form>
         </div>
 
+        <style>
+        .checkbox-select{position:relative}
+        .checkbox-select-btn{width:100%;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:10px 12px;border-radius:12px}
+        .checkbox-select-menu{display:none;position:absolute;z-index:80;top:calc(100% + 6px);left:0;right:0;max-height:230px;overflow:auto;background:rgba(15,23,42,.98);border:1px solid rgba(148,163,184,.35);border-radius:14px;box-shadow:0 20px 45px rgba(0,0,0,.35);padding:8px}
+        .checkbox-select.open .checkbox-select-menu{display:block}
+        .checkbox-select-menu label{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;cursor:pointer;font-size:13px}
+        .checkbox-select-menu label:hover{background:rgba(99,102,241,.18)}
+        .checkbox-select-menu input{width:auto}
+        .register-table-wrap{max-height:72vh;overflow:auto;border-radius:18px;border:1px solid rgba(148,163,184,.22)}
+        .register-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}
+        .register-table th,.register-table td{min-width:44px;text-align:center;padding:9px 10px;border-bottom:1px solid rgba(148,163,184,.16);border-right:1px solid rgba(148,163,184,.12)}
+        .register-table th{position:sticky;top:0;z-index:4;background:#111827}
+        .register-table .sticky-member{position:sticky;left:0;z-index:5;min-width:230px;text-align:left;background:#111827}
+        .register-table td.sticky-member{z-index:3;background:rgba(15,23,42,.98);font-weight:800;cursor:pointer}
+        .reg-cell{font-weight:900;border-radius:9px;color:#08111f}
+        .reg-p{background:#22c55e}.reg-l{background:#facc15}.reg-a{background:#ef4444;color:#fff}.reg-u{background:#94a3b8}.reg-empty{color:#94a3b8}
+        .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(2,6,23,.68);z-index:999;align-items:center;justify-content:center;padding:18px}
+        .modal-backdrop.show{display:flex}
+        .modal-card{max-width:460px;width:100%;background:#0f172a;border:1px solid rgba(148,163,184,.3);border-radius:22px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+        </style>
         <div class="card" id="graphAnalyticsSection" style="margin-top:16px">
             <div class="section-title">
                 <div>
@@ -5089,30 +5110,39 @@ def analytics():
                 </div>
                 <div class="ga-month-filter" style="display:none">
                     <label>Months</label>
-                    <select id="gaMonths" multiple style="min-height:96px">
-                        <option value="__all__" selected>All months</option>
-                        {% for month in graph_options.months %}
-                        <option value="{{ month.value }}">{{ month.label }}</option>
-                        {% endfor %}
-                    </select>
+                    <div class="checkbox-select" data-target="gaMonths">
+                        <button type="button" class="checkbox-select-btn">All months</button>
+                        <div class="checkbox-select-menu">
+                            <label><input type="checkbox" value="__all__" checked> All months</label>
+                            {% for month in graph_options.months %}
+                            <label><input type="checkbox" value="{{ month.value }}"> {{ month.label }}</label>
+                            {% endfor %}
+                        </div>
+                    </div>
                 </div>
                 <div class="ga-year-filter" style="display:none">
                     <label>Years</label>
-                    <select id="gaYears" multiple style="min-height:96px">
-                        <option value="__all__" selected>All years</option>
-                        {% for year in graph_options.years %}
-                        <option value="{{ year }}">{{ year }}</option>
-                        {% endfor %}
-                    </select>
+                    <div class="checkbox-select" data-target="gaYears">
+                        <button type="button" class="checkbox-select-btn">All years</button>
+                        <div class="checkbox-select-menu">
+                            <label><input type="checkbox" value="__all__" checked> All years</label>
+                            {% for year in graph_options.years %}
+                            <label><input type="checkbox" value="{{ year }}"> {{ year }}</label>
+                            {% endfor %}
+                        </div>
+                    </div>
                 </div>
                 <div>
                     <label>Members</label>
-                    <select id="gaMembers" multiple style="min-height:96px">
-                        <option value="__all__" selected>All members</option>
-                        {% for member in graph_options.members %}
-                        <option value="{{ member.id }}">{{ member.name }}</option>
-                        {% endfor %}
-                    </select>
+                    <div class="checkbox-select" data-target="gaMembers">
+                        <button type="button" class="checkbox-select-btn">All members</button>
+                        <div class="checkbox-select-menu">
+                            <label><input type="checkbox" value="__all__" checked> All members</label>
+                            {% for member in graph_options.members %}
+                            <label><input type="checkbox" value="{{ member.id }}"> {{ member.name }}</label>
+                            {% endfor %}
+                        </div>
+                    </div>
                 </div>
                 <div class="toolbar" style="margin:0">
                     <button type="button" id="gaApplyBtn">Update Graphs</button>
@@ -5426,9 +5456,9 @@ def analytics():
             const gaYAxis = document.getElementById('gaYAxis');
             const gaFromDate = document.getElementById('gaFromDate');
             const gaToDate = document.getElementById('gaToDate');
-            const gaMonths = document.getElementById('gaMonths');
-            const gaYears = document.getElementById('gaYears');
-            const gaMembers = document.getElementById('gaMembers');
+            const gaMonths = document.querySelector('[data-target="gaMonths"]');
+            const gaYears = document.querySelector('[data-target="gaYears"]');
+            const gaMembers = document.querySelector('[data-target="gaMembers"]');
             const gaApplyBtn = document.getElementById('gaApplyBtn');
             const gaTrendHint = document.getElementById('gaTrendHint');
             const gaDurationHint = document.getElementById('gaDurationHint');
@@ -5458,12 +5488,47 @@ def analytics():
                 }
             };
 
-            function selectedValues(selectEl) {
-                if (!selectEl) return [];
-                const selected = Array.from(selectEl.selectedOptions).map(option => option.value);
-                if (!selected.length || selected.includes('__all__')) return [];
-                return selected;
+            function selectedValues(boxEl) {
+                if (!boxEl) return [];
+                const checked = Array.from(boxEl.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
+                if (!checked.length || checked.includes('__all__')) return [];
+                return checked;
             }
+
+            function setupCheckboxSelect(boxEl) {
+                if (!boxEl) return;
+                const btn = boxEl.querySelector('.checkbox-select-btn');
+                const inputs = Array.from(boxEl.querySelectorAll('input[type="checkbox"]'));
+                const allInput = inputs.find(input => input.value === '__all__');
+                const refreshLabel = () => {
+                    const selected = inputs.filter(input => input.checked && input.value !== '__all__');
+                    if (!selected.length || (allInput && allInput.checked)) {
+                        btn.textContent = allInput ? allInput.parentElement.textContent.trim() : 'All';
+                    } else if (selected.length === 1) {
+                        btn.textContent = selected[0].parentElement.textContent.trim();
+                    } else {
+                        btn.textContent = `${selected.length} selected`;
+                    }
+                };
+                btn?.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    document.querySelectorAll('.checkbox-select.open').forEach(el => { if (el !== boxEl) el.classList.remove('open'); });
+                    boxEl.classList.toggle('open');
+                });
+                inputs.forEach(input => input.addEventListener('change', () => {
+                    if (input.value === '__all__' && input.checked) {
+                        inputs.forEach(other => { if (other !== input) other.checked = false; });
+                    } else if (input.value !== '__all__' && input.checked && allInput) {
+                        allInput.checked = false;
+                    }
+                    if (!inputs.some(item => item.checked) && allInput) allInput.checked = true;
+                    refreshLabel();
+                    if (gaLoaded) loadGraphAnalytics();
+                }));
+                refreshLabel();
+            }
+            document.addEventListener('click', () => document.querySelectorAll('.checkbox-select.open').forEach(el => el.classList.remove('open')));
+            document.querySelectorAll('.checkbox-select').forEach(setupCheckboxSelect);
 
             function updateGraphFilterVisibility() {
                 if (!gaXAxis) return;
@@ -5574,7 +5639,7 @@ def analytics():
                 updateGraphFilterVisibility();
                 if (gaLoaded) loadGraphAnalytics();
             }));
-            [gaFromDate, gaToDate, gaMonths, gaYears, gaMembers].forEach(el => el && el.addEventListener('change', () => {
+            [gaFromDate, gaToDate].forEach(el => el && el.addEventListener('change', () => {
                 if (gaLoaded) loadGraphAnalytics();
             }));
             gaApplyBtn?.addEventListener('click', loadGraphAnalytics);
@@ -5690,6 +5755,321 @@ def analytics():
         graph_options=graph_options,
     )
     return page("Analytics", body, "analytics")
+
+
+
+
+def _month_days(year, month):
+    if month == 12:
+        next_month = date(year + 1, 1, 1)
+    else:
+        next_month = date(year, month + 1, 1)
+    return (next_month - date(year, month, 1)).days
+
+
+def attendance_register_payload(year=None, month=None, search=""):
+    today = today_local()
+    try:
+        year = int(year or today.year)
+    except Exception:
+        year = today.year
+    try:
+        month = int(month or today.month)
+    except Exception:
+        month = today.month
+    if month < 1 or month > 12:
+        month = today.month
+
+    days_count = _month_days(year, month)
+    start_day = date(year, month, 1)
+    end_day = date(year, month, days_count)
+    search_text = (search or "").strip().lower()
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            name_expr = member_name_sql(conn)
+            member_params = []
+            member_where = [ACTIVE_MEMBER_SQL]
+            if search_text:
+                member_where.append(f"lower(COALESCE({name_expr}, '')) LIKE %s")
+                member_params.append(f"%{search_text}%")
+
+            cur.execute(
+                f"""
+                SELECT id, {name_expr} AS display_name, email
+                FROM members
+                WHERE {' AND '.join(member_where)}
+                ORDER BY COALESCE({name_expr}, '')
+                """,
+                member_params,
+            )
+            members = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT DISTINCT CAST(start_time AS TEXT)::date AS meeting_date
+                FROM meetings
+                WHERE start_time IS NOT NULL
+                  AND CAST(start_time AS TEXT)::date BETWEEN %s AND %s
+                """,
+                (start_day, end_day),
+            )
+            meeting_dates = {r.get("meeting_date") for r in cur.fetchall() if r.get("meeting_date")}
+
+            cur.execute(
+                """
+                SELECT a.member_id, a.final_status, a.is_member, CAST(m.start_time AS TEXT)::date AS meeting_date
+                FROM attendance a
+                JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+                WHERE m.start_time IS NOT NULL
+                  AND CAST(m.start_time AS TEXT)::date BETWEEN %s AND %s
+                  AND a.member_id IS NOT NULL
+                """,
+                (start_day, end_day),
+            )
+            attendance_rows = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT DISTINCT to_char(CAST(start_time AS TEXT)::timestamp, 'YYYY') AS year_value
+                FROM meetings
+                WHERE start_time IS NOT NULL
+                ORDER BY year_value DESC
+                LIMIT 12
+                """
+            )
+            years = [r.get("year_value") for r in cur.fetchall() if r.get("year_value")]
+
+    priority = {"P": 4, "L": 3, "A": 2, "U": 1, "": 0}
+    status_by_member_day = {}
+    for row in attendance_rows:
+        mid = row.get("member_id")
+        day_value = row.get("meeting_date")
+        if not mid or not day_value:
+            continue
+        status = str(row.get("final_status") or "").upper()
+        if status in ("PRESENT", "HOST"):
+            mark = "P"
+        elif status == "LATE":
+            mark = "L"
+        elif status == "ABSENT":
+            mark = "A"
+        else:
+            mark = "U"
+        key = (int(mid), day_value.day)
+        if priority[mark] > priority.get(status_by_member_day.get(key, ""), 0):
+            status_by_member_day[key] = mark
+
+    days = list(range(1, days_count + 1))
+    rows = []
+    for member in members:
+        mid = int(member.get("id"))
+        cells = []
+        totals = {"P": 0, "L": 0, "A": 0, "U": 0}
+        for day in days:
+            current = date(year, month, day)
+            mark = status_by_member_day.get((mid, day), "")
+            if not mark and current in meeting_dates:
+                mark = "A"
+            if mark in totals:
+                totals[mark] += 1
+            cells.append(mark)
+        counted = totals["P"] + totals["L"] + totals["A"] + totals["U"]
+        attendance_pct = round(((totals["P"] + totals["L"] * 0.5) / counted) * 100, 2) if counted else 0
+        rows.append({
+            "id": mid,
+            "name": member.get("display_name") or f"Member {mid}",
+            "email": member.get("email") or "",
+            "cells": cells,
+            "totals": totals,
+            "attendance_pct": attendance_pct,
+        })
+
+    month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    if str(today.year) not in years:
+        years.insert(0, str(today.year))
+    if str(year) not in years:
+        years.insert(0, str(year))
+
+    return {
+        "year": year,
+        "month": month,
+        "month_name": month_names[month - 1],
+        "years": years,
+        "days": days,
+        "rows": rows,
+        "meeting_days": sorted([d.day for d in meeting_dates]),
+        "summary": {"members": len(rows), "meeting_days": len(meeting_dates)},
+    }
+
+
+@app.route("/attendance-register")
+@login_required
+def attendance_register():
+    today = today_local()
+    data = attendance_register_payload(request.args.get("year", today.year), request.args.get("month", today.month), request.args.get("search", ""))
+    body = render_template_string(
+        """
+        <div class="hero">
+            <div class="hero-grid">
+                <div>
+                    <div class="badge info">New Dashboard</div>
+                    <h1 class="hero-title">Attendance Register</h1>
+                    <div class="hero-copy">Month-wise register view. Rows are members, columns are dates, and cells show P/L/A/U.</div>
+                </div>
+                <div class="hero-stats">
+                    <div class="hero-chip"><div class="small">Members</div><div class="big">{{ data.summary.members }}</div></div>
+                    <div class="hero-chip"><div class="small">Meeting Days</div><div class="big">{{ data.summary.meeting_days }}</div></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <form method="get" class="graph-filter-box" style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:end">
+                <div>
+                    <label>Month</label>
+                    <select name="month" id="regMonth">
+                        {% for i in range(1, 13) %}
+                        <option value="{{ i }}" {% if i == data.month %}selected{% endif %}>{{ month_names[i-1] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Year</label>
+                    <select name="year" id="regYear">
+                        {% for y in data.years %}
+                        <option value="{{ y }}" {% if y|string == data.year|string %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Search member</label>
+                    <input type="text" name="search" id="regSearch" value="{{ request.args.get('search','') }}" placeholder="type member name">
+                </div>
+                <div class="toolbar" style="margin:0">
+                    <button type="submit">Apply</button>
+                    <button type="button" onclick="window.print()">Print</button>
+                </div>
+                <div class="toolbar" style="margin:0">
+                    <a class="btn secondary" href="{{ url_for('attendance_register_export_pdf', month=data.month, year=data.year, search=request.args.get('search','')) }}">Export PDF</a>
+                    <a class="btn success" href="{{ url_for('attendance_register_export_excel', month=data.month, year=data.year, search=request.args.get('search','')) }}">Export Excel</a>
+                </div>
+            </form>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <div class="section-title">
+                <div>
+                    <h3 style="margin:0">{{ data.month_name }} {{ data.year }}</h3>
+                    <p><span class="badge success">P Present</span> <span class="badge warning">L Late</span> <span class="badge danger">A Absent</span> <span class="badge info">U Unknown</span></p>
+                </div>
+            </div>
+            <div class="register-table-wrap">
+                <table class="register-table" id="attendanceRegisterTable">
+                    <thead>
+                        <tr>
+                            <th class="sticky-member">Member</th>
+                            {% for d in data.days %}<th>{{ d }}</th>{% endfor %}
+                            <th>P</th><th>L</th><th>A</th><th>U</th><th>%</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in data.rows %}
+                        <tr>
+                            <td class="sticky-member reg-member" data-name="{{ row.name }}" data-present="{{ row.totals.P }}" data-late="{{ row.totals.L }}" data-absent="{{ row.totals.A }}" data-unknown="{{ row.totals.U }}" data-percent="{{ row.attendance_pct }}">{{ row.name }}</td>
+                            {% for cell in row.cells %}
+                            <td class="reg-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}">{{ cell or '-' }}</td>
+                            {% endfor %}
+                            <td>{{ row.totals.P }}</td><td>{{ row.totals.L }}</td><td>{{ row.totals.A }}</td><td>{{ row.totals.U }}</td><td>{{ row.attendance_pct }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="modal-backdrop" id="regModal">
+            <div class="modal-card">
+                <div class="section-title"><h3 id="regModalName" style="margin:0">Member</h3><button type="button" id="regModalClose">Close</button></div>
+                <div class="grid-2">
+                    <div class="mini-kpi"><div class="label">Total Present</div><div class="value" id="regModalP">0</div></div>
+                    <div class="mini-kpi"><div class="label">Total Late</div><div class="value" id="regModalL">0</div></div>
+                    <div class="mini-kpi"><div class="label">Total Absent</div><div class="value" id="regModalA">0</div></div>
+                    <div class="mini-kpi"><div class="label">Attendance %</div><div class="value" id="regModalPct">0%</div></div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        (() => {
+            const modal = document.getElementById('regModal');
+            const closeBtn = document.getElementById('regModalClose');
+            document.querySelectorAll('.reg-member').forEach(cell => {
+                cell.addEventListener('click', () => {
+                    document.getElementById('regModalName').textContent = cell.dataset.name || 'Member';
+                    document.getElementById('regModalP').textContent = cell.dataset.present || '0';
+                    document.getElementById('regModalL').textContent = cell.dataset.late || '0';
+                    document.getElementById('regModalA').textContent = cell.dataset.absent || '0';
+                    document.getElementById('regModalPct').textContent = (cell.dataset.percent || '0') + '%';
+                    modal.classList.add('show');
+                });
+            });
+            closeBtn?.addEventListener('click', () => modal.classList.remove('show'));
+            modal?.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('show'); });
+        })();
+        </script>
+        """,
+        data=data,
+        month_names=["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+        request=request,
+    )
+    return page("Attendance Register", body, "attendance_register")
+
+
+@app.route("/attendance-register/data")
+@login_required
+def attendance_register_data():
+    return jsonify(attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", "")))
+
+
+@app.route("/attendance-register/export/excel")
+@login_required
+def attendance_register_export_excel():
+    data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""))
+    output = io.StringIO()
+    output.write("<html><head><meta charset='utf-8'></head><body><table border='1'>")
+    output.write(f"<tr><th colspan='{len(data['days']) + 6}'>Attendance Register - {data['month_name']} {data['year']}</th></tr>")
+    output.write("<tr><th>Member</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
+    for row in data["rows"]:
+        output.write(f"<tr><td>{row['name']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
+    output.write("</table></body></html>")
+    filename = f"attendance_register_{data['year']}_{data['month']:02d}.xls"
+    return Response(output.getvalue(), mimetype="application/vnd.ms-excel", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@app.route("/attendance-register/export/pdf")
+@login_required
+def attendance_register_export_pdf():
+    data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""))
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = [Paragraph(f"Attendance Register - {data['month_name']} {data['year']}", styles["Title"]), Spacer(1, 10)]
+    table_data = [["Member"] + [str(d) for d in data["days"]] + ["P", "L", "A", "U", "%"]]
+    for row in data["rows"][:80]:
+        table_data.append([row["name"][:24]] + [c or "-" for c in row["cells"]] + [row["totals"]["P"], row["totals"]["L"], row["totals"]["A"], row["totals"]["U"], f"{row['attendance_pct']}%"])
+    tbl = Table(table_data, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("FONTSIZE", (0, 0), (-1, -1), 6),
+        ("BACKGROUND", (1, 1), (-6, -1), colors.whitesmoke),
+    ]))
+    story.append(tbl)
+    doc.build(story)
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=True, download_name=f"attendance_register_{data['year']}_{data['month']:02d}.pdf", mimetype="application/pdf")
 
 
 @app.route("/analytics/graph-data")
