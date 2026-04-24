@@ -77,6 +77,14 @@ DB_INITIALIZED = False
 LAST_STALE_CHECK_TS = 0
 SETTINGS_CACHE = {}
 
+# Lightweight in-process cache for heavy dashboards. Safe on Render: short TTL, no behavior change.
+PERF_CACHE = {}
+try:
+    PERFORMANCE_CACHE_TTL_SECONDS = int(os.getenv("PERFORMANCE_CACHE_TTL_SECONDS", "45") or "45")
+except Exception:
+    PERFORMANCE_CACHE_TTL_SECONDS = 45
+
+
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
 
@@ -208,6 +216,43 @@ def db():
     if connect_timeout <= 0:
         connect_timeout = 5
     return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=connect_timeout)
+
+
+def _cache_make_key(prefix, payload):
+    try:
+        return prefix + ":" + json.dumps(payload, sort_keys=True, default=str)
+    except Exception:
+        return prefix + ":" + str(payload)
+
+
+def _cache_get(key):
+    if PERFORMANCE_CACHE_TTL_SECONDS <= 0:
+        return None
+    cached = PERF_CACHE.get(key)
+    if not cached:
+        return None
+    created_at, value = cached
+    if time.time() - created_at > PERFORMANCE_CACHE_TTL_SECONDS:
+        PERF_CACHE.pop(key, None)
+        return None
+    return value
+
+
+def _cache_set(key, value):
+    if PERFORMANCE_CACHE_TTL_SECONDS <= 0:
+        return value
+    if len(PERF_CACHE) > 128:
+        oldest_keys = sorted(PERF_CACHE, key=lambda k: PERF_CACHE[k][0])[:32]
+        for old_key in oldest_keys:
+            PERF_CACHE.pop(old_key, None)
+    PERF_CACHE[key] = (time.time(), value)
+    return value
+
+
+def _cache_clear_prefix(prefix):
+    for key in list(PERF_CACHE.keys()):
+        if key.startswith(prefix + ":"):
+            PERF_CACHE.pop(key, None)
 
 
 def hash_password(password: str) -> str:
@@ -1012,6 +1057,11 @@ def init_db():
         if table_exists(conn, "smart_alert_logs"):
             ensure_index(conn, "idx_smart_alert_logs_key", "CREATE INDEX idx_smart_alert_logs_key ON smart_alert_logs(alert_key)")
             ensure_index(conn, "idx_smart_alert_logs_created", "CREATE INDEX idx_smart_alert_logs_created ON smart_alert_logs(created_at)")
+        # Performance indexes for dashboards, filters and monthly register.
+        ensure_index(conn, "idx_meetings_start_time", "CREATE INDEX idx_meetings_start_time ON meetings(start_time)")
+        ensure_index(conn, "idx_meetings_uuid_start", "CREATE INDEX idx_meetings_uuid_start ON meetings(meeting_uuid, start_time)")
+        ensure_index(conn, "idx_attendance_member_status", "CREATE INDEX idx_attendance_member_status ON attendance(member_id, final_status)")
+        ensure_index(conn, "idx_attendance_uuid_member", "CREATE INDEX idx_attendance_uuid_member ON attendance(meeting_uuid, member_id)")
 
         with conn.cursor() as cur:
             for key, value in DEFAULT_SETTINGS.items():
@@ -1423,6 +1473,9 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
         conn.commit()
 
     refresh_live_meeting_summary(meeting_uuid)
+    _cache_clear_prefix("analytics")
+    _cache_clear_prefix("graph_analytics")
+    _cache_clear_prefix("attendance_register")
 
 
 def classify_row_for_meeting(row, start_time, end_time, present_percentage=None, late_pct=None):
@@ -1739,7 +1792,7 @@ def graph_analytics_options():
     }
 
 
-def graph_analytics_payload():
+def _graph_analytics_payload_uncached():
     x_axis = str(request.args.get("x_axis", "date") or "date").lower()
     if x_axis not in ("date", "month", "year"):
         x_axis = "date"
@@ -2410,7 +2463,7 @@ def export_meeting_excel_bytes(report_data):
     return out.getvalue().encode("utf-8")
 
 
-def analytics_data(filters):
+def _analytics_data_uncached(filters):
     period_mode = filters.get("period_mode", "custom")
     from_date, to_date = normalize_period_dates(filters)
     filters["from_date"] = from_date
@@ -6019,7 +6072,7 @@ def _month_days(year, month):
     return (next_month - date(year, month, 1)).days
 
 
-def attendance_register_payload(year=None, month=None, search=""):
+def _attendance_register_payload_uncached(year=None, month=None, search="", page=1, per_page=25, all_rows=False):
     today = today_local()
     try:
         year = int(year or today.year)
@@ -6036,6 +6089,15 @@ def attendance_register_payload(year=None, month=None, search=""):
     start_day = date(year, month, 1)
     end_day = date(year, month, days_count)
     search_text = (search or "").strip().lower()
+    try:
+        page = max(int(page or 1), 1)
+    except Exception:
+        page = 1
+    try:
+        per_page = max(5, min(int(per_page or 25), 100))
+    except Exception:
+        per_page = 25
+    offset = (page - 1) * per_page
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -6048,13 +6110,35 @@ def attendance_register_payload(year=None, month=None, search=""):
 
             cur.execute(
                 f"""
-                SELECT id, {name_expr} AS display_name, email
+                SELECT COUNT(*) AS total_count
                 FROM members
                 WHERE {' AND '.join(member_where)}
-                ORDER BY COALESCE({name_expr}, '')
                 """,
                 member_params,
             )
+            total_members_count = int((cur.fetchone() or {}).get("total_count") or 0)
+
+            if all_rows:
+                cur.execute(
+                    f"""
+                    SELECT id, {name_expr} AS display_name, email
+                    FROM members
+                    WHERE {' AND '.join(member_where)}
+                    ORDER BY COALESCE({name_expr}, '')
+                    """,
+                    member_params,
+                )
+            else:
+                cur.execute(
+                    f"""
+                    SELECT id, {name_expr} AS display_name, email
+                    FROM members
+                    WHERE {' AND '.join(member_where)}
+                    ORDER BY COALESCE({name_expr}, '')
+                    LIMIT %s OFFSET %s
+                    """,
+                    member_params + [per_page, offset],
+                )
             members = cur.fetchall()
 
             cur.execute(
@@ -6153,15 +6237,64 @@ def attendance_register_payload(year=None, month=None, search=""):
         "days": days,
         "rows": rows,
         "meeting_days": sorted([d.day for d in meeting_dates]),
-        "summary": {"members": len(rows), "meeting_days": len(meeting_dates)},
+        "summary": {"members": len(rows), "meeting_days": len(meeting_dates), "total_members": total_members_count},
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total": total_members_count,
+            "pages": max(1, (total_members_count + per_page - 1) // per_page),
+            "has_prev": page > 1,
+            "has_next": page * per_page < total_members_count,
+        },
     }
+
+
+def analytics_data(filters):
+    key = _cache_make_key("analytics", filters or {})
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    return _cache_set(key, _analytics_data_uncached(filters))
+
+
+def graph_analytics_payload():
+    key = _cache_make_key("graph_analytics", {
+        "x_axis": request.args.get("x_axis", "date"),
+        "y_axis": request.args.get("y_axis", "count"),
+        "from_date": request.args.get("from_date", ""),
+        "to_date": request.args.get("to_date", ""),
+        "months": request.args.getlist("months"),
+        "years": request.args.getlist("years"),
+        "member_ids": request.args.getlist("member_ids"),
+    })
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    return _cache_set(key, _graph_analytics_payload_uncached())
+
+
+def attendance_register_payload(year=None, month=None, search="", page=1, per_page=25, all_rows=False):
+    key = _cache_make_key("attendance_register", {
+        "year": year, "month": month, "search": search,
+        "page": page, "per_page": per_page, "all_rows": all_rows,
+    })
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    return _cache_set(key, _attendance_register_payload_uncached(year, month, search, page, per_page, all_rows))
 
 
 @app.route("/attendance-register")
 @login_required
 def attendance_register():
     today = today_local()
-    data = attendance_register_payload(request.args.get("year", today.year), request.args.get("month", today.month), request.args.get("search", ""))
+    data = attendance_register_payload(
+        request.args.get("year", today.year),
+        request.args.get("month", today.month),
+        request.args.get("search", ""),
+        request.args.get("page", 1),
+        request.args.get("per_page", 25),
+    )
     body = render_template_string(
         """
         <style>
@@ -6179,21 +6312,29 @@ def attendance_register():
 
 
         <style>
-        /* Dark register book: same structure, only dark professional theme + more width */
+        /* Premium readable register theme: keeps book structure, fixes color clarity and spacing */
         .reg-dashboard-shell{grid-template-columns:minmax(0,1fr)!important;}
         .reg-side-note,.reg-feature-box{display:none!important;}
-        .register-book{background:linear-gradient(135deg,#07111f,#0f172a 60%,#111827)!important;border:1px solid rgba(96,165,250,.22)!important;box-shadow:0 24px 70px rgba(0,0,0,.45)!important;}
-        .register-paper{background:rgba(15,23,42,.92)!important;border-color:rgba(148,163,184,.22)!important;color:#e5e7eb!important;}
-        .register-table th{background:#111827!important;color:#dbeafe!important;border-color:rgba(148,163,184,.28)!important;}
-        .register-table td{background:rgba(15,23,42,.84)!important;color:#e5e7eb!important;border-color:rgba(148,163,184,.16)!important;}
-        .register-table .sticky-member{background:#0b1220!important;color:#e5e7eb!important;}
-        .reg-empty{background:rgba(30,41,59,.65)!important;}
-        .reg-p{background:rgba(34,197,94,.16)!important;color:#86efac!important;font-weight:950;}
-        .reg-l{background:rgba(245,158,11,.16)!important;color:#fde68a!important;font-weight:950;}
-        .reg-a{background:rgba(239,68,68,.16)!important;color:#fca5a5!important;font-weight:950;}
-        .reg-u{background:rgba(148,163,184,.15)!important;color:#cbd5e1!important;font-weight:950;}
-        .reg-month-pill{background:#111827!important;color:#e5e7eb!important;border-color:rgba(148,163,184,.32)!important;}
-        .reg-controls input,.reg-controls select{background:#0b1220!important;color:#e5e7eb!important;border-color:rgba(148,163,184,.28)!important;}
+        .register-book{background:linear-gradient(135deg,#3a2418,#6b4428 45%,#2b1b12)!important;border:1px solid rgba(255,232,180,.18)!important;box-shadow:0 24px 70px rgba(0,0,0,.42), inset 0 0 0 3px rgba(255,255,255,.08)!important;}
+        .register-paper{background:linear-gradient(180deg,#fffaf0,#fff7df)!important;border-color:#d6bd8b!important;color:#172033!important;}
+        .register-heading span{background:linear-gradient(90deg,#166534,#15803d)!important;color:white!important;letter-spacing:.2px;}
+        .register-table-wrap{background:#fffaf0!important;border-color:#d6bd8b!important;}
+        .register-table th{background:#0f2f24!important;color:#fff7ed!important;border-color:#c9ad78!important;font-weight:950;}
+        .register-table th.reg-total-head{background:#123d64!important;}
+        .register-table td{background:#fff8e8!important;color:#172033!important;border-color:#ddc89a!important;}
+        .register-table .sticky-member{background:#fff0c7!important;color:#111827!important;box-shadow:2px 0 0 rgba(0,0,0,.08)!important;}
+        .register-table td.reg-total-cell{background:#e0f2fe!important;color:#0f172a!important;font-weight:950;}
+        .register-table td.reg-p{background:#dcfce7!important;color:#166534!important;font-weight:1000!important;}
+        .register-table td.reg-l{background:#fef3c7!important;color:#b45309!important;font-weight:1000!important;}
+        .register-table td.reg-a{background:#fee2e2!important;color:#b91c1c!important;font-weight:1000!important;}
+        .register-table td.reg-u{background:#e5e7eb!important;color:#374151!important;font-weight:1000!important;}
+        .register-table td.reg-empty{background:#fffdf4!important;color:#d6c7a2!important;}
+        .register-table td.reg-p,.register-table td.reg-l,.register-table td.reg-a,.register-table td.reg-u{border-radius:7px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.04);}
+        .reg-month-pill{background:#fff7df!important;color:#172033!important;border-color:#d6bd8b!important;}
+        .reg-controls input,.reg-controls select{background:#fffdf4!important;color:#172033!important;border-color:#d6bd8b!important;}
+        .reg-pagination{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;color:#334155;font-weight:800}
+        .reg-pagination a,.reg-pagination span{padding:7px 10px;border-radius:8px;background:#fff7df;border:1px solid #d6bd8b;color:#172033;text-decoration:none}
+        .reg-pagination .disabled{opacity:.45}
         </style>
         <div class="reg-dashboard-shell">
             <aside class="reg-side-note">
@@ -6236,6 +6377,7 @@ def attendance_register():
                             <thead>
                                 <tr>
                                     <th class="sticky-member">Name</th>
+                                    <th class="reg-total-head">Total</th>
                                     {% for d in data.days %}<th>{{ d }}</th>{% endfor %}
                                     <th>P</th><th>L</th><th>A</th><th>U</th><th>%</th>
                                 </tr>
@@ -6244,13 +6386,27 @@ def attendance_register():
                                 {% for row in data.rows %}
                                 <tr>
                                     <td class="sticky-member reg-member" data-name="{{ row.name }}" data-present="{{ row.totals.P }}" data-late="{{ row.totals.L }}" data-absent="{{ row.totals.A }}" data-unknown="{{ row.totals.U }}" data-total="{{ row.total_meetings }}" data-percent="{{ row.attendance_pct }}">{{ row.name }}</td>
-                                    <td>{{ row.total_meetings }}</td>
+                                    <td class="reg-total-cell">{{ row.total_meetings }}</td>
                                     {% for cell in row.cells %}<td class="reg-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}">{{ cell or '' }}</td>{% endfor %}
                                     <td>{{ row.totals.P }}</td><td>{{ row.totals.L }}</td><td>{{ row.totals.A }}</td><td>{{ row.totals.U }}</td><td>{{ row.attendance_pct }}%</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
                         </table>
+                    </div>
+                    <div class="reg-pagination">
+                        {% set pg = data.pagination %}
+                        {% if pg.has_prev %}
+                            <a href="{{ url_for('attendance_register', month=data.month, year=data.year, search=request.args.get('search',''), page=pg.page-1, per_page=pg.per_page) }}">‹ Previous</a>
+                        {% else %}
+                            <span class="disabled">‹ Previous</span>
+                        {% endif %}
+                        <span>Page {{ pg.page }} / {{ pg.pages }} · {{ pg.total }} members</span>
+                        {% if pg.has_next %}
+                            <a href="{{ url_for('attendance_register', month=data.month, year=data.year, search=request.args.get('search',''), page=pg.page+1, per_page=pg.per_page) }}">Next ›</a>
+                        {% else %}
+                            <span class="disabled">Next ›</span>
+                        {% endif %}
                     </div>
                 </div>
             </main>
@@ -6311,19 +6467,25 @@ def attendance_register():
 @app.route("/attendance-register/data")
 @login_required
 def attendance_register_data():
-    return jsonify(attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", "")))
+    return jsonify(attendance_register_payload(
+        request.args.get("year"),
+        request.args.get("month"),
+        request.args.get("search", ""),
+        request.args.get("page", 1),
+        request.args.get("per_page", 25),
+    ))
 
 
 @app.route("/attendance-register/export/excel")
 @login_required
 def attendance_register_export_excel():
-    data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""))
+    data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""), all_rows=True)
     output = io.StringIO()
     output.write("<html><head><meta charset='utf-8'></head><body><table border='1'>")
-    output.write(f"<tr><th colspan='{len(data['days']) + 6}'>Attendance Register - {data['month_name']} {data['year']}</th></tr>")
-    output.write("<tr><th>Member</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
+    output.write(f"<tr><th colspan='{len(data['days']) + 7}'>Attendance Register - {data['month_name']} {data['year']}</th></tr>")
+    output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
-        output.write(f"<tr><td>{row['name']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
+        output.write(f"<tr><td>{row['name']}</td><td>{row['total_meetings']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
     output.write("</table></body></html>")
     filename = f"attendance_register_{data['year']}_{data['month']:02d}.xls"
     return Response(output.getvalue(), mimetype="application/vnd.ms-excel", headers={"Content-Disposition": f"attachment; filename={filename}"})
@@ -6332,14 +6494,14 @@ def attendance_register_export_excel():
 @app.route("/attendance-register/export/pdf")
 @login_required
 def attendance_register_export_pdf():
-    data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""))
+    data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""), all_rows=True)
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
     story = [Paragraph(f"Attendance Register - {data['month_name']} {data['year']}", styles["Title"]), Spacer(1, 10)]
-    table_data = [["Member"] + [str(d) for d in data["days"]] + ["P", "L", "A", "U", "%"]]
+    table_data = [["Member", "Total"] + [str(d) for d in data["days"]] + ["P", "L", "A", "U", "%"]]
     for row in data["rows"][:80]:
-        table_data.append([row["name"][:24]] + [c or "-" for c in row["cells"]] + [row["totals"]["P"], row["totals"]["L"], row["totals"]["A"], row["totals"]["U"], f"{row['attendance_pct']}%"])
+        table_data.append([row["name"][:24], row["total_meetings"]] + [c or "-" for c in row["cells"]] + [row["totals"]["P"], row["totals"]["L"], row["totals"]["A"], row["totals"]["U"], f"{row['attendance_pct']}%"])
     tbl = Table(table_data, repeatRows=1)
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
@@ -6407,10 +6569,18 @@ def export_analytics_pdf():
 @login_required
 def meetings():
     maybe_finalize_stale_live_meetings()
+    try:
+        page_no = max(int(request.args.get("page", 1)), 1)
+    except Exception:
+        page_no = 1
+    per_page = 50
+    offset = (page_no - 1) * per_page
 
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT 250")
+            cur.execute("SELECT COUNT(*) AS total FROM meetings")
+            total_meetings = int((cur.fetchone() or {}).get("total") or 0)
+            cur.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT %s OFFSET %s", (per_page, offset))
             rows = cur.fetchall()
 
     body = render_template_string(
