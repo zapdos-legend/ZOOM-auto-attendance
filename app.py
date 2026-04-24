@@ -1,4 +1,5 @@
 
+# UI_UPDATE_V4_REGISTER_THEME_TOGGLE_NOTIFICATION_CENTER_APPLIED = True
 # UI_UPDATE_V3_ANALYTICS_TABS_DARK_REGISTER_APPLIED = True
 # ===== DARK SAAS THEME INJECTION (SAFE) =====
 DARK_THEME_CSS = '''
@@ -1058,6 +1059,7 @@ def init_db():
         if table_exists(conn, "smart_alert_logs"):
             ensure_index(conn, "idx_smart_alert_logs_key", "CREATE INDEX idx_smart_alert_logs_key ON smart_alert_logs(alert_key)")
             ensure_index(conn, "idx_smart_alert_logs_created", "CREATE INDEX idx_smart_alert_logs_created ON smart_alert_logs(created_at)")
+            ensure_index(conn, "idx_smart_alert_logs_type_created", "CREATE INDEX idx_smart_alert_logs_type_created ON smart_alert_logs(alert_type, created_at)")
         # Performance indexes for dashboards, filters and monthly register.
         ensure_index(conn, "idx_meetings_start_time", "CREATE INDEX idx_meetings_start_time ON meetings(start_time)")
         ensure_index(conn, "idx_meetings_uuid_start", "CREATE INDEX idx_meetings_uuid_start ON meetings(meeting_uuid, start_time)")
@@ -2009,7 +2011,7 @@ def trigger_alert(member=None, alert_type="general", state="active", message="",
                     INSERT INTO smart_alert_logs(alert_key, alert_type, entity_type, entity_id, previous_state, current_state, title, message, email_sent, push_sent)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
-                    (alert_key, alert_type, entity_type, entity_id, previous_state, state, title, message, bool(email_sent), push_sent),
+                    (alert_key, alert_type, entity_type, entity_id, previous_state, state, title, formatted_message, bool(email_sent), push_sent),
                 )
             conn.commit()
         return {"sent": True, "alert_key": alert_key, "email_sent": bool(email_sent), "push_sent": push_sent}
@@ -4002,6 +4004,7 @@ def page(title, body, active="home"):
         {"key": "analytics", "label": "📊 Analytics", "href": url_for("analytics")},
         {"key": "attendance_register", "label": "📒 Attendance Register", "href": url_for("attendance_register")},
         {"key": "meetings", "label": "📂 Meetings", "href": url_for("meetings")},
+        {"key": "notification_control", "label": "🔔 Notifications", "href": url_for("notification_control")},
         {"key": "settings", "label": "⚙️ Settings", "href": url_for("settings")},
         {"key": "activity", "label": "📝 Activity", "href": url_for("activity")},
         {"key": "profile", "label": "🙍 Profile", "href": url_for("profile")},
@@ -6385,7 +6388,33 @@ def attendance_register():
         .reg-pagination a,.reg-pagination span{padding:7px 10px;border-radius:8px;background:#0f172a;border:1px solid rgba(96,165,250,.35);color:#dbeafe;text-decoration:none}
         .reg-pagination .disabled{opacity:.45}
         </style>
-        <div class="reg-dashboard-shell">
+
+        <style>
+        /* REGISTER_THEME_TOGGLE_V4: user can switch register only between dark and light without changing app theme */
+        .reg-theme-toggle{display:inline-flex;align-items:center;gap:8px;height:34px;border-radius:999px;border:1px solid rgba(96,165,250,.45);background:#0b1220;color:#dbeafe;font-weight:950;padding:0 12px;cursor:pointer;box-shadow:0 8px 18px rgba(0,0,0,.25)}
+        .reg-dashboard-shell.reg-theme-light .register-book{background:linear-gradient(135deg,#7c4a22,#4b2d16)!important;border:1px solid rgba(120,53,15,.35)!important;box-shadow:0 18px 40px rgba(77,45,22,.35), inset 0 0 0 3px rgba(255,255,255,.12)!important;}
+        .reg-dashboard-shell.reg-theme-light .register-paper{background:linear-gradient(180deg,#fffdf4,#fff7df)!important;color:#172033!important;border-color:#d6bd8b!important;}
+        .reg-dashboard-shell.reg-theme-light .register-heading span{background:#14532d!important;color:white!important;box-shadow:0 7px 20px rgba(20,83,45,.28)!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table-wrap{background:#fffdf4!important;border-color:#cfc2a4!important;box-shadow:none!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table{background:#fffdf4!important;border-spacing:0!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table th{background:#062d28!important;color:#ffffff!important;border:1px solid #d8cdb5!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table th.reg-total-head{background:#0b3a4a!important;color:#fff!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table td{background:#fffaf0!important;color:#172033!important;border:1px solid #d8cdb5!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table .sticky-member{background:#fdecc3!important;color:#111827!important;box-shadow:none!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table td.sticky-member{background:#fff0c9!important;color:#111827!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table td.reg-total-cell{background:#e6f4ff!important;color:#0f172a!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table td.reg-p{background:#dcfce7!important;color:#15803d!important;text-shadow:none!important;box-shadow:none!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table td.reg-l{background:#ffedd5!important;color:#ea580c!important;text-shadow:none!important;box-shadow:none!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table td.reg-a{background:#fee2e2!important;color:#dc2626!important;text-shadow:none!important;box-shadow:none!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table td.reg-u{background:#e5e7eb!important;color:#475569!important;text-shadow:none!important;box-shadow:none!important;}
+        .reg-dashboard-shell.reg-theme-light .register-table td.reg-empty{background:#fffaf0!important;color:#d6bd8b!important;}
+        .reg-dashboard-shell.reg-theme-light .reg-month-pill{background:#f8fafc!important;color:#111827!important;border-color:#cbd5e1!important;}
+        .reg-dashboard-shell.reg-theme-light .reg-controls input,.reg-dashboard-shell.reg-theme-light .reg-controls select{background:#ffffff!important;color:#111827!important;border-color:#cbd5e1!important;}
+        .reg-dashboard-shell.reg-theme-light .reg-controls label{color:#475569!important;}
+        .reg-dashboard-shell.reg-theme-light .reg-pagination a,.reg-dashboard-shell.reg-theme-light .reg-pagination span{background:#fff7df!important;border-color:#d6bd8b!important;color:#3b2a12!important;}
+        .reg-dashboard-shell.reg-theme-light .reg-theme-toggle{background:#fff7df;color:#3b2a12;border-color:#d6bd8b}
+        </style>
+        <div class="reg-dashboard-shell reg-theme-dark" id="attendanceRegisterShell">
             <aside class="reg-side-note">
                 <b>MONTHLY REGISTER VIEW</b>
                 Each page represents a month.<br><br>
@@ -6415,6 +6444,7 @@ def attendance_register():
                             <div><label>Year</label><select name="year" id="regYear">{% for y in data.years %}<option value="{{ y }}" {% if y|string == data.year|string %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></div>
                             <div><label>Search member</label><input type="text" name="search" id="regSearch" value="{{ request.args.get('search','') }}" placeholder="member name"></div>
                             <button type="submit">Apply</button>
+                            <button type="button" class="reg-theme-toggle" id="regThemeToggle">🌙 Dark</button>
                             <button type="button" onclick="window.print()">Print</button>
                             <a class="btn secondary" href="{{ url_for('attendance_register_export_pdf', month=data.month, year=data.year, search=request.args.get('search','')) }}">PDF</a>
                             <a class="btn success" href="{{ url_for('attendance_register_export_excel', month=data.month, year=data.year, search=request.args.get('search','')) }}">Excel</a>
@@ -6490,6 +6520,21 @@ def attendance_register():
         (() => {
             const modal = document.getElementById('regModal');
             const closeBtn = document.getElementById('regModalClose');
+            const shell = document.getElementById('attendanceRegisterShell');
+            const themeBtn = document.getElementById('regThemeToggle');
+            function applyRegisterTheme(theme){
+                if(!shell) return;
+                shell.classList.toggle('reg-theme-light', theme === 'light');
+                shell.classList.toggle('reg-theme-dark', theme !== 'light');
+                if(themeBtn) themeBtn.textContent = theme === 'light' ? '☀️ Light' : '🌙 Dark';
+                try{ localStorage.setItem('attendanceRegisterTheme', theme); }catch(e){}
+            }
+            applyRegisterTheme(localStorage.getItem('attendanceRegisterTheme') || 'dark');
+            themeBtn?.addEventListener('click', (e) => {
+                e.preventDefault();
+                const next = shell?.classList.contains('reg-theme-light') ? 'dark' : 'light';
+                applyRegisterTheme(next);
+            });
             document.querySelectorAll('.reg-member').forEach(cell => {
                 cell.addEventListener('click', () => {
                     document.getElementById('regModalName').textContent = cell.dataset.name || 'Member';
@@ -6753,6 +6798,47 @@ def meeting_pdf(meeting_uuid):
     )
 
 
+
+@app.route("/notification-control", methods=["GET", "POST"])
+@login_required
+@admin_required
+def notification_control():
+    defaults = notification_default_settings()
+    if request.method == "POST":
+        action = request.form.get("action", "save")
+        if action == "test_email":
+            to_email = request.form.get("notification_test_email_to") or defaults.get("notification_test_email_to") or SMART_ALERT_EMAIL_TO
+            ok, msg = send_email(to_email, "✅ Test Email - Zoom Attendance Platform", "This is a test email from Notification Control Center.", "<h2>✅ Test Email</h2><p>This is a test email from Notification Control Center.</p>") if to_email else (False, "No receiver email configured")
+            flash("Test email sent." if ok else f"Test email failed: {msg}", "success" if ok else "error")
+            return redirect(url_for("notification_control"))
+        if action == "test_push":
+            result = send_push_notification("✅ Test Push - Zoom Attendance Platform", "This is a test push from Notification Control Center.", click_url=url_for("notification_control", _external=True))
+            sent = int((result or {}).get("sent", 0))
+            flash(f"Test push sent to {sent} browser subscription(s).", "success" if sent else "error")
+            return redirect(url_for("notification_control"))
+        selected_types = request.form.getlist("alert_types")
+        set_setting("notification_email_enabled", "true" if request.form.get("email_enabled") else "false")
+        set_setting("notification_push_enabled", "true" if request.form.get("push_enabled") else "false")
+        set_setting("notification_alert_types", ",".join(selected_types))
+        set_setting("notification_timing", request.form.get("notification_timing", "after"))
+        set_setting("notification_message_template", request.form.get("notification_message_template", defaults["notification_message_template"]))
+        set_setting("notification_test_email_to", request.form.get("notification_test_email_to", defaults.get("notification_test_email_to", "")))
+        log_activity("notification_control_update", "Notification Control Center settings updated")
+        flash("Notification settings saved.", "success")
+        return redirect(url_for("notification_control"))
+    ns = notification_settings()
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM smart_alert_logs ORDER BY created_at DESC LIMIT 120")
+            logs = cur.fetchall()
+    body = render_template_string("""
+        <style>
+        .notify-shell{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(340px,.95fr);gap:18px;align-items:start}.notify-panel{background:linear-gradient(180deg,rgba(15,23,42,.95),rgba(2,6,23,.96));border:1px solid rgba(96,165,250,.22);border-radius:22px;padding:18px;box-shadow:0 24px 70px rgba(0,0,0,.35)}.notify-hero{background:radial-gradient(circle at top left,rgba(34,211,238,.22),transparent 38%),linear-gradient(135deg,#0f172a,#111827);border:1px solid rgba(34,211,238,.24);border-radius:24px;padding:22px;margin-bottom:18px;box-shadow:0 24px 60px rgba(0,0,0,.35)}.notify-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.notify-tile{background:rgba(15,23,42,.88);border:1px solid rgba(148,163,184,.22);border-radius:16px;padding:14px}.notify-tile label{font-size:12px;color:#93c5fd;font-weight:900;display:block;margin-bottom:7px}.notify-tile input,.notify-tile select,.notify-tile textarea{width:100%;background:#07111f;color:#e5e7eb;border:1px solid rgba(96,165,250,.28);border-radius:12px;padding:10px}.notify-tile textarea{min-height:150px;resize:vertical}.notify-check{display:flex;align-items:center;gap:10px;background:rgba(30,41,59,.76);border:1px solid rgba(148,163,184,.20);border-radius:12px;padding:10px;font-weight:850}.notify-check input{width:auto}.alert-type-list{display:grid;gap:8px}.logs-table{width:100%;border-collapse:collapse;font-size:12px}.logs-table th,.logs-table td{padding:9px;border-bottom:1px solid rgba(148,163,184,.16);vertical-align:top}.logs-table th{color:#93c5fd;text-align:left;background:rgba(15,23,42,.88);position:sticky;top:0}.pill-on{background:#14532d;color:#dcfce7}.pill-off{background:#7f1d1d;color:#fee2e2}.notify-pill{display:inline-flex;border-radius:999px;padding:5px 9px;font-weight:950;font-size:11px}.notify-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.notify-actions button{border-radius:12px}.log-wrap{max-height:620px;overflow:auto;border:1px solid rgba(148,163,184,.18);border-radius:16px}.muted-help{color:#94a3b8;font-size:12px;line-height:1.55}@media(max-width:1100px){.notify-shell{grid-template-columns:1fr}.notify-grid{grid-template-columns:1fr}}
+        </style>
+        <div class="notify-hero"><div class="badge info" style="margin-bottom:10px">Notification Control Center</div><h1 class="hero-title" style="margin:0">Smart Alerts, Email & Push Controls</h1><div class="hero-copy">Control which smart alerts can send email or browser push. Existing no-duplicate status-change logic remains connected.</div></div>
+        <div class="notify-shell"><form method="post" class="notify-panel"><input type="hidden" name="action" value="save"><div class="section-title"><div><h3 style="margin:0">Delivery Controls</h3><p>Enable or disable channels without touching alert calculation logic.</p></div></div><div class="notify-grid"><label class="notify-check"><input type="checkbox" name="email_enabled" {% if ns.email_enabled %}checked{% endif %}> Enable Email Alerts <span class="notify-pill {{ 'pill-on' if ns.email_enabled else 'pill-off' }}">{{ 'ON' if ns.email_enabled else 'OFF' }}</span></label><label class="notify-check"><input type="checkbox" name="push_enabled" {% if ns.push_enabled %}checked{% endif %}> Enable Push Alerts <span class="notify-pill {{ 'pill-on' if ns.push_enabled else 'pill-off' }}">{{ 'ON' if ns.push_enabled else 'OFF' }}</span></label><div class="notify-tile"><label>Timing Control</label><select name="notification_timing">{% for t in timings %}<option value="{{ t }}" {% if ns.timing == t %}selected{% endif %}>{{ t.title() }} meeting</option>{% endfor %}</select><div class="muted-help">Current automatic smart alerts run after finalization; this setting is stored for before/during/after workflows.</div></div><div class="notify-tile"><label>Test / Fallback Email Receiver</label><input name="notification_test_email_to" value="{{ ns.notification_test_email_to }}" placeholder="admin@example.com"></div></div><div class="notify-tile" style="margin-top:12px"><label>Select Alert Types</label><div class="alert-type-list">{% for key, label in alert_types %}<label class="notify-check"><input type="checkbox" name="alert_types" value="{{ key }}" {% if key in ns.enabled_types %}checked{% endif %}> {{ label }}</label>{% endfor %}</div></div><div class="notify-tile" style="margin-top:12px"><label>Customize Message Template</label><textarea name="notification_message_template">{{ ns.notification_message_template }}</textarea><div class="muted-help">Available variables: {title}, {message}, {state}, {alert_type}, {entity_type}, {entity_id}</div></div><div class="notify-actions"><button type="submit">Save Notification Settings</button><button type="submit" name="action" value="test_email">Send Test Email</button><button type="submit" name="action" value="test_push">Send Test Push</button></div></form><div class="notify-panel"><div class="section-title"><div><h3 style="margin:0">Alert Logs</h3><p>Latest stored smart alert state-change logs.</p></div></div><div class="log-wrap"><table class="logs-table"><thead><tr><th>Time</th><th>Type</th><th>State</th><th>Delivery</th><th>Message</th></tr></thead><tbody>{% for log in logs %}<tr><td>{{ fmt_dt(log.created_at) }}</td><td><b>{{ log.alert_type }}</b><br><span class="muted">{{ log.entity_type }}: {{ log.entity_id }}</span></td><td>{{ log.previous_state or '-' }} → <b>{{ log.current_state }}</b></td><td>Email: {{ '✅' if log.email_sent else '—' }}<br>Push: {{ log.push_sent }}</td><td><b>{{ log.title }}</b><br>{{ log.message }}</td></tr>{% else %}<tr><td colspan="5" class="muted">No alert logs yet.</td></tr>{% endfor %}</tbody></table></div></div></div>
+        """, ns=ns, alert_types=NOTIFICATION_ALERT_TYPES, timings=NOTIFICATION_TIMINGS, logs=logs, fmt_dt=fmt_dt)
+    return page("Notification Control Center", body, "notification_control")
 @app.route("/settings", methods=["GET", "POST"])
 @login_required
 @admin_required
