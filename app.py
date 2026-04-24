@@ -1649,6 +1649,211 @@ def compute_trend(rows, period_mode="custom"):
     }
 
 
+
+def _graph_date_value(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _graph_multi_values(name):
+    values = request.args.getlist(name)
+    if len(values) == 1 and "," in values[0]:
+        values = [item.strip() for item in values[0].split(",")]
+    clean = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text != "__all__":
+            clean.append(text)
+    return clean
+
+
+def graph_analytics_options():
+    with db() as conn:
+        with conn.cursor() as cur:
+            member_name_expr = member_name_sql(conn)
+            cur.execute(f"SELECT id, {member_name_expr} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
+            members = cur.fetchall()
+            cur.execute("""
+                SELECT DISTINCT to_char(CAST(start_time AS TEXT)::timestamp, 'YYYY-MM') AS month_value,
+                       to_char(CAST(start_time AS TEXT)::timestamp, 'Mon YYYY') AS month_label
+                FROM meetings
+                WHERE start_time IS NOT NULL
+                ORDER BY month_value DESC
+                LIMIT 36
+            """)
+            months = cur.fetchall()
+            cur.execute("""
+                SELECT DISTINCT to_char(CAST(start_time AS TEXT)::timestamp, 'YYYY') AS year_value
+                FROM meetings
+                WHERE start_time IS NOT NULL
+                ORDER BY year_value DESC
+                LIMIT 10
+            """)
+            years = cur.fetchall()
+    return {
+        "members": [{"id": m.get("id"), "name": m.get("display_name") or f"Member {m.get('id')}"} for m in members],
+        "months": [{"value": m.get("month_value"), "label": m.get("month_label") or m.get("month_value")} for m in months if m.get("month_value")],
+        "years": [y.get("year_value") for y in years if y.get("year_value")],
+    }
+
+
+def graph_analytics_payload():
+    x_axis = str(request.args.get("x_axis", "date") or "date").lower()
+    if x_axis not in ("date", "month", "year"):
+        x_axis = "date"
+    y_axis = str(request.args.get("y_axis", "count") or "count").lower()
+    if y_axis not in ("count", "percentage"):
+        y_axis = "count"
+
+    from_date = _graph_date_value(request.args.get("from_date"))
+    to_date = _graph_date_value(request.args.get("to_date"))
+    months = _graph_multi_values("months")
+    years = _graph_multi_values("years")
+    raw_member_ids = _graph_multi_values("member_ids")
+    member_ids = [int(v) for v in raw_member_ids if str(v).isdigit()]
+
+    where = ["m.start_time IS NOT NULL"]
+    params = []
+    if x_axis == "date":
+        if from_date:
+            where.append("CAST(m.start_time AS TEXT)::date >= %s")
+            params.append(from_date)
+        if to_date:
+            where.append("CAST(m.start_time AS TEXT)::date <= %s")
+            params.append(to_date)
+    elif x_axis == "month" and months:
+        where.append("to_char(CAST(m.start_time AS TEXT)::timestamp, 'YYYY-MM') = ANY(%s)")
+        params.append(months)
+    elif x_axis == "year" and years:
+        where.append("to_char(CAST(m.start_time AS TEXT)::timestamp, 'YYYY') = ANY(%s)")
+        params.append(years)
+
+    attendance_sql = f"""
+        SELECT a.member_id, a.participant_name, a.final_status, a.is_member, a.total_seconds, a.current_join, m.start_time
+        FROM attendance a
+        JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+        WHERE {' AND '.join(where)}
+        ORDER BY m.start_time ASC
+    """
+
+    duration_where = list(where)
+    duration_params = list(params)
+    duration_where.append("CAST(a.is_member AS TEXT) IN ('1','true','t','True','TRUE')")
+    duration_where.append("a.member_id IS NOT NULL")
+    if from_date and x_axis != "date":
+        duration_where.append("CAST(m.start_time AS TEXT)::date >= %s")
+        duration_params.append(from_date)
+    if to_date and x_axis != "date":
+        duration_where.append("CAST(m.start_time AS TEXT)::date <= %s")
+        duration_params.append(to_date)
+    if member_ids:
+        duration_where.append("a.member_id = ANY(%s)")
+        duration_params.append(member_ids)
+
+    duration_sql = f"""
+        SELECT a.member_id, a.participant_name, a.total_seconds, a.current_join, m.start_time
+        FROM attendance a
+        JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+        WHERE {' AND '.join(duration_where)}
+        ORDER BY m.start_time ASC, a.participant_name ASC
+    """
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(attendance_sql, params)
+            attendance_rows = cur.fetchall()
+            cur.execute(duration_sql, duration_params)
+            duration_rows = cur.fetchall()
+            member_name_expr = member_name_sql(conn)
+            cur.execute(f"SELECT id, {member_name_expr} AS display_name FROM members ORDER BY COALESCE({member_name_expr}, '')")
+            member_rows = cur.fetchall()
+
+    member_names = {int(m["id"]): (m.get("display_name") or f"Member {m.get('id')}") for m in member_rows if m.get("id") is not None}
+    trend_buckets = defaultdict(lambda: {"present": 0, "late": 0, "absent": 0, "unknown": 0, "total": 0, "sort": ""})
+    for row in attendance_rows:
+        dt = parse_dt(row.get("start_time"))
+        if not dt:
+            continue
+        if x_axis == "year":
+            key = dt.strftime("%Y")
+            label = key
+        elif x_axis == "month":
+            key = dt.strftime("%Y-%m")
+            label = dt.strftime("%b %Y")
+        else:
+            key = dt.strftime("%Y-%m-%d")
+            label = dt.strftime("%d-%m-%Y")
+        bucket = trend_buckets[label]
+        bucket["sort"] = key
+        bucket["total"] += 1
+        status = str(row.get("final_status") or "").upper()
+        if status == "PRESENT":
+            bucket["present"] += 1
+        elif status == "LATE":
+            bucket["late"] += 1
+        elif status == "ABSENT":
+            bucket["absent"] += 1
+        if not row.get("is_member"):
+            bucket["unknown"] += 1
+
+    labels = sorted(trend_buckets.keys(), key=lambda k: trend_buckets[k]["sort"])
+
+    def series_value(label, field):
+        value = trend_buckets[label][field]
+        total = trend_buckets[label]["total"] or 0
+        return round((value / total) * 100, 2) if y_axis == "percentage" and total else value
+
+    selected_single_member = len(member_ids) == 1
+    duration_buckets = defaultdict(float)
+    for row in duration_rows:
+        seconds = float(row.get("total_seconds") or 0)
+        current_join = parse_dt(row.get("current_join"))
+        if current_join:
+            seconds += max((now_local() - current_join).total_seconds(), 0)
+        minutes = seconds / 60.0
+        if selected_single_member:
+            dt = parse_dt(row.get("start_time"))
+            label = dt.strftime("%d-%m-%Y") if dt else "Unknown Date"
+            sort_key = dt.strftime("%Y-%m-%d") if dt else label
+            duration_buckets[(sort_key, label)] += minutes
+        else:
+            mid = row.get("member_id")
+            name = member_names.get(int(mid), row.get("participant_name") or f"Member {mid}") if mid else (row.get("participant_name") or "Unknown")
+            duration_buckets[(name.lower(), name)] += minutes
+
+    duration_items = sorted(duration_buckets.items(), key=lambda item: item[0][0])
+    duration_labels = [item[0][1] for item in duration_items]
+    duration_values = [round(item[1], 2) for item in duration_items]
+    if not selected_single_member and len(duration_labels) > 60:
+        combined = sorted(zip(duration_labels, duration_values), key=lambda item: item[1], reverse=True)[:60]
+        duration_labels = [item[0] for item in combined]
+        duration_values = [item[1] for item in combined]
+
+    return {
+        "trend": {
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+            "labels": labels,
+            "present": [series_value(k, "present") for k in labels],
+            "late": [series_value(k, "late") for k in labels],
+            "absent": [series_value(k, "absent") for k in labels],
+            "unknown": [series_value(k, "unknown") for k in labels],
+        },
+        "duration": {
+            "mode": "single_member_date_duration" if selected_single_member else "members_total_duration",
+            "labels": duration_labels,
+            "values": duration_values,
+            "selected_member_name": member_names.get(member_ids[0]) if selected_single_member else "",
+        },
+    }
+
+
+
 def predict_next_attendance(meeting_compare):
     if not meeting_compare:
         return 0
@@ -4751,6 +4956,7 @@ def analytics():
     latest_meeting = data.get("latest_meeting_summary")
     previous_meeting = data.get("previous_meeting_summary")
     comparison_delta = data.get("comparison_delta")
+    graph_options = graph_analytics_options()
 
     body = render_template_string(
         """
@@ -4847,6 +5053,94 @@ def analytics():
                 </div>
             </form>
         </div>
+
+        <div class="card" id="graphAnalyticsSection" style="margin-top:16px">
+            <div class="section-title">
+                <div>
+                    <div class="badge info" style="margin-bottom:8px">New</div>
+                    <h3 style="margin:0">Graph Analytics</h3>
+                    <p>AJAX powered charts with lazy loading. Filters update charts without page reload.</p>
+                </div>
+            </div>
+
+            <div class="graph-filter-box" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end">
+                <div>
+                    <label>X-axis</label>
+                    <select id="gaXAxis">
+                        <option value="date">Date</option>
+                        <option value="month">Month</option>
+                        <option value="year">Year</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Y-axis</label>
+                    <select id="gaYAxis">
+                        <option value="count">Count</option>
+                        <option value="percentage">Percentage</option>
+                    </select>
+                </div>
+                <div class="ga-date-filter">
+                    <label>From Date</label>
+                    <input type="date" id="gaFromDate">
+                </div>
+                <div class="ga-date-filter">
+                    <label>To Date</label>
+                    <input type="date" id="gaToDate">
+                </div>
+                <div class="ga-month-filter" style="display:none">
+                    <label>Months</label>
+                    <select id="gaMonths" multiple style="min-height:96px">
+                        <option value="__all__" selected>All months</option>
+                        {% for month in graph_options.months %}
+                        <option value="{{ month.value }}">{{ month.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="ga-year-filter" style="display:none">
+                    <label>Years</label>
+                    <select id="gaYears" multiple style="min-height:96px">
+                        <option value="__all__" selected>All years</option>
+                        {% for year in graph_options.years %}
+                        <option value="{{ year }}">{{ year }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Members</label>
+                    <select id="gaMembers" multiple style="min-height:96px">
+                        <option value="__all__" selected>All members</option>
+                        {% for member in graph_options.members %}
+                        <option value="{{ member.id }}">{{ member.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="toolbar" style="margin:0">
+                    <button type="button" id="gaApplyBtn">Update Graphs</button>
+                </div>
+            </div>
+
+            <div class="grid-2" style="margin-top:16px">
+                <div class="card" style="box-shadow:none;border:1px solid rgba(255,255,255,.08)">
+                    <div class="section-title">
+                        <div>
+                            <h3 style="margin:0">Attendance Trend Line Chart</h3>
+                            <p id="gaTrendHint">Present, Late, Absent and Unknown lines.</p>
+                        </div>
+                    </div>
+                    <div class="chart-wrap tall"><canvas id="gaTrendChart"></canvas></div>
+                </div>
+                <div class="card" style="box-shadow:none;border:1px solid rgba(255,255,255,.08)">
+                    <div class="section-title">
+                        <div>
+                            <h3 style="margin:0">Member Duration Bar Chart</h3>
+                            <p id="gaDurationHint">All selected members total duration in minutes.</p>
+                        </div>
+                    </div>
+                    <div class="chart-wrap tall"><canvas id="gaDurationChart"></canvas></div>
+                </div>
+            </div>
+        </div>
+
 
         <div class="grid" style="margin-top:16px">
             <div class="card kpi-card">
@@ -5127,6 +5421,178 @@ def analytics():
 
         <script>
         (() => {
+            const graphSection = document.getElementById('graphAnalyticsSection');
+            const gaXAxis = document.getElementById('gaXAxis');
+            const gaYAxis = document.getElementById('gaYAxis');
+            const gaFromDate = document.getElementById('gaFromDate');
+            const gaToDate = document.getElementById('gaToDate');
+            const gaMonths = document.getElementById('gaMonths');
+            const gaYears = document.getElementById('gaYears');
+            const gaMembers = document.getElementById('gaMembers');
+            const gaApplyBtn = document.getElementById('gaApplyBtn');
+            const gaTrendHint = document.getElementById('gaTrendHint');
+            const gaDurationHint = document.getElementById('gaDurationHint');
+            let gaTrendChart = null;
+            let gaDurationChart = null;
+            let gaLoaded = false;
+
+            const valueLabelPlugin = {
+                id: 'valueLabelPlugin',
+                afterDatasetsDraw(chart) {
+                    if (chart.config.type !== 'bar') return;
+                    const {ctx} = chart;
+                    ctx.save();
+                    ctx.font = '700 11px Inter, Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    ctx.fillStyle = getComputedStyle(document.body).color || '#e5e7eb';
+                    chart.data.datasets.forEach((dataset, datasetIndex) => {
+                        const meta = chart.getDatasetMeta(datasetIndex);
+                        meta.data.forEach((bar, index) => {
+                            const value = dataset.data[index];
+                            if (value === null || value === undefined) return;
+                            ctx.fillText(value, bar.x, bar.y - 6);
+                        });
+                    });
+                    ctx.restore();
+                }
+            };
+
+            function selectedValues(selectEl) {
+                if (!selectEl) return [];
+                const selected = Array.from(selectEl.selectedOptions).map(option => option.value);
+                if (!selected.length || selected.includes('__all__')) return [];
+                return selected;
+            }
+
+            function updateGraphFilterVisibility() {
+                if (!gaXAxis) return;
+                const mode = gaXAxis.value;
+                document.querySelectorAll('.ga-date-filter').forEach(el => el.style.display = mode === 'date' ? '' : 'none');
+                document.querySelectorAll('.ga-month-filter').forEach(el => el.style.display = mode === 'month' ? '' : 'none');
+                document.querySelectorAll('.ga-year-filter').forEach(el => el.style.display = mode === 'year' ? '' : 'none');
+            }
+
+            function buildGraphQuery() {
+                const params = new URLSearchParams();
+                params.set('x_axis', gaXAxis?.value || 'date');
+                params.set('y_axis', gaYAxis?.value || 'count');
+                if ((gaXAxis?.value || 'date') === 'date') {
+                    if (gaFromDate?.value) params.set('from_date', gaFromDate.value);
+                    if (gaToDate?.value) params.set('to_date', gaToDate.value);
+                }
+                selectedValues(gaMonths).forEach(v => params.append('months', v));
+                selectedValues(gaYears).forEach(v => params.append('years', v));
+                selectedValues(gaMembers).forEach(v => params.append('member_ids', v));
+                return params.toString();
+            }
+
+            async function loadGraphAnalytics() {
+                if (!graphSection) return;
+                graphSection.classList.add('loading');
+                try {
+                    const response = await fetch(`{{ url_for('analytics_graph_data') }}?${buildGraphQuery()}`, {
+                        headers: {'X-Requested-With': 'XMLHttpRequest'}
+                    });
+                    if (!response.ok) throw new Error('Graph request failed');
+                    const payload = await response.json();
+                    renderTrendGraph(payload.trend);
+                    renderDurationGraph(payload.duration);
+                    gaLoaded = true;
+                } catch (err) {
+                    console.error(err);
+                    if (gaTrendHint) gaTrendHint.textContent = 'Unable to load graph analytics. Please check server logs.';
+                } finally {
+                    graphSection.classList.remove('loading');
+                }
+            }
+
+            function renderTrendGraph(trend) {
+                const canvas = document.getElementById('gaTrendChart');
+                if (!canvas || !window.Chart) return;
+                if (gaTrendChart) gaTrendChart.destroy();
+                const suffix = trend.y_axis === 'percentage' ? '%' : '';
+                if (gaTrendHint) gaTrendHint.textContent = `X-axis: ${trend.x_axis}. Y-axis: ${trend.y_axis}.`;
+                gaTrendChart = new Chart(canvas, {
+                    type: 'line',
+                    data: {
+                        labels: trend.labels,
+                        datasets: [
+                            {label: 'Present', data: trend.present, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.10)', fill: false},
+                            {label: 'Late', data: trend.late, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.10)', fill: false},
+                            {label: 'Absent', data: trend.absent, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.10)', fill: false},
+                            {label: 'Unknown', data: trend.unknown, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,.10)', fill: false}
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        interaction: {mode: 'index', intersect: false},
+                        plugins: {
+                            legend: {display: true},
+                            tooltip: {callbacks: {label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}${suffix}`}}
+                        },
+                        scales: {y: {beginAtZero: true, ticks: {callback: value => `${value}${suffix}`}}}
+                    }
+                });
+            }
+
+            function renderDurationGraph(duration) {
+                const canvas = document.getElementById('gaDurationChart');
+                if (!canvas || !window.Chart) return;
+                if (gaDurationChart) gaDurationChart.destroy();
+                const single = duration.mode === 'single_member_date_duration';
+                if (gaDurationHint) {
+                    gaDurationHint.textContent = single
+                        ? `${duration.selected_member_name || 'Selected member'}: date vs duration in minutes.`
+                        : 'Selected members: total duration in minutes.';
+                }
+                gaDurationChart = new Chart(canvas, {
+                    type: 'bar',
+                    plugins: [valueLabelPlugin],
+                    data: {
+                        labels: duration.labels,
+                        datasets: [{
+                            label: 'Minutes',
+                            data: duration.values,
+                            borderRadius: 10,
+                            backgroundColor: duration.labels.map((_, i) => `hsla(${(i * 47) % 360}, 72%, 55%, .78)`)
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {legend: {display: false}},
+                        scales: {
+                            x: {grid: {display: false}},
+                            y: {beginAtZero: true, title: {display: true, text: 'Minutes'}}
+                        }
+                    }
+                });
+            }
+
+            updateGraphFilterVisibility();
+            [gaXAxis, gaYAxis].forEach(el => el && el.addEventListener('change', () => {
+                updateGraphFilterVisibility();
+                if (gaLoaded) loadGraphAnalytics();
+            }));
+            [gaFromDate, gaToDate, gaMonths, gaYears, gaMembers].forEach(el => el && el.addEventListener('change', () => {
+                if (gaLoaded) loadGraphAnalytics();
+            }));
+            gaApplyBtn?.addEventListener('click', loadGraphAnalytics);
+
+            if (graphSection && 'IntersectionObserver' in window) {
+                const observer = new IntersectionObserver(entries => {
+                    if (entries.some(entry => entry.isIntersecting) && !gaLoaded) {
+                        loadGraphAnalytics();
+                        observer.disconnect();
+                    }
+                }, {rootMargin: '200px'});
+                observer.observe(graphSection);
+            } else {
+                loadGraphAnalytics();
+            }
+        })();
+
+        (() => {
             const trendCanvas = document.getElementById('trendChart');
             if (trendCanvas) {
                 new Chart(trendCanvas, {
@@ -5221,8 +5687,16 @@ def analytics():
         previous_meeting=previous_meeting,
         comparison_delta=comparison_delta,
         request=request,
+        graph_options=graph_options,
     )
     return page("Analytics", body, "analytics")
+
+
+@app.route("/analytics/graph-data")
+@login_required
+def analytics_graph_data():
+    maybe_finalize_stale_live_meetings()
+    return jsonify(graph_analytics_payload())
 
 
 @app.route("/analytics/reminder")
