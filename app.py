@@ -5056,121 +5056,135 @@ def analytics():
         </div>
 
         <style>
-        .checkbox-select{position:relative}
-        .checkbox-select-btn{width:100%;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:10px 12px;border-radius:12px}
-        .checkbox-select-menu{display:none;position:absolute;z-index:80;top:calc(100% + 6px);left:0;right:0;max-height:230px;overflow:auto;background:rgba(15,23,42,.98);border:1px solid rgba(148,163,184,.35);border-radius:14px;box-shadow:0 20px 45px rgba(0,0,0,.35);padding:8px}
-        .checkbox-select.open .checkbox-select-menu{display:block}
-        .checkbox-select-menu label{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;cursor:pointer;font-size:13px}
-        .checkbox-select-menu label:hover{background:rgba(99,102,241,.18)}
-        .checkbox-select-menu input{width:auto}
-        .register-table-wrap{max-height:72vh;overflow:auto;border-radius:18px;border:1px solid rgba(148,163,184,.22)}
-        .register-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}
-        .register-table th,.register-table td{min-width:44px;text-align:center;padding:9px 10px;border-bottom:1px solid rgba(148,163,184,.16);border-right:1px solid rgba(148,163,184,.12)}
-        .register-table th{position:sticky;top:0;z-index:4;background:#111827}
-        .register-table .sticky-member{position:sticky;left:0;z-index:5;min-width:230px;text-align:left;background:#111827}
-        .register-table td.sticky-member{z-index:3;background:rgba(15,23,42,.98);font-weight:800;cursor:pointer}
-        .reg-cell{font-weight:900;border-radius:9px;color:#08111f}
-        .reg-p{background:#22c55e}.reg-l{background:#facc15}.reg-a{background:#ef4444;color:#fff}.reg-u{background:#94a3b8}.reg-empty{color:#94a3b8}
-        .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(2,6,23,.68);z-index:999;align-items:center;justify-content:center;padding:18px}
-        .modal-backdrop.show{display:flex}
-        .modal-card{max-width:460px;width:100%;background:#0f172a;border:1px solid rgba(148,163,184,.3);border-radius:22px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+        .dash-showcase{display:grid;grid-template-columns:180px minmax(0,1fr) 310px;gap:14px;margin-top:16px;align-items:start}
+        .dash-mini-sidebar{background:#0f172a;color:#e5e7eb;border-radius:16px;padding:14px;box-shadow:0 14px 35px rgba(15,23,42,.18);position:sticky;top:92px}
+        .dash-mini-brand{font-weight:950;font-size:15px;line-height:1.25;margin-bottom:14px;display:flex;gap:8px;align-items:center}
+        .dash-mini-nav{display:grid;gap:8px}.dash-mini-nav a,.dash-note{border-radius:12px;padding:10px 11px;text-decoration:none;color:#e5e7eb;font-weight:800;font-size:13px;background:rgba(255,255,255,.04)}
+        .dash-mini-nav a.active{background:linear-gradient(135deg,#6d28d9,#7c3aed);box-shadow:0 12px 26px rgba(109,40,217,.30)}
+        .dash-note{margin-top:14px;background:#fff8d6;color:#28334a;border:1px solid #f1d976;font-size:12px;line-height:1.5}
+        .dash-main-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:12px}
+        .dash-title-pill{margin:auto;background:#0b274b;color:#fff;border-radius:11px;padding:10px 26px;font-size:24px;font-weight:950;letter-spacing:.5px;text-align:center;box-shadow:0 10px 25px rgba(2,6,23,.18)}
+        .dash-actions{display:flex;gap:16px;align-items:center;white-space:nowrap;color:#0f172a;font-weight:850}
+        body.dark .dash-actions{color:#e5e7eb}
+        .dash-card{background:rgba(255,255,255,.92);border:1px solid rgba(15,23,42,.10);border-radius:14px;box-shadow:0 8px 24px rgba(15,23,42,.10);padding:16px;color:#172033}
+        body.dark .dash-card{background:rgba(15,23,42,.76);border-color:rgba(148,163,184,.20);color:#e5e7eb}
+        .analytics-layout{display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:14px}
+        .chart-title{font-weight:950;font-size:16px;margin-bottom:8px}.chart-sub{font-size:12px;color:#64748b;margin-top:-4px;margin-bottom:8px}
+        body.dark .chart-sub{color:#94a3b8}.chart-big{height:310px}.chart-small{height:260px}
+        .control-stack{border-left:1px solid rgba(148,163,184,.25);padding-left:14px;display:grid;gap:10px}.control-title{font-weight:950;color:#1e3a8a;margin-bottom:4px}
+        body.dark .control-title{color:#bfdbfe}.control-stack label,.side-control label{font-size:12px;font-weight:900;color:#334155;margin-bottom:4px;display:block}body.dark .control-stack label,body.dark .side-control label{color:#cbd5e1}
+        .control-stack input,.control-stack select,.side-control input,.side-control select{height:34px;padding:6px 9px;border-radius:8px;font-size:13px}
+        .apply-wide{width:100%;justify-content:center;margin-top:6px;border-radius:8px}
+        .bottom-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(240px,.75fr);gap:14px;margin-top:14px}.participant-chart-grid{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:14px}
+        .side-help{background:#fff7df;border:1px solid #e7cb8a;border-radius:16px;padding:14px;color:#2f3142;position:sticky;top:92px}.side-help h3{font-size:14px;margin:0 0 8px;color:#0f172a}.side-help ul{margin:0;padding-left:18px;line-height:1.65;font-size:13px}
+        .checkbox-select{position:relative}.checkbox-select-btn{width:100%;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:8px 10px;border-radius:8px;font-size:13px;min-height:34px}.checkbox-select-menu{display:none;position:absolute;z-index:80;top:calc(100% + 6px);left:0;right:0;max-height:230px;overflow:auto;background:rgba(255,255,255,.98);color:#172033;border:1px solid rgba(148,163,184,.35);border-radius:12px;box-shadow:0 20px 45px rgba(0,0,0,.22);padding:8px}.checkbox-select.open .checkbox-select-menu{display:block}.checkbox-select-menu label{display:flex;gap:8px;align-items:center;padding:7px;border-radius:9px;cursor:pointer;font-size:13px}.checkbox-select-menu label:hover{background:rgba(99,102,241,.12)}.checkbox-select-menu input{width:auto;height:auto}body.dark .checkbox-select-menu{background:#0f172a;color:#e5e7eb}
+        .month-year-box{background:#fff8df;border:1px solid #e4c779;border-radius:10px;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}.month-year-box h4{margin:0 0 6px;font-size:12px}.month-year-box label{display:flex;gap:7px;align-items:center;font-size:12px;margin:4px 0}.month-year-box input{height:auto}.register-table-wrap{max-height:72vh;overflow:auto;border-radius:18px;border:1px solid rgba(148,163,184,.22)}.register-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}.register-table th,.register-table td{min-width:44px;text-align:center;padding:9px 10px;border-bottom:1px solid rgba(148,163,184,.16);border-right:1px solid rgba(148,163,184,.12)}.register-table th{position:sticky;top:0;z-index:4;background:#111827}.register-table .sticky-member{position:sticky;left:0;z-index:5;min-width:230px;text-align:left;background:#111827}.register-table td.sticky-member{z-index:3;background:rgba(15,23,42,.98);font-weight:800;cursor:pointer}.reg-cell{font-weight:900;border-radius:9px;color:#08111f}.reg-p{background:#22c55e}.reg-l{background:#facc15}.reg-a{background:#ef4444;color:#fff}.reg-u{background:#94a3b8}.reg-empty{color:#94a3b8}.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(2,6,23,.68);z-index:999;align-items:center;justify-content:center;padding:18px}.modal-backdrop.show{display:flex}.modal-card{max-width:460px;width:100%;background:#0f172a;border:1px solid rgba(148,163,184,.3);border-radius:22px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+        @media(max-width:1180px){.dash-showcase{grid-template-columns:1fr}.dash-mini-sidebar,.side-help{position:static}.analytics-layout,.bottom-grid,.participant-chart-grid{grid-template-columns:1fr}.dash-main-title{flex-direction:column}.dash-title-pill{width:100%;font-size:18px}.control-stack{border-left:0;padding-left:0}}
         </style>
-        <div class="card" id="graphAnalyticsSection" style="margin-top:16px">
-            <div class="section-title">
-                <div>
-                    <div class="badge info" style="margin-bottom:8px">New</div>
-                    <h3 style="margin:0">Graph Analytics</h3>
-                    <p>AJAX powered charts with lazy loading. Filters update charts without page reload.</p>
-                </div>
-            </div>
 
-            <div class="graph-filter-box" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end">
-                <div>
-                    <label>X-axis</label>
-                    <select id="gaXAxis">
-                        <option value="date">Date</option>
-                        <option value="month">Month</option>
-                        <option value="year">Year</option>
-                    </select>
-                </div>
-                <div>
-                    <label>Y-axis</label>
-                    <select id="gaYAxis">
-                        <option value="count">Count</option>
-                        <option value="percentage">Percentage</option>
-                    </select>
-                </div>
-                <div class="ga-date-filter">
-                    <label>From Date</label>
-                    <input type="date" id="gaFromDate">
-                </div>
-                <div class="ga-date-filter">
-                    <label>To Date</label>
-                    <input type="date" id="gaToDate">
-                </div>
-                <div class="ga-month-filter" style="display:none">
-                    <label>Months</label>
-                    <div class="checkbox-select" data-target="gaMonths">
-                        <button type="button" class="checkbox-select-btn">All months</button>
-                        <div class="checkbox-select-menu">
-                            <label><input type="checkbox" value="__all__" checked> All months</label>
-                            {% for month in graph_options.months %}
-                            <label><input type="checkbox" value="{{ month.value }}"> {{ month.label }}</label>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
-                <div class="ga-year-filter" style="display:none">
-                    <label>Years</label>
-                    <div class="checkbox-select" data-target="gaYears">
-                        <button type="button" class="checkbox-select-btn">All years</button>
-                        <div class="checkbox-select-menu">
-                            <label><input type="checkbox" value="__all__" checked> All years</label>
-                            {% for year in graph_options.years %}
-                            <label><input type="checkbox" value="{{ year }}"> {{ year }}</label>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
-                <div>
-                    <label>Members</label>
-                    <div class="checkbox-select" data-target="gaMembers">
-                        <button type="button" class="checkbox-select-btn">All members</button>
-                        <div class="checkbox-select-menu">
-                            <label><input type="checkbox" value="__all__" checked> All members</label>
-                            {% for member in graph_options.members %}
-                            <label><input type="checkbox" value="{{ member.id }}"> {{ member.name }}</label>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
-                <div class="toolbar" style="margin:0">
-                    <button type="button" id="gaApplyBtn">Update Graphs</button>
-                </div>
-            </div>
+        <div class="dash-showcase" id="graphAnalyticsSection">
+            <aside class="dash-mini-sidebar">
+                <div class="dash-mini-brand">📊 Analytical<br>Dashboard</div>
+                <nav class="dash-mini-nav">
+                    <a class="active" href="#graphAnalyticsSection">Overview</a>
+                    <a href="#gaTrendChart">Attendance Graphs</a>
+                    <a href="{{ url_for('attendance_register') }}">Register View</a>
+                    <a href="#analyticsRows">Participants</a>
+                    <a href="{{ export_pdf_url }}">Reports</a>
+                </nav>
+                <div class="dash-note"><b>GRAPH 1: PARTICIPATION OVER TIME</b><br>Line graph with 4 lines: Present, Late, Absent and Unknown.</div>
+                <div class="dash-note" style="background:#eaf4ff;border-color:#93c5fd"><b>GRAPH 2: TIME SPENT</b><br>Multiple members → members on X-axis.<br>Single member → date vs duration.</div>
+            </aside>
 
-            <div class="grid-2" style="margin-top:16px">
-                <div class="card" style="box-shadow:none;border:1px solid rgba(255,255,255,.08)">
-                    <div class="section-title">
-                        <div>
-                            <h3 style="margin:0">Attendance Trend Line Chart</h3>
-                            <p id="gaTrendHint">Present, Late, Absent and Unknown lines.</p>
+            <main>
+                <div class="dash-main-title">
+                    <div class="dash-title-pill">1. ANALYTICAL DASHBOARD (GRAPHS & INSIGHTS)</div>
+                    <div class="dash-actions"><span>⬇ Export</span><span>⟳ Refresh</span><span>⚿ Filters</span></div>
+                </div>
+
+                <div class="analytics-layout">
+                    <div class="dash-card">
+                        <div class="analytics-layout" style="grid-template-columns:minmax(0,1fr) 230px">
+                            <div>
+                                <div class="chart-title">Participants Over Time</div>
+                                <div class="chart-big"><canvas id="gaTrendChart"></canvas></div>
+                            </div>
+                            <div class="control-stack">
+                                <div class="control-title">Graph 1 Controls</div>
+                                <div><label>X-Axis</label><select id="gaXAxis"><option value="date">Date</option><option value="month">Month</option><option value="year">Year</option></select></div>
+                                <div><label>Y-Axis</label><select id="gaYAxis"><option value="count">Number of Participants</option><option value="percentage">Percentage</option></select></div>
+                                <div class="ga-date-filter"><label>From Date</label><input type="date" id="gaFromDate"></div>
+                                <div class="ga-date-filter"><label>To Date</label><input type="date" id="gaToDate"></div>
+                                <button type="button" class="apply-wide" id="gaApplyBtn">Apply</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="chart-wrap tall"><canvas id="gaTrendChart"></canvas></div>
+
+                    <aside class="side-help">
+                        <h3>AXIS & DATE SELECTION OPTIONS</h3>
+                        <ul>
+                            <li>Choose Date / Month / Year for X-axis</li>
+                            <li>Choose Count or Percentage for Y-axis</li>
+                            <li>Select date range for Date mode</li>
+                            <li>Select multiple months or years with checkboxes</li>
+                        </ul>
+                        <div class="month-year-box">
+                            <div class="ga-month-filter" style="display:none">
+                                <h4>If X-Axis = Month</h4>
+                                <div class="checkbox-select" data-target="gaMonths">
+                                    <button type="button" class="checkbox-select-btn">All months</button>
+                                    <div class="checkbox-select-menu">
+                                        <label><input type="checkbox" value="__all__" checked> All Months</label>
+                                        {% for month in graph_options.months %}<label><input type="checkbox" value="{{ month.value }}"> {{ month.label }}</label>{% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ga-year-filter" style="display:none">
+                                <h4>If X-Axis = Year</h4>
+                                <div class="checkbox-select" data-target="gaYears">
+                                    <button type="button" class="checkbox-select-btn">All years</button>
+                                    <div class="checkbox-select-menu">
+                                        <label><input type="checkbox" value="__all__" checked> All Years</label>
+                                        {% for year in graph_options.years %}<label><input type="checkbox" value="{{ year }}"> {{ year }}</label>{% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
                 </div>
-                <div class="card" style="box-shadow:none;border:1px solid rgba(255,255,255,.08)">
-                    <div class="section-title">
-                        <div>
-                            <h3 style="margin:0">Member Duration Bar Chart</h3>
-                            <p id="gaDurationHint">All selected members total duration in minutes.</p>
+
+                <div class="bottom-grid">
+                    <div class="dash-card">
+                        <div class="participant-chart-grid">
+                            <div>
+                                <div class="chart-title">Time Spent by Participants (In Minutes)</div>
+                                <div class="chart-sub" id="gaDurationHint">All selected members total duration in minutes.</div>
+                                <div class="chart-small"><canvas id="gaDurationChart"></canvas></div>
+                            </div>
+                            <div class="side-control">
+                                <div class="control-title">Graph 2 Controls</div>
+                                <label>Select Participants</label>
+                                <div class="checkbox-select" data-target="gaMembers">
+                                    <button type="button" class="checkbox-select-btn">All members</button>
+                                    <div class="checkbox-select-menu">
+                                        <label><input type="checkbox" value="__all__" checked> All Members</label>
+                                        {% for member in graph_options.members %}<label><input type="checkbox" value="{{ member.id }}"> {{ member.name }}</label>{% endfor %}
+                                    </div>
+                                </div>
+                                <div style="margin-top:10px"><label>From Date</label><input type="date" id="gaDurationFromDate"></div>
+                                <div style="margin-top:10px"><label>To Date</label><input type="date" id="gaDurationToDate"></div>
+                                <button type="button" class="apply-wide" onclick="document.getElementById('gaApplyBtn').click()">Apply</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="chart-wrap tall"><canvas id="gaDurationChart"></canvas></div>
+                    <div class="dash-card" style="border:1px solid #93c5fd">
+                        <div class="chart-sub" style="font-weight:900;color:#1d4ed8">If Single Participant Selected</div>
+                        <div class="chart-title" id="gaTrendHint">Time Over Time</div>
+                        <p style="margin:0;color:#64748b;font-size:13px">When only one member is selected, Graph 2 automatically changes to date vs duration.</p>
+                    </div>
                 </div>
-            </div>
+            </main>
         </div>
-
 
         <div class="grid" style="margin-top:16px">
             <div class="card kpi-card">
@@ -5456,6 +5470,8 @@ def analytics():
             const gaYAxis = document.getElementById('gaYAxis');
             const gaFromDate = document.getElementById('gaFromDate');
             const gaToDate = document.getElementById('gaToDate');
+            const gaDurationFromDate = document.getElementById('gaDurationFromDate');
+            const gaDurationToDate = document.getElementById('gaDurationToDate');
             const gaMonths = document.querySelector('[data-target="gaMonths"]');
             const gaYears = document.querySelector('[data-target="gaYears"]');
             const gaMembers = document.querySelector('[data-target="gaMembers"]');
@@ -5543,8 +5559,10 @@ def analytics():
                 params.set('x_axis', gaXAxis?.value || 'date');
                 params.set('y_axis', gaYAxis?.value || 'count');
                 if ((gaXAxis?.value || 'date') === 'date') {
-                    if (gaFromDate?.value) params.set('from_date', gaFromDate.value);
-                    if (gaToDate?.value) params.set('to_date', gaToDate.value);
+                    const fromVal = gaDurationFromDate?.value || gaFromDate?.value;
+                    const toVal = gaDurationToDate?.value || gaToDate?.value;
+                    if (fromVal) params.set('from_date', fromVal);
+                    if (toVal) params.set('to_date', toVal);
                 }
                 selectedValues(gaMonths).forEach(v => params.append('months', v));
                 selectedValues(gaYears).forEach(v => params.append('years', v));
@@ -5639,7 +5657,7 @@ def analytics():
                 updateGraphFilterVisibility();
                 if (gaLoaded) loadGraphAnalytics();
             }));
-            [gaFromDate, gaToDate].forEach(el => el && el.addEventListener('change', () => {
+            [gaFromDate, gaToDate, gaDurationFromDate, gaDurationToDate].forEach(el => el && el.addEventListener('change', () => {
                 if (gaLoaded) loadGraphAnalytics();
             }));
             gaApplyBtn?.addEventListener('click', loadGraphAnalytics);
@@ -5910,82 +5928,89 @@ def attendance_register():
     data = attendance_register_payload(request.args.get("year", today.year), request.args.get("month", today.month), request.args.get("search", ""))
     body = render_template_string(
         """
-        <div class="hero">
-            <div class="hero-grid">
-                <div>
-                    <div class="badge info">New Dashboard</div>
-                    <h1 class="hero-title">Attendance Register</h1>
-                    <div class="hero-copy">Month-wise register view. Rows are members, columns are dates, and cells show P/L/A/U.</div>
-                </div>
-                <div class="hero-stats">
-                    <div class="hero-chip"><div class="small">Members</div><div class="big">{{ data.summary.members }}</div></div>
-                    <div class="hero-chip"><div class="small">Meeting Days</div><div class="big">{{ data.summary.meeting_days }}</div></div>
-                </div>
-            </div>
-        </div>
+        <style>
+        .reg-dashboard-shell{display:grid;grid-template-columns:180px minmax(0,1fr) 210px;gap:14px;align-items:start;margin-top:8px}
+        .reg-side-note{background:#eefdf0;border:1px solid #8bd49a;border-radius:14px;padding:14px;font-size:12px;line-height:1.55;color:#12351d;position:sticky;top:92px}
+        .reg-side-note b{display:block;margin-bottom:7px;color:#14532d}.reg-feature-box{background:#f5f0ff;border:1px solid #bca7f5;border-radius:14px;padding:16px;color:#3b2a73;line-height:1.7;position:sticky;top:92px}.reg-feature-box h3{margin:0 0 8px;font-size:16px}.reg-feature-box ul{margin:0;padding-left:18px;font-size:13px}
+        .register-book{background:linear-gradient(135deg,#7c4a22,#4b2d16);padding:12px;border-radius:20px;box-shadow:0 18px 40px rgba(77,45,22,.35), inset 0 0 0 3px rgba(255,255,255,.12)}
+        .register-paper{background:#fffdf4;color:#1f2937;border-radius:13px;padding:14px;box-shadow:inset 0 0 0 1px #d7c9a5}
+        .register-heading{display:flex;justify-content:center;margin:-28px 0 10px}.register-heading span{background:#14532d;color:#fff;border-radius:8px;padding:8px 36px;font-weight:950;font-size:22px;box-shadow:0 7px 20px rgba(20,83,45,.28)}
+        .reg-topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}.reg-month-nav{display:flex;align-items:center;gap:8px}.reg-month-pill{background:#f8fafc;border:1px solid #cbd5e1;border-radius:7px;padding:6px 14px;font-weight:900}.reg-controls{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.reg-controls input,.reg-controls select{height:34px;border-radius:8px;border:1px solid #cbd5e1;padding:6px 10px}.reg-controls label{font-size:11px;font-weight:900;color:#475569;display:block;margin-bottom:2px}.reg-controls .btn,.reg-controls button{height:34px;padding:7px 10px;border-radius:8px;font-size:12px}
+        .register-table-wrap{max-height:72vh;overflow:auto;border-radius:10px;border:1px solid #cfc2a4;background:#fffdf4}.register-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:13px}.register-table th,.register-table td{min-width:38px;text-align:center;padding:8px;border-bottom:1px solid #d8cdb5;border-right:1px solid #d8cdb5}.register-table th{position:sticky;top:0;z-index:4;background:#f3ebd8;color:#111827}.register-table .sticky-member{position:sticky;left:0;z-index:5;min-width:180px;text-align:left;background:#f3ebd8}.register-table td.sticky-member{z-index:3;background:#fff8df;font-weight:900;cursor:pointer}.register-table td.sticky-member:hover{outline:2px solid #22c55e;border-radius:8px}.reg-cell{font-weight:950;border-radius:6px}.reg-p{color:#15803d}.reg-l{color:#ea580c}.reg-a{color:#dc2626}.reg-u{color:#64748b}.reg-empty{color:#cbd5e1}.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(2,6,23,.68);z-index:999;align-items:center;justify-content:center;padding:18px}.modal-backdrop.show{display:flex}.modal-card{max-width:460px;width:100%;background:#0f172a;color:#e5e7eb;border:1px solid rgba(148,163,184,.3);border-radius:22px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+        @media print{.sidebar,.topbar,.reg-side-note,.reg-feature-box,.reg-controls,.reg-month-nav{display:none!important}.main{margin:0!important}.register-book{box-shadow:none;background:#fff;padding:0}.register-heading span{color:#000;background:#fff;border:1px solid #000}.register-table-wrap{max-height:none;overflow:visible}.register-table th{position:static}.register-table .sticky-member{position:static}}
+        @media(max-width:1180px){.reg-dashboard-shell{grid-template-columns:1fr}.reg-side-note,.reg-feature-box{position:static}.register-heading span{font-size:17px;padding:8px 14px}}
+        </style>
 
-        <div class="card">
-            <form method="get" class="graph-filter-box" style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:end">
-                <div>
-                    <label>Month</label>
-                    <select name="month" id="regMonth">
-                        {% for i in range(1, 13) %}
-                        <option value="{{ i }}" {% if i == data.month %}selected{% endif %}>{{ month_names[i-1] }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label>Year</label>
-                    <select name="year" id="regYear">
-                        {% for y in data.years %}
-                        <option value="{{ y }}" {% if y|string == data.year|string %}selected{% endif %}>{{ y }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label>Search member</label>
-                    <input type="text" name="search" id="regSearch" value="{{ request.args.get('search','') }}" placeholder="type member name">
-                </div>
-                <div class="toolbar" style="margin:0">
-                    <button type="submit">Apply</button>
-                    <button type="button" onclick="window.print()">Print</button>
-                </div>
-                <div class="toolbar" style="margin:0">
-                    <a class="btn secondary" href="{{ url_for('attendance_register_export_pdf', month=data.month, year=data.year, search=request.args.get('search','')) }}">Export PDF</a>
-                    <a class="btn success" href="{{ url_for('attendance_register_export_excel', month=data.month, year=data.year, search=request.args.get('search','')) }}">Export Excel</a>
-                </div>
-            </form>
-        </div>
+        <div class="reg-dashboard-shell">
+            <aside class="reg-side-note">
+                <b>MONTHLY REGISTER VIEW</b>
+                Each page represents a month.<br><br>
+                <b>Cells</b>
+                <span style="color:#15803d;font-weight:900">P</span> Present - Green<br>
+                <span style="color:#ea580c;font-weight:900">L</span> Late - Orange<br>
+                <span style="color:#dc2626;font-weight:900">A</span> Absent - Red<br>
+                <span style="color:#64748b;font-weight:900">U</span> Unknown - Gray<br><br>
+                Click on participant name to view summary.
+            </aside>
 
-        <div class="card" style="margin-top:16px">
-            <div class="section-title">
-                <div>
-                    <h3 style="margin:0">{{ data.month_name }} {{ data.year }}</h3>
-                    <p><span class="badge success">P Present</span> <span class="badge warning">L Late</span> <span class="badge danger">A Absent</span> <span class="badge info">U Unknown</span></p>
+            <main class="register-book">
+                <div class="register-heading"><span>2. ATTENDANCE REGISTER (MONTHLY VIEW)</span></div>
+                <div class="register-paper">
+                    <form method="get" class="reg-topbar">
+                        <div class="reg-month-nav">
+                            {% set prev_month = 12 if data.month == 1 else data.month - 1 %}
+                            {% set prev_year = data.year - 1 if data.month == 1 else data.year %}
+                            {% set next_month = 1 if data.month == 12 else data.month + 1 %}
+                            {% set next_year = data.year + 1 if data.month == 12 else data.year %}
+                            <a class="btn secondary small" href="{{ url_for('attendance_register', month=prev_month, year=prev_year, search=request.args.get('search','')) }}">‹</a>
+                            <span class="reg-month-pill">{{ data.month_name }} {{ data.year }}</span>
+                            <a class="btn secondary small" href="{{ url_for('attendance_register', month=next_month, year=next_year, search=request.args.get('search','')) }}">›</a>
+                        </div>
+                        <div class="reg-controls">
+                            <div><label>Month</label><select name="month" id="regMonth">{% for i in range(1, 13) %}<option value="{{ i }}" {% if i == data.month %}selected{% endif %}>{{ month_names[i-1] }}</option>{% endfor %}</select></div>
+                            <div><label>Year</label><select name="year" id="regYear">{% for y in data.years %}<option value="{{ y }}" {% if y|string == data.year|string %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></div>
+                            <div><label>Search member</label><input type="text" name="search" id="regSearch" value="{{ request.args.get('search','') }}" placeholder="member name"></div>
+                            <button type="submit">Apply</button>
+                            <button type="button" onclick="window.print()">Print</button>
+                            <a class="btn secondary" href="{{ url_for('attendance_register_export_pdf', month=data.month, year=data.year, search=request.args.get('search','')) }}">PDF</a>
+                            <a class="btn success" href="{{ url_for('attendance_register_export_excel', month=data.month, year=data.year, search=request.args.get('search','')) }}">Excel</a>
+                        </div>
+                    </form>
+
+                    <div class="register-table-wrap">
+                        <table class="register-table" id="attendanceRegisterTable">
+                            <thead>
+                                <tr>
+                                    <th class="sticky-member">Name</th>
+                                    {% for d in data.days %}<th>{{ d }}</th>{% endfor %}
+                                    <th>P</th><th>L</th><th>A</th><th>U</th><th>%</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in data.rows %}
+                                <tr>
+                                    <td class="sticky-member reg-member" data-name="{{ row.name }}" data-present="{{ row.totals.P }}" data-late="{{ row.totals.L }}" data-absent="{{ row.totals.A }}" data-unknown="{{ row.totals.U }}" data-percent="{{ row.attendance_pct }}">{{ row.name }}</td>
+                                    {% for cell in row.cells %}<td class="reg-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}">{{ cell or '' }}</td>{% endfor %}
+                                    <td>{{ row.totals.P }}</td><td>{{ row.totals.L }}</td><td>{{ row.totals.A }}</td><td>{{ row.totals.U }}</td><td>{{ row.attendance_pct }}%</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
-            <div class="register-table-wrap">
-                <table class="register-table" id="attendanceRegisterTable">
-                    <thead>
-                        <tr>
-                            <th class="sticky-member">Member</th>
-                            {% for d in data.days %}<th>{{ d }}</th>{% endfor %}
-                            <th>P</th><th>L</th><th>A</th><th>U</th><th>%</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in data.rows %}
-                        <tr>
-                            <td class="sticky-member reg-member" data-name="{{ row.name }}" data-present="{{ row.totals.P }}" data-late="{{ row.totals.L }}" data-absent="{{ row.totals.A }}" data-unknown="{{ row.totals.U }}" data-percent="{{ row.attendance_pct }}">{{ row.name }}</td>
-                            {% for cell in row.cells %}
-                            <td class="reg-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}">{{ cell or '-' }}</td>
-                            {% endfor %}
-                            <td>{{ row.totals.P }}</td><td>{{ row.totals.L }}</td><td>{{ row.totals.A }}</td><td>{{ row.totals.U }}</td><td>{{ row.attendance_pct }}%</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+            </main>
+
+            <aside class="reg-feature-box">
+                <h3>FEATURES</h3>
+                <ul>
+                    <li>Book-style monthly pages</li>
+                    <li>Auto adjust days 28/29/30/31</li>
+                    <li>Color coded attendance</li>
+                    <li>Click name → View summary</li>
+                    <li>Easy month navigation</li>
+                    <li>PDF, Excel and Print</li>
+                </ul>
+            </aside>
         </div>
 
         <div class="modal-backdrop" id="regModal">
