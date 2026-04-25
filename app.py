@@ -4259,7 +4259,6 @@ def page(title, body, active="home"):
         {"key": "users", "label": "🔐 Users", "href": url_for("users")},
         {"key": "analytics", "label": "📊 Analytics", "href": url_for("analytics")},
         {"key": "ai_intelligence", "label": "🧠 AI Intelligence", "href": url_for("ai_intelligence")},
-        {"key": "ai_level4", "label": "🔮 AI Level 4", "href": url_for("ai_level4_dashboard")},
         {"key": "attendance_register", "label": "📒 Attendance Register", "href": url_for("attendance_register")},
         {"key": "notification_control", "label": "🔔 Notification Control", "href": url_for("notification_control")},
         {"key": "appearance", "label": "🎨 Appearance Studio", "href": url_for("appearance")},
@@ -7714,14 +7713,35 @@ def _ai_date_filter_sql(days=None, meeting_alias='mt'):
     return ""
 
 def _ai_member_stats(days=None, limit=None):
-    cache_key = _cache_make_key('ai_member_stats', {'days': days, 'limit': limit})
+    """AI member intelligence aligned with Attendance Register by default."""
+    cache_key = _cache_make_key('ai_member_stats_v3_aligned', {'days': days, 'limit': limit})
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
+    if not days:
+        try:
+            reg = attendance_register_payload(all_rows=True)
+            result=[]
+            for row in reg.get('rows', []) or []:
+                totals=row.get('totals') or {}; total=int(row.get('total_meetings') or 0)
+                present=int(totals.get('P') or 0); late=int(totals.get('L') or 0); absent=int(totals.get('A') or 0); unknown=int(totals.get('U') or 0)
+                attendance_pct=float(row.get('attendance_pct') or 0); absent_pct=_ai_percent(absent,total)
+                if attendance_pct < 50:
+                    risk='Critical'; suggestion='Immediate follow-up needed. Send reminder and personally check availability.'
+                elif attendance_pct < 75:
+                    risk='Warning'; suggestion='Send reminder before next meeting and monitor consistency.'
+                else:
+                    risk='Healthy'; suggestion='Maintain current engagement.'
+                trend='Declining' if total>=4 and absent_pct>=50 else ('Improving/Consistent' if attendance_pct>=85 else 'Stable')
+                tag='No Data' if total==0 else ('Consistent' if attendance_pct>=85 else ('Risky' if attendance_pct<50 else ('Irregular' if absent_pct>=30 else 'Stable')))
+                result.append({'id':row.get('id'),'name':row.get('name') or f"Member {row.get('id')}",'email':row.get('email') or '', 'total':total,'present':present,'late':late,'absent':absent,'unknown':unknown,'attendance_pct':attendance_pct,'duration_minutes':0,'last_seen':None,'risk':risk,'trend':trend,'tag':tag,'suggestion':suggestion,'basis':f"{reg.get('month_name','Current month')} {reg.get('year','')}".strip()})
+            if limit: result=result[:int(limit)]
+            return _cache_set(cache_key,result)
+        except Exception as exc:
+            print(f"AI register-aligned member stats fallback: {exc}")
     with db() as conn:
         with conn.cursor() as cur:
-            name_expr = member_name_sql(conn)
-            date_filter = _ai_date_filter_sql(days, 'mt')
+            name_expr=member_name_sql(conn); date_filter=_ai_date_filter_sql(days,'mt')
             cur.execute(f"""
                 SELECT m.id, {name_expr} AS name, m.email,
                     COUNT(a.id) AS total_records,
@@ -7737,27 +7757,19 @@ def _ai_member_stats(days=None, limit=None):
                 GROUP BY m.id, name, m.email
                 ORDER BY name ASC
             """)
-            rows = cur.fetchall()
-    result = []
+            rows=cur.fetchall()
+    result=[]
     for row in rows:
-        total = int(row.get('total_records') or 0)
-        present = int(row.get('present_count') or 0)
-        late = int(row.get('late_count') or 0)
-        absent = int(row.get('absent_count') or 0)
-        attendance_pct = _ai_percent(present + late, total)
-        absent_pct = _ai_percent(absent, total)
-        if attendance_pct < 50:
-            risk = 'Critical'; suggestion = 'Immediate follow-up needed. Send reminder and personally check availability.'
-        elif attendance_pct < 75:
-            risk = 'Warning'; suggestion = 'Send reminder before next meeting and monitor consistency.'
-        else:
-            risk = 'Healthy'; suggestion = 'Maintain current engagement.'
-        trend = 'Declining' if total >= 4 and absent_pct >= 50 else ('Improving/Consistent' if attendance_pct >= 85 else 'Stable')
-        tag = 'No Data' if total == 0 else ('Consistent' if attendance_pct >= 85 else ('Risky' if attendance_pct < 50 else ('Irregular' if absent_pct >= 30 else 'Stable')))
-        result.append({'id': row.get('id'), 'name': row.get('name') or f"Member {row.get('id')}", 'email': row.get('email') or '', 'total': total, 'present': present, 'late': late, 'absent': absent, 'attendance_pct': attendance_pct, 'duration_minutes': round((row.get('total_seconds') or 0)/60.0,2), 'last_seen': row.get('last_seen'), 'risk': risk, 'trend': trend, 'tag': tag, 'suggestion': suggestion})
-    if limit:
-        result = result[:int(limit)]
-    return _cache_set(cache_key, result)
+        total=int(row.get('total_records') or 0); present=int(row.get('present_count') or 0); late=int(row.get('late_count') or 0); absent=int(row.get('absent_count') or 0)
+        attendance_pct=_ai_percent(present + late*0.5, total); absent_pct=_ai_percent(absent,total)
+        if attendance_pct < 50: risk='Critical'; suggestion='Immediate follow-up needed. Send reminder and personally check availability.'
+        elif attendance_pct < 75: risk='Warning'; suggestion='Send reminder before next meeting and monitor consistency.'
+        else: risk='Healthy'; suggestion='Maintain current engagement.'
+        trend='Declining' if total>=4 and absent_pct>=50 else ('Improving/Consistent' if attendance_pct>=85 else 'Stable')
+        tag='No Data' if total==0 else ('Consistent' if attendance_pct>=85 else ('Risky' if attendance_pct<50 else ('Irregular' if absent_pct>=30 else 'Stable')))
+        result.append({'id':row.get('id'),'name':row.get('name') or f"Member {row.get('id')}",'email':row.get('email') or '', 'total':total,'present':present,'late':late,'absent':absent,'unknown':0,'attendance_pct':attendance_pct,'duration_minutes':round((row.get('total_seconds') or 0)/60.0,2),'last_seen':row.get('last_seen'),'risk':risk,'trend':trend,'tag':tag,'suggestion':suggestion,'basis':f'Last {days} days' if days else 'All records'})
+    if limit: result=result[:int(limit)]
+    return _cache_set(cache_key,result)
 
 def _ai_recent_meetings(limit=8):
     cache_key = _cache_make_key('ai_recent_meetings', {'limit': limit})
@@ -7818,8 +7830,8 @@ def _ai_find_member_by_query(query):
 def _ai_format_members_list(members,title='Members'):
     if not members: return f'{title}: No matching members found.'
     lines=[f'{title}:']
-    for idx,m in enumerate(members[:20],1): lines.append(f"{idx}. {m['name']} — {m['attendance_pct']}% attendance, Risk: {m['risk']}, Trend: {m['trend']}")
-    if len(members)>20: lines.append(f'...and {len(members)-20} more.')
+    for idx,m in enumerate(members[:80],1): lines.append(f"{idx}. {m['name']} — {m['attendance_pct']}% attendance, Risk: {m['risk']}, Trend: {m['trend']}")
+    if len(members)>80: lines.append(f'...and {len(members)-80} more.')
     return '\n'.join(lines)
 
 def _ai_low_attendance_members(query=''):
@@ -7904,7 +7916,11 @@ def ai_export_low_attendance_pdf():
 @app.route('/ai-intelligence')
 @login_required
 def ai_intelligence():
-    insights=generate_ai_level3_insights(); members=_ai_member_stats(); meetings=_ai_recent_meetings(8); critical=len([m for m in members if m['risk']=='Critical']); warning=len([m for m in members if m['risk']=='Warning']); latest_score=_ai_meeting_health_score(meetings[0]) if meetings else 0; avg_duration=round(sum([m['duration_minutes'] for m in members])/max(len(members),1),2)
+    insights=generate_ai_level3_insights(); members=_ai_member_stats(); meetings=_ai_recent_meetings(8)
+    critical=len([m for m in members if m['risk']=='Critical']); warning=len([m for m in members if m['risk']=='Warning'])
+    latest_score=_ai_meeting_health_score(meetings[0]) if meetings else 0
+    avg_duration=round(sum([m.get('duration_minutes',0) for m in members])/max(len(members),1),2)
+    basis=(members[0].get('basis') if members else 'Current month')
     logs=[]
     try:
         with db() as conn:
@@ -7913,48 +7929,43 @@ def ai_intelligence():
                     cur.execute('SELECT title, message, current_state, created_at FROM smart_alert_logs ORDER BY created_at DESC LIMIT 8'); logs=cur.fetchall()
     except Exception: logs=[]
     heat_members=members[:20]; heat_meetings=list(reversed(meetings[:12])); heat=[]
-    # Fast heatmap: one lightweight query instead of member x meeting nested queries.
-    # This prevents Render/Gunicorn worker timeout and Neon connection overload.
     try:
-        heat_member_ids=[m.get('id') for m in heat_members if m.get('id') is not None]
-        heat_meeting_uuids=[mt.get('meeting_uuid') for mt in heat_meetings if mt.get('meeting_uuid')]
-        status_map={}
+        heat_member_ids=[m.get('id') for m in heat_members if m.get('id') is not None]; heat_meeting_uuids=[mt.get('meeting_uuid') for mt in heat_meetings if mt.get('meeting_uuid')]; status_map={}
         if heat_member_ids and heat_meeting_uuids:
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute('''
-                        SELECT member_id, meeting_uuid, final_status
-                        FROM attendance
-                        WHERE member_id = ANY(%s) AND meeting_uuid = ANY(%s)
-                    ''', (heat_member_ids, heat_meeting_uuids))
-                    for r in cur.fetchall():
-                        status_map[(r.get('member_id'), r.get('meeting_uuid'))] = r.get('final_status') or 'NO_DATA'
+                    cur.execute('SELECT member_id, meeting_uuid, final_status FROM attendance WHERE member_id = ANY(%s) AND meeting_uuid = ANY(%s)', (heat_member_ids, heat_meeting_uuids))
+                    for r in cur.fetchall(): status_map[(r.get('member_id'), r.get('meeting_uuid'))] = r.get('final_status') or 'NO_DATA'
         for mem in heat_members:
             row={'name':mem.get('name') or 'Member','cells':[]}
-            for mt in heat_meetings:
-                row['cells'].append(status_map.get((mem.get('id'), mt.get('meeting_uuid')), 'NO_DATA'))
+            for mt in heat_meetings: row['cells'].append(status_map.get((mem.get('id'), mt.get('meeting_uuid')), 'NO_DATA'))
             heat.append(row)
     except Exception as exc:
-        print(f"AI heatmap skipped safely: {exc}")
-        heat=[]
-    body=render_template_string('''
-    <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}</style>
-    <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Level 3</div><h1 class="hero-title">🧠 AI Intelligence Center</h1><div class="hero-copy">Natural query assistant, actionable reminders, context memory, member intelligence, risk heatmap, meeting health score, smart alerts, and report export — all without paid APIs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Critical</div><div class="big">{{ critical }}</div></div></div></div></div>
-    <div class="ai-grid"><div class="ai-card"><div class="small">Critical Members</div><div class="ai-big risk-critical">{{ critical }}</div></div><div class="ai-card"><div class="small">Warning Members</div><div class="ai-big risk-warning">{{ warning }}</div></div><div class="ai-card"><div class="small">Avg Duration</div><div class="ai-big">{{ avg_duration }}m</div></div><div class="ai-card"><div class="small">Latest Meeting Health</div><div class="ai-big">{{ latest_score }}/100</div></div></div>
-    <div class="ai-chat" style="margin-top:18px"><div class="ai-card"><h2>🤖 Smart Assistant</h2><div id="aiGreeting" class="ai-msg">Analyzing your latest attendance data...</div><div class="ai-suggest"><button onclick="aiAsk('Who is at risk?')">At-risk members</button><button onclick="aiAsk('List members below 50%')">Below 50%</button><button onclick="aiAsk('Show top performers')">Top performers</button><button onclick="aiAsk('Why attendance dropped?')">Why dropped?</button><button onclick="aiAsk('Summarize last meeting')">Last meeting</button><button onclick="aiAsk('Send reminder to them')">Remind them</button><button onclick="location.href='/ai/export/low-attendance.pdf'">Export PDF</button><button onclick="location.href='/ai/export/low-attendance.csv'">Export CSV</button></div><input id="aiLevel3Input" class="ai-input" placeholder="Ask attendance question..."><div style="margin-top:10px"><button onclick="aiAsk(document.getElementById('aiLevel3Input').value)">Ask AI</button></div><div id="aiLevel3Answer" class="ai-msg">Ready.</div></div><div class="ai-card"><h2>💡 Insights</h2>{% for i in insights %}<div class="ai-msg"><b>{{ i.title }}</b><br><span class="small">{{ i.category }} · {{ i.severity }}</span><br>{{ i.message }}<br><b>Recommendation:</b> {{ i.recommendation }}</div>{% endfor %}</div></div>
-    <div class="ai-card" style="margin-top:18px"><h2>👤 Member Intelligence</h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Attendance %</th><th>Trend</th><th>Risk</th><th>Tag</th><th>Suggestion</th></tr></thead><tbody>{% for m in members %}<tr><td>{{ m.name }}</td><td>{{ m.attendance_pct }}%</td><td>{{ m.trend }}</td><td class="risk-{{ m.risk|lower }}">{{ m.risk }}</td><td>{{ m.tag }}</td><td>{{ m.suggestion }}</td></tr>{% endfor %}</tbody></table></div></div>
+        print(f"AI heatmap skipped safely: {exc}"); heat=[]
+    try:
+        preds=generate_ai_level4_predictions(); recs=generate_ai_level4_recommendations()
+    except Exception as exc:
+        print(f"AI Level 4 section skipped safely: {exc}"); preds=[]; recs=[]
+    high=len([p for p in preds if p.get('absence_probability',0)>=70]); med=len([p for p in preds if 45<=p.get('absence_probability',0)<70]); consistent=len([p for p in preds if p.get('behavior_tag')=='Consistent']); risky=len([p for p in preds if p.get('behavior_tag')=='Risky'])
+    body=render_template_string("""
+    <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}.l4-pill{display:inline-flex;border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px}.l4-high{background:rgba(239,68,68,.18);color:#fecaca;border:1px solid rgba(239,68,68,.35)}.l4-med{background:rgba(245,158,11,.18);color:#fde68a;border:1px solid rgba(245,158,11,.35)}.l4-low{background:rgba(34,197,94,.14);color:#bbf7d0;border:1px solid rgba(34,197,94,.28)}.l4-actions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.l4-actions button,.l4-actions a{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed);text-decoration:none}.l4-actions .danger{background:linear-gradient(90deg,#dc2626,#f97316)}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}</style>
+    <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Intelligence Center</div><h1 class="hero-title">🧠 AI Intelligence + Level 4</h1><div class="hero-copy">Smart assistant, current-month member intelligence, risk heatmap, prediction engine, behavioral tags, auto-actions, and smart reports — merged into one dashboard.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Basis</div><div class="big" style="font-size:18px">{{ basis }}</div></div></div></div></div>
+    <div class="ai-grid"><div class="ai-card"><div class="small">Critical Members</div><div class="ai-big risk-critical">{{ critical }}</div></div><div class="ai-card"><div class="small">Warning Members</div><div class="ai-big risk-warning">{{ warning }}</div></div><div class="ai-card"><div class="small">High Absence Risk</div><div class="ai-big risk-critical">{{ high }}</div></div><div class="ai-card"><div class="small">Latest Meeting Health</div><div class="ai-big">{{ latest_score }}/100</div></div></div>
+    <div class="ai-chat" style="margin-top:18px"><div class="ai-card"><h2>🤖 Smart Assistant</h2><div id="aiGreeting" class="ai-msg">Analyzing your latest attendance data...</div><div class="ai-suggest"><button type="button" onclick="aiAsk('Who is at risk?')">At-risk members</button><button type="button" onclick="aiAsk('List all members below 50% attendance')">Below 50%</button><button type="button" onclick="aiAsk('Show top performers')">Top performers</button><button type="button" onclick="aiAsk('Why attendance dropped?')">Why dropped?</button><button type="button" onclick="aiAsk('Summarize last meeting')">Last meeting</button><button type="button" onclick="aiAsk('Show predictions')">Predictions</button><button type="button" onclick="aiAsk('Show behavioral tags')">Behavior tags</button><button type="button" onclick="aiAsk('Send reminder to them')">Remind them</button><button type="button" onclick="location.href='/ai-level4/report.pdf'">Smart PDF</button><button type="button" onclick="location.href='/ai-level4/report.csv'">Smart CSV</button></div><input id="aiLevel3Input" class="ai-input" placeholder="Ask attendance question..." onkeydown="if(event.key==='Enter'){aiAsk(this.value)}"><div style="margin-top:10px"><button type="button" onclick="aiAsk(document.getElementById('aiLevel3Input').value)">Ask AI</button></div><div id="aiLevel3Answer" class="ai-msg">Ready.</div></div><div class="ai-card"><h2>💡 Insights</h2>{% for i in insights %}<div class="ai-msg"><b>{{ i.title }}</b><br><span class="small">{{ i.category }} · {{ i.severity }}</span><br>{{ i.message }}<br><b>Recommendation:</b> {{ i.recommendation }}</div>{% endfor %}</div></div>
+    <div class="ai-card" style="margin-top:18px"><h2>👤 Member Intelligence <span class="small">({{ basis }}, same formula as Attendance Register)</span></h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Total</th><th>P</th><th>L</th><th>A</th><th>U</th><th>Attendance %</th><th>Trend</th><th>Risk</th><th>Tag</th><th>Suggestion</th></tr></thead><tbody>{% for m in members %}<tr><td>{{ m.name }}</td><td>{{ m.total }}</td><td>{{ m.present }}</td><td>{{ m.late }}</td><td>{{ m.absent }}</td><td>{{ m.unknown or 0 }}</td><td>{{ m.attendance_pct }}%</td><td>{{ m.trend }}</td><td class="risk-{{ m.risk|lower }}">{{ m.risk }}</td><td>{{ m.tag }}</td><td>{{ m.suggestion }}</td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="ai-card" style="margin-top:18px"><h2>🔮 Prediction + Behavioral Intelligence</h2><div class="l4-actions"><button type="button" onclick="l4Run(false)">Preview Auto Actions</button><button type="button" class="danger" onclick="if(confirm('Send reminders to high-risk members?'))l4Run(true)">Execute Reminders</button><a href="/ai-level4/report.pdf">Smart PDF</a><a href="/ai-level4/report.csv">Smart CSV</a></div><div id="l4ActionResult" class="ai-msg">Ready.</div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Attendance %</th><th>Absence Risk</th><th>Prediction</th><th>Behavior Tag</th><th>Recommendation</th></tr></thead><tbody>{% for p in preds %}<tr><td>{{ p.name }}</td><td>{{ p.attendance_pct }}%</td><td><span class="l4-pill {{ 'l4-high' if p.absence_probability >= 70 else 'l4-med' if p.absence_probability >= 45 else 'l4-low' }}">{{ p.absence_probability }}%</span></td><td>{{ p.prediction }}</td><td>{{ p.behavior_tag }}</td><td>{{ p.recommendation }}</td></tr>{% endfor %}</tbody></table></div></div>
     <div class="ai-card heat" style="margin-top:18px"><h2>🧠 Risk Heatmap</h2><table><thead><tr><th>Member</th>{% for mt in heat_meetings %}<th>{{ fmt_date(mt.start_time) }}</th>{% endfor %}</tr></thead><tbody>{% for row in heat %}<tr><th>{{ row.name }}</th>{% for c in row.cells %}<td class="h-{{ c }}">{{ 'P' if c in ['PRESENT','HOST'] else 'L' if c=='LATE' else 'A' if c=='ABSENT' else '-' }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
     <div class="ai-card" style="margin-top:18px"><h2>🔥 Smart Alert Panel</h2>{% if logs %}{% for l in logs %}<div class="ai-msg"><b>{{ l.title }}</b><br>{{ l.message }}<br><span class="small">{{ fmt_dt(l.created_at) }} · {{ l.current_state }}</span></div>{% endfor %}{% else %}<div class="muted">No smart alert logs yet.</div>{% endif %}</div>
-    <script>function aiAsk(q){if(!q)return;document.getElementById('aiLevel3Answer').innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{document.getElementById('aiLevel3Answer').innerText=d.response||'No answer';});}fetch('/api/ai-insights-level3').then(r=>r.json()).then(d=>{let ins=(d.insights||[]).slice(0,2).map(x=>'• '+x.message).join('\n');document.getElementById('aiGreeting').innerText=ins||'No critical insight right now.';}).catch(()=>{});</script>
-    ''', insights=insights, members=members, critical=critical, warning=warning, latest_score=latest_score, avg_duration=avg_duration, logs=logs, heat=heat, heat_meetings=heat_meetings, fmt_date=fmt_date, fmt_dt=fmt_dt)
+    <script>function aiAsk(q){if(!q||!q.trim())return;const box=document.getElementById('aiLevel3Answer');box.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(async r=>{let d=await r.json().catch(()=>({response:'AI response parse failed.'}));if(!r.ok){throw new Error(d.response||('HTTP '+r.status));}return d;}).then(d=>{box.innerText=d.response||'No answer found.';}).catch(err=>{box.innerText='AI assistant error: '+(err.message||err)+'. Please check Render logs if this repeats.';});}function l4Run(execute){const box=document.getElementById('l4ActionResult');box.innerText=execute?'Executing safe reminders...':'Checking preview...';fetch('/api/ai-level4/auto-actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execute:execute,max_members:20})}).then(r=>r.json()).then(d=>{box.innerText=`Mode: ${d.mode}\nTargets: ${d.target_count}\nSent: ${d.sent||0}\nSkipped: ${d.skipped||0}\nFailed: ${(d.failed||[]).join(', ')||'None'}`;}).catch(()=>{box.innerText='Auto action failed. Check logs.';});}fetch('/api/ai-insights-level3').then(r=>r.json()).then(d=>{let ins=(d.insights||[]).slice(0,2).map(x=>'• '+x.message).join('\n');document.getElementById('aiGreeting').innerText=ins||'No critical insight right now.';}).catch(()=>{});</script>
+    """, insights=insights, members=members, critical=critical, warning=warning, latest_score=latest_score, avg_duration=avg_duration, logs=logs, heat=heat, heat_meetings=heat_meetings, fmt_date=fmt_date, fmt_dt=fmt_dt, basis=basis, preds=preds, recs=recs, high=high, med=med, consistent=consistent, risky=risky)
     return page('AI Intelligence', body, 'ai_intelligence')
 
 # =========================
 # END UI_UPDATE_V10_AI_LEVEL3_SMART_ENGINE_APPLIED
 # =========================
 
-
 # UI_UPDATE_V11_AI_LEVEL4_CORE_APPLIED = True
+# UI_UPDATE_V11_1_AI_MERGED_DASHBOARD_ASSISTANT_FIX_APPLIED = True
 # AI LEVEL 4 CORE: Prediction + Behavioral Tagging + Auto Actions + Smart Reports
 AI_LEVEL4_LOW_THRESHOLD = float(os.getenv("AI_LEVEL4_LOW_THRESHOLD", "75") or "75")
 AI_LEVEL4_CRITICAL_THRESHOLD = float(os.getenv("AI_LEVEL4_CRITICAL_THRESHOLD", "50") or "50")
@@ -8083,9 +8094,7 @@ def _ai_bot_answer(query):
 @app.route('/ai-level4')
 @login_required
 def ai_level4_dashboard():
-    preds=generate_ai_level4_predictions(); recs=generate_ai_level4_recommendations(); high=len([p for p in preds if p.get('absence_probability',0)>=70]); med=len([p for p in preds if 45<=p.get('absence_probability',0)<70]); consistent=len([p for p in preds if p.get('behavior_tag')=='Consistent']); risky=len([p for p in preds if p.get('behavior_tag')=='Risky'])
-    body=render_template_string('''<style>.l4-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.l4-card{background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.l4-big{font-size:30px;font-weight:950}.l4-layout{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:18px}.l4-pill{display:inline-flex;border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px}.l4-high{background:rgba(239,68,68,.18);color:#fecaca;border:1px solid rgba(239,68,68,.35)}.l4-med{background:rgba(245,158,11,.18);color:#fde68a;border:1px solid rgba(245,158,11,.35)}.l4-low{background:rgba(34,197,94,.14);color:#bbf7d0;border:1px solid rgba(34,197,94,.28)}.l4-actions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.l4-actions button,.l4-actions a{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed);text-decoration:none}.l4-actions .danger{background:linear-gradient(90deg,#dc2626,#f97316)}.l4-msg{white-space:pre-wrap;background:rgba(2,6,23,.55);border:1px solid rgba(148,163,184,.14);border-radius:14px;padding:12px;margin-top:10px}@media(max-width:1100px){.l4-grid{grid-template-columns:1fr 1fr}.l4-layout{grid-template-columns:1fr}}@media(max-width:700px){.l4-grid{grid-template-columns:1fr}}</style><div class="hero"><div class="hero-grid"><div><div class="badge">AI Level 4 Core</div><h1 class="hero-title">Predictive Attendance Intelligence</h1><div class="hero-copy">Prediction engine, behavioral tagging, safe auto-actions, and smart reports. No paid APIs. No webhook or attendance-logic changes.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">High Risk</div><div class="big">{{ high }}</div></div><div class="hero-chip"><div class="small">Risky Tags</div><div class="big">{{ risky }}</div></div></div></div></div><div class="l4-grid"><div class="l4-card"><div class="small">High Absence Risk</div><div class="l4-big">{{ high }}</div></div><div class="l4-card"><div class="small">Medium Risk</div><div class="l4-big">{{ med }}</div></div><div class="l4-card"><div class="small">Consistent Members</div><div class="l4-big">{{ consistent }}</div></div><div class="l4-card"><div class="small">Risky Behavioral Tags</div><div class="l4-big">{{ risky }}</div></div></div><div class="l4-layout" style="margin-top:18px"><div class="l4-card"><h2>Next Meeting Prediction Table</h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Attendance %</th><th>Absence Risk</th><th>Prediction</th><th>Behavior Tag</th><th>Recommendation</th></tr></thead><tbody>{% for p in preds %}<tr><td>{{ p.name }}</td><td>{{ p.attendance_pct }}%</td><td><span class="l4-pill {{ 'l4-high' if p.absence_probability >= 70 else 'l4-med' if p.absence_probability >= 45 else 'l4-low' }}">{{ p.absence_probability }}%</span></td><td>{{ p.prediction }}</td><td>{{ p.behavior_tag }}</td><td>{{ p.recommendation }}</td></tr>{% endfor %}</tbody></table></div></div><div class="l4-card"><h2>Auto Actions</h2><p class="muted">Preview first, then execute. Reminders are logged and limited to avoid spam.</p><div class="l4-actions"><button onclick="l4Run(false)">Preview Auto Actions</button><button class="danger" onclick="if(confirm('Send reminders to high-risk members?'))l4Run(true)">Execute Reminders</button><a href="/ai-level4/report.pdf">Smart PDF</a><a href="/ai-level4/report.csv">Smart CSV</a></div><div id="l4ActionResult" class="l4-msg">Ready.</div><h2 style="margin-top:18px">Recommendations</h2>{% for r in recs %}<div class="l4-msg"><b>{{ r.title }}</b><br>{{ r.message }}<br><b>Action:</b> {{ r.action }}</div>{% endfor %}</div></div><script>function l4Run(execute){const box=document.getElementById('l4ActionResult');box.innerText=execute?'Executing safe reminders...':'Checking preview...';fetch('/api/ai-level4/auto-actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execute:execute,max_members:20})}).then(r=>r.json()).then(d=>{box.innerText=`Mode: ${d.mode}\nTargets: ${d.target_count}\nSent: ${d.sent||0}\nSkipped: ${d.skipped||0}\nFailed: ${(d.failed||[]).join(', ')||'None'}`;}).catch(()=>{box.innerText='Auto action failed. Check logs.';});}</script>''', preds=preds, recs=recs, high=high, med=med, consistent=consistent, risky=risky)
-    return page('AI Level 4', body, 'ai_level4')
+    return redirect(url_for('ai_intelligence'))
 
 # END UI_UPDATE_V11_AI_LEVEL4_CORE_APPLIED
 
