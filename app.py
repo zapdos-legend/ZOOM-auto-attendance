@@ -8099,5 +8099,337 @@ def ai_level4_dashboard():
 # END UI_UPDATE_V11_AI_LEVEL4_CORE_APPLIED
 
 
+
+# UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED = True
+
+# ---- AI Command Engine v11.2: broad offline attendance/project assistant ----
+def _ai_text_contains_any(text, words):
+    text = (text or '').lower()
+    return any(w in text for w in words)
+
+def _ai_members_sorted():
+    try:
+        return sorted(_ai_member_stats(), key=lambda m: (str(m.get('name') or '').lower()))
+    except Exception as exc:
+        print(f"AI members load failed: {exc}")
+        return []
+
+def _ai_member_lines(members, title='Members', limit=120):
+    if not members:
+        return f"{title}: No matching members found."
+    lines = [f"{title} ({len(members)}):"]
+    for i, m in enumerate(members[:limit], 1):
+        lines.append(
+            f"{i}. {m.get('name','-')} — {m.get('attendance_pct',0)}% | "
+            f"P:{m.get('present',0)} L:{m.get('late',0)} A:{m.get('absent',0)} U:{m.get('unknown',0)} | "
+            f"Risk:{m.get('risk','-')} | Tag:{m.get('tag','-')}"
+        )
+    if len(members) > limit:
+        lines.append(f"...and {len(members)-limit} more.")
+    return '\n'.join(lines)
+
+def _ai_extract_member_from_text(q):
+    ql=(q or '').lower()
+    candidates=[]
+    for m in _ai_members_sorted():
+        name=(m.get('name') or '').lower()
+        if not name:
+            continue
+        score=0
+        if name in ql:
+            score=100
+        else:
+            parts=[p for p in name.split() if len(p)>=3]
+            score=sum(1 for p in parts if p in ql)*20
+        if score:
+            candidates.append((score,m))
+    return sorted(candidates, key=lambda x:x[0], reverse=True)[0][1] if candidates else None
+
+def _ai_answer_member_attendance(q):
+    member=_ai_extract_member_from_text(q)
+    if not member:
+        return None
+    return (
+        f"{member.get('name')} attendance intelligence:\n"
+        f"• Attendance: {member.get('attendance_pct')}%\n"
+        f"• Total meetings counted: {member.get('total')}\n"
+        f"• Present: {member.get('present')} | Late: {member.get('late')} | Absent: {member.get('absent')} | Unknown: {member.get('unknown')}\n"
+        f"• Risk: {member.get('risk')}\n"
+        f"• Trend: {member.get('trend')}\n"
+        f"• Behavior tag: {member.get('tag')}\n"
+        f"• Suggestion: {member.get('suggestion')}\n"
+        f"• Basis: {member.get('basis','current data')}"
+    ), [member.get('id')]
+
+def _ai_answer_project_help(q):
+    ql=(q or '').lower()
+    if any(w in ql for w in ['what can you do','help','commands','features','capabilities']):
+        return ("I can help with attendance intelligence using your project data. Try:\n"
+                "• list all members below 50% attendance\n"
+                "• show all members\n"
+                "• who is at risk?\n"
+                "• show top performers\n"
+                "• show worst performers\n"
+                "• summarize last meeting\n"
+                "• compare last 2 meetings\n"
+                "• show late trend\n"
+                "• show unknown participant trend\n"
+                "• show predictions\n"
+                "• show behavioral tags\n"
+                "• send reminder to them\n"
+                "• export low attendance report")
+    if any(w in ql for w in ['route','routes','pages','dashboard']):
+        return ("Main dashboards available in this project:\n"
+                "• Home\n• Live\n• Members\n• Users\n• Analytics\n• AI Intelligence\n"
+                "• Attendance Register\n• Notification Control\n• Appearance Studio\n• Meetings\n• Settings\n• Activity\n• Profile")
+    return None
+
+def _ai_answer_compare_last_meetings():
+    ms=_ai_recent_meetings(2)
+    if len(ms)<2:
+        return 'Need at least two meetings to compare.'
+    latest, prev = ms[0], ms[1]
+    def attended(m): return int(m.get('present_count') or 0)+int(m.get('late_count') or 0)
+    def total(m): return attended(m)+int(m.get('absent_count') or 0)
+    latest_pct=_ai_percent(attended(latest), total(latest))
+    prev_pct=_ai_percent(attended(prev), total(prev))
+    delta=round(latest_pct-prev_pct,2)
+    return (
+        f"Last 2 meetings comparison:\n"
+        f"Latest: {latest.get('topic') or 'Meeting'} ({fmt_dt(latest.get('start_time'))}) — attendance {latest_pct}% | Present {latest.get('present_count') or 0}, Late {latest.get('late_count') or 0}, Absent {latest.get('absent_count') or 0}, Unknown {latest.get('unknown_participants') or 0}\n"
+        f"Previous: {prev.get('topic') or 'Meeting'} ({fmt_dt(prev.get('start_time'))}) — attendance {prev_pct}% | Present {prev.get('present_count') or 0}, Late {prev.get('late_count') or 0}, Absent {prev.get('absent_count') or 0}, Unknown {prev.get('unknown_participants') or 0}\n"
+        f"Change: {delta}%"
+    )
+
+def _ai_answer_absentees_last_meeting():
+    ms=_ai_recent_meetings(1)
+    if not ms: return 'No meeting found yet.'
+    uuid=ms[0].get('meeting_uuid')
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                name_expr=member_name_sql(conn)
+                cur.execute(f"""
+                    SELECT COALESCE({name_expr}, a.participant_name) AS name, a.final_status
+                    FROM attendance a
+                    LEFT JOIN members m ON m.id=a.member_id
+                    WHERE a.meeting_uuid=%s AND UPPER(COALESCE(a.final_status,''))='ABSENT'
+                    ORDER BY name
+                    LIMIT 150
+                """, (uuid,))
+                rows=cur.fetchall()
+        if not rows: return 'No absentees found in the latest meeting.'
+        return 'Absentees in latest meeting:\n' + '\n'.join([f"{i}. {r.get('name')}" for i,r in enumerate(rows,1)])
+    except Exception as exc:
+        return f'Could not load absentees safely: {exc}'
+
+def _ai_answer_late_more_than(q):
+    import re
+    m=re.search(r'(?:more than|greater than|over|>)\s*(\d+)', q.lower())
+    n=int(m.group(1)) if m else 3
+    members=[]
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                name_expr=member_name_sql(conn)
+                cur.execute(f"""
+                    SELECT m.id, {name_expr} AS name, COUNT(a.id) AS late_count
+                    FROM members m
+                    JOIN attendance a ON a.member_id=m.id
+                    WHERE UPPER(COALESCE(a.final_status,''))='LATE'
+                    GROUP BY m.id, name
+                    HAVING COUNT(a.id) > %s
+                    ORDER BY late_count DESC, name ASC
+                    LIMIT 150
+                """, (n,))
+                rows=cur.fetchall()
+        if not rows: return f'No members joined late more than {n} times.'
+        return f'Members late more than {n} times:\n' + '\n'.join([f"{i}. {r.get('name')} — {r.get('late_count')} late records" for i,r in enumerate(rows,1)])
+    except Exception as exc:
+        return f'Could not load late records safely: {exc}'
+
+def _ai_command_answer_v112(query):
+    q=(query or '').strip()
+    ql=q.lower()
+    if not q:
+        return {'response':'Ask me anything related to your attendance project, members, risk, meetings, reminders, reports, predictions, or dashboards.', 'targets': []}
+
+    # project/help questions
+    project_help=_ai_answer_project_help(ql)
+    if project_help:
+        return {'response': project_help, 'targets': []}
+
+    # Level 4 questions first
+    if any(w in ql for w in ['predict','prediction','likely absent','absent next','future risk','next meeting risk']):
+        preds=generate_ai_level4_predictions()[:25]
+        session['ai_last_targets']=[p.get('id') for p in preds if p.get('id') is not None]
+        lines=['Prediction engine result:']+[f"{i}. {p.get('name')} — {p.get('absence_probability')}% absence risk ({p.get('prediction')}), Tag: {p.get('behavior_tag')}" for i,p in enumerate(preds,1)]
+        return {'response':'\n'.join(lines), 'targets': session['ai_last_targets']}
+    if any(w in ql for w in ['behavior', 'behaviour', 'tag', 'consistent', 'irregular', 'risky']):
+        preds=generate_ai_level4_predictions()[:80]
+        return {'response':'Behavioral tags:\n'+'\n'.join([f"• {p.get('name')} — {p.get('behavior_tag')} ({p.get('attendance_pct')}%)" for p in preds]), 'targets': []}
+    if any(w in ql for w in ['smart report', 'generate report', 'ai report', 'export report']):
+        return {'response':'Smart reports are ready:\n• PDF: /ai-level4/report.pdf\n• CSV: /ai-level4/report.csv\n• Low attendance PDF: /ai/export/low-attendance.pdf\n• Low attendance CSV: /ai/export/low-attendance.csv', 'targets': []}
+    if any(w in ql for w in ['auto action','automatic action','auto reminder']):
+        preview=run_ai_level4_auto_actions(False)
+        return {'response':f"Auto-action preview: {preview.get('target_count')} high-risk member(s) can receive reminders. Use the AI Level 4 controls to execute safely.", 'targets':[p.get('id') for p in preview.get('targets',[])]}
+
+    # action reminder with context
+    if any(w in ql for w in ['send reminder','remind them','send mail','email them','notify them']):
+        last_targets=session.get('ai_last_targets',[]) or []
+        if 'them' in ql and last_targets:
+            lookup={int(m['id']):m for m in _ai_member_stats() if m.get('id') is not None}
+            targets=[lookup.get(int(x)) for x in last_targets if str(x).isdigit() and lookup.get(int(x))]
+        else:
+            targets=_ai_low_attendance_members(ql)
+        sent=0; failed=[]
+        for m in targets[:50]:
+            if not m.get('email'):
+                failed.append(f"{m.get('name')} (no email)"); continue
+            ok,msg=send_email(m['email'],'Attendance Reminder',f"Hello {m.get('name')},\n\nYour attendance is currently {m.get('attendance_pct')}%. Please attend upcoming meetings regularly.\n\nRegards,\nZoom Attendance Platform")
+            if ok: sent+=1
+            else: failed.append(f"{m.get('name')} ({msg})")
+        return {'response':f"Reminder action completed. Sent: {sent}. Failed/no email: {', '.join(failed) if failed else 'None'}", 'targets':[m.get('id') for m in targets]}
+
+    # broad list/attendance commands
+    if any(x in ql for x in ['all members','all participants','list members','list all','make list of all']):
+        # If condition is present, filter by low attendance; otherwise list all members.
+        if any(x in ql for x in ['below','less than','under','<','low attendance']):
+            members=_ai_low_attendance_members(ql)
+            session['ai_last_targets']=[m.get('id') for m in members if m.get('id') is not None]
+            return {'response':_ai_member_lines(members, f"Members below {_ai_parse_threshold(ql)}% attendance"), 'targets': session['ai_last_targets']}
+        members=_ai_members_sorted()
+        session['ai_last_targets']=[m.get('id') for m in members if m.get('id') is not None]
+        return {'response':_ai_member_lines(members, 'All registered members'), 'targets': session['ai_last_targets']}
+
+    if any(x in ql for x in ['below','less than','under','<','low attendance']):
+        members=_ai_low_attendance_members(ql)
+        session['ai_last_targets']=[m.get('id') for m in members if m.get('id') is not None]
+        return {'response':_ai_member_lines(members, f"Members below {_ai_parse_threshold(ql)}% attendance"), 'targets': session['ai_last_targets']}
+
+    if any(x in ql for x in ['risk','critical','warning','at risk']):
+        members=[m for m in _ai_member_stats() if m.get('risk') in ('Critical','Warning')]
+        session['ai_last_targets']=[m.get('id') for m in members if m.get('id') is not None]
+        return {'response':_ai_member_lines(members, 'At-risk members'), 'targets': session['ai_last_targets']}
+
+    if any(x in ql for x in ['top','best performer','highest attendance']):
+        members=sorted([m for m in _ai_member_stats() if m.get('total',0)>0], key=lambda x:(x.get('attendance_pct',0),x.get('duration_minutes',0)), reverse=True)[:20]
+        return {'response':_ai_member_lines(members, 'Top performers'), 'targets': []}
+
+    if any(x in ql for x in ['worst','lowest','poor performer','weak performer']):
+        members=sorted([m for m in _ai_member_stats() if m.get('total',0)>0], key=lambda x:x.get('attendance_pct',0))[:20]
+        session['ai_last_targets']=[m.get('id') for m in members if m.get('id') is not None]
+        return {'response':_ai_member_lines(members, 'Lowest attendance performers'), 'targets': session['ai_last_targets']}
+
+    if any(x in ql for x in ['attendance of','show attendance','member insight','profile of']):
+        ans=_ai_answer_member_attendance(q)
+        if ans:
+            text, targets=ans; return {'response':text, 'targets': targets}
+
+    if 'compare' in ql and ('last 2' in ql or 'last two' in ql or 'previous' in ql):
+        return {'response': _ai_answer_compare_last_meetings(), 'targets': []}
+
+    if 'absent' in ql and ('last meeting' in ql or 'latest meeting' in ql):
+        return {'response': _ai_answer_absentees_last_meeting(), 'targets': []}
+
+    if 'late' in ql and any(x in ql for x in ['more than','greater than','over','>']):
+        return {'response': _ai_answer_late_more_than(q), 'targets': []}
+
+    if 'late' in ql:
+        lines=['Late trend from recent meetings:']+[f"• {fmt_date(m.get('start_time'))} — {m.get('late_count') or 0} late participant(s)" for m in _ai_recent_meetings(8)]
+        return {'response':'\n'.join(lines), 'targets': []}
+
+    if 'unknown' in ql:
+        lines=['Unknown participant trend:']+[f"• {fmt_date(m.get('start_time'))} — {m.get('unknown_participants') or 0} unknown participant(s)" for m in _ai_recent_meetings(8)]
+        return {'response':'\n'.join(lines), 'targets': []}
+
+    if any(x in ql for x in ['last meeting','summarize','summary']):
+        meetings=_ai_recent_meetings(1)
+        if not meetings: return {'response':'No meeting found yet.', 'targets': []}
+        m=meetings[0]
+        return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown: {m.get('unknown_participants') or 0}. Health score: {_ai_meeting_health_score(m)}/100.", 'targets': []}
+
+    if any(x in ql for x in ['why','drop','decrease','down']):
+        related=[i for i in generate_ai_level3_insights() if i.get('category') in ('Trend','Risk','Punctuality','Duration')]
+        if related:
+            return {'response':'Possible reasons based on your data:\n'+'\n'.join([f"• {i.get('message')} Recommendation: {i.get('recommendation')}" for i in related[:6]]), 'targets': []}
+
+    # specific member fallback
+    ans=_ai_answer_member_attendance(q)
+    if ans:
+        text, targets=ans; return {'response':text, 'targets': targets}
+
+    # final safe fallback: answer project-related but explain limits
+    insights=generate_ai_level3_insights()[:5]
+    return {'response':"I can answer project and attendance questions using your database, but I do not use paid external AI APIs. I did not find a precise command match, so here are current insights:\n"+'\n'.join([f"• {i.get('title')}: {i.get('message')}" for i in insights])+'\n\nTry asking: list all members below 50%, compare last 2 meetings, who joined late more than 3 times, show absentees in last meeting, or send reminder to them.', 'targets': []}
+
+# Route handler replacement without registering duplicate Flask routes.
+def api_ai_assistant_level3_v112():
+    payload=request.get_json(silent=True) or {}
+    try:
+        return jsonify(_ai_command_answer_v112(payload.get('query','')))
+    except Exception as exc:
+        print(f"AI assistant v11.2 error: {exc}")
+        return jsonify({'response':f'AI assistant could not process this safely: {exc}', 'targets': []}), 200
+
+try:
+    app.view_functions['api_ai_assistant_level3'] = login_required(api_ai_assistant_level3_v112)
+except Exception as _ai_route_patch_exc:
+    print(f"AI assistant route patch skipped: {_ai_route_patch_exc}")
+
+# Robust frontend patch for AI Intelligence page: guarantees Thinking... and response rendering.
+_AI_FRONTEND_PATCH_V112 = """
+<script>
+(function(){
+  async function askAttendanceAI(q, targetId){
+    q = (q || '').trim();
+    const box = document.getElementById(targetId || 'aiLevel3Answer') || document.getElementById('aiBotAnswer');
+    if(!q){ if(box) box.innerText='Please type a question first.'; return; }
+    if(box) box.innerText='Thinking...';
+    try{
+      const res = await fetch('/api/ai-assistant-level3', {
+        method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin',
+        body: JSON.stringify({query:q})
+      });
+      let data = {};
+      try { data = await res.json(); } catch(e){ data = {response:'Server returned a non-JSON response.'}; }
+      if(box) box.innerText = data.response || 'No answer found.';
+    }catch(err){
+      if(box) box.innerText = 'AI assistant connection error: ' + (err.message || err);
+    }
+  }
+  window.aiAsk = function(q){ return askAttendanceAI(q, 'aiLevel3Answer'); };
+  window.aiBotAsk = function(q){ return askAttendanceAI(q, 'aiBotAnswer'); };
+  document.addEventListener('DOMContentLoaded', function(){
+    const btns = Array.from(document.querySelectorAll('button'));
+    btns.forEach(function(btn){
+      const text=(btn.textContent||'').trim().toLowerCase();
+      if(text === 'ask ai'){
+        btn.addEventListener('click', function(ev){ ev.preventDefault(); const input=document.getElementById('aiLevel3Input'); askAttendanceAI(input ? input.value : '', 'aiLevel3Answer'); });
+      }
+      if(text === 'ask'){
+        const panel = btn.closest('.ai-bot-panel');
+        if(panel){ btn.addEventListener('click', function(ev){ ev.preventDefault(); const input=document.getElementById('aiBotInput'); askAttendanceAI(input ? input.value : '', 'aiBotAnswer'); }); }
+      }
+    });
+  });
+})();
+</script>
+"""
+
+@app.after_request
+def ai_frontend_patch_v112(response):
+    try:
+        if request.path == '/ai-intelligence' and response.content_type and 'text/html' in response.content_type.lower():
+            html = response.get_data(as_text=True)
+            if 'UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED' not in html:
+                html = html.replace('</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n</body>') if '</body>' in html else html + _AI_FRONTEND_PATCH_V112
+                response.set_data(html)
+                response.headers['Content-Length'] = str(len(response.get_data()))
+    except Exception as exc:
+        print(f"AI frontend patch error: {exc}")
+    return response
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
