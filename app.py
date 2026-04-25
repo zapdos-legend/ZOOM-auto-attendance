@@ -1064,6 +1064,11 @@ def init_db():
         ensure_index(conn, "idx_attendance_meeting_uuid", "CREATE INDEX idx_attendance_meeting_uuid ON attendance(meeting_uuid)")
         ensure_index(conn, "idx_attendance_member_id", "CREATE INDEX idx_attendance_member_id ON attendance(member_id)")
         ensure_index(conn, "idx_meetings_status", "CREATE INDEX idx_meetings_status ON meetings(status)")
+        if table_exists(conn, "activity_log"):
+            ensure_index(conn, "idx_activity_log_created", "CREATE INDEX idx_activity_log_created ON activity_log(created_at DESC)")
+            ensure_index(conn, "idx_activity_log_action", "CREATE INDEX idx_activity_log_action ON activity_log(action)")
+            ensure_index(conn, "idx_activity_log_username", "CREATE INDEX idx_activity_log_username ON activity_log(username)")
+            ensure_index(conn, "idx_activity_log_user_time", "CREATE INDEX idx_activity_log_user_time ON activity_log(username, created_at DESC)")
         if table_exists(conn, "smart_alert_logs"):
             ensure_index(conn, "idx_smart_alert_logs_key", "CREATE INDEX idx_smart_alert_logs_key ON smart_alert_logs(alert_key)")
             ensure_index(conn, "idx_smart_alert_logs_created", "CREATE INDEX idx_smart_alert_logs_created ON smart_alert_logs(created_at)")
@@ -7839,69 +7844,235 @@ def settings():
 @app.route("/activity")
 @login_required
 def activity():
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT 250")
-            rows = cur.fetchall()
+    """Production audit log UI with safe filters, search, pagination and cached summaries."""
+    def _positive_int(value, default, minimum=1, maximum=500):
+        try:
+            number = int(value)
+        except Exception:
+            number = default
+        if number < minimum:
+            number = minimum
+        if number > maximum:
+            number = maximum
+        return number
+
+    def _parse_date_filter(value):
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.strptime(text, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    q = str(request.args.get("q", "") or "").strip()
+    action_filter = str(request.args.get("action", "") or "").strip()
+    username_filter = str(request.args.get("username", "") or "").strip()
+    from_date = _parse_date_filter(request.args.get("from_date"))
+    to_date = _parse_date_filter(request.args.get("to_date"))
+    page_no = _positive_int(request.args.get("page", 1), 1, 1, 100000)
+    per_page = _positive_int(request.args.get("per_page", 25), 25, 10, 100)
+    offset = (page_no - 1) * per_page
+
+    where = []
+    params = []
+    if q:
+        where.append("(COALESCE(action,'') ILIKE %s OR COALESCE(username,'') ILIKE %s OR COALESCE(details,'') ILIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+    if action_filter:
+        where.append("action = %s")
+        params.append(action_filter)
+    if username_filter:
+        where.append("username = %s")
+        params.append(username_filter)
+    if from_date:
+        where.append("created_at::date >= %s")
+        params.append(from_date)
+    if to_date:
+        where.append("created_at::date <= %s")
+        params.append(to_date)
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+    cache_key = _cache_make_key("activity_page", {
+        "q": q,
+        "action": action_filter,
+        "username": username_filter,
+        "from": from_date.isoformat() if from_date else "",
+        "to": to_date.isoformat() if to_date else "",
+        "page": page_no,
+        "per": per_page,
+    })
+    cached_payload = _cache_get(cache_key)
+
+    if cached_payload:
+        rows = cached_payload["rows"]
+        total_rows = cached_payload["total_rows"]
+        actions = cached_payload["actions"]
+        users = cached_payload["users"]
+        summary = cached_payload["summary"]
+    else:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) AS total FROM activity_log{where_sql}", params)
+                total_rows = int((cur.fetchone() or {}).get("total") or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT *
+                    FROM activity_log
+                    {where_sql}
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    params + [per_page, offset],
+                )
+                rows = cur.fetchall()
+
+                cur.execute("SELECT DISTINCT action FROM activity_log WHERE action IS NOT NULL AND action <> '' ORDER BY action LIMIT 80")
+                actions = [r.get("action") for r in cur.fetchall() if r.get("action")]
+
+                cur.execute("SELECT DISTINCT username FROM activity_log WHERE username IS NOT NULL AND username <> '' ORDER BY username LIMIT 80")
+                users = [r.get("username") for r in cur.fetchall() if r.get("username")]
+
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS total,
+                        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') AS last_24h,
+                        COUNT(DISTINCT COALESCE(username, 'system')) AS unique_users,
+                        COUNT(*) FILTER (WHERE lower(COALESCE(action,'')) LIKE '%error%' OR lower(COALESCE(details,'')) LIKE '%error%') AS error_like
+                    FROM activity_log
+                    """
+                )
+                summary = cur.fetchone() or {}
+
+        _cache_set(cache_key, {
+            "rows": rows,
+            "total_rows": total_rows,
+            "actions": actions,
+            "users": users,
+            "summary": summary,
+        })
+
+    total_pages = max((total_rows + per_page - 1) // per_page, 1)
+    page_no = min(page_no, total_pages)
+
+    def action_badge(action):
+        text = str(action or "system").lower()
+        if any(word in text for word in ("delete", "failed", "error", "critical")):
+            return "danger"
+        if any(word in text for word in ("login", "created", "added", "sent", "success")):
+            return "success"
+        if any(word in text for word in ("update", "edit", "settings", "report")):
+            return "warning"
+        return "info"
 
     body = render_template_string(
         """
+        <style>
+        .audit-filter-grid{display:grid;grid-template-columns:1.2fr repeat(5,minmax(120px,1fr));gap:10px;align-items:end}
+        .audit-filter-grid input,.audit-filter-grid select{width:100%;padding:11px 12px;border-radius:14px;border:1px solid rgba(148,163,184,.25);background:rgba(15,23,42,.72);color:#e5e7eb;outline:none}
+        .audit-filter-grid label{font-size:12px;color:#94a3b8;font-weight:800;display:block;margin-bottom:6px}
+        .audit-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900;border:1px solid rgba(255,255,255,.12)}
+        .audit-badge.info{background:rgba(59,130,246,.14);color:#93c5fd}.audit-badge.success{background:rgba(34,197,94,.14);color:#86efac}.audit-badge.warning{background:rgba(245,158,11,.14);color:#fcd34d}.audit-badge.danger{background:rgba(239,68,68,.14);color:#fca5a5}
+        .pagination-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.page-btn{padding:9px 12px;border-radius:12px;text-decoration:none;border:1px solid rgba(148,163,184,.25);color:#e5e7eb;background:rgba(15,23,42,.65);font-weight:900}.page-btn.disabled{opacity:.35;pointer-events:none}.log-details{max-width:520px;white-space:normal;word-break:break-word;color:#cbd5e1}.audit-row:hover{background:rgba(99,102,241,.08)}
+        @media(max-width:1000px){.audit-filter-grid{grid-template-columns:1fr 1fr}.audit-filter-grid .wide{grid-column:1/-1}}@media(max-width:640px){.audit-filter-grid{grid-template-columns:1fr}}
+        </style>
         <div class="hero">
             <div class="hero-grid">
                 <div>
-                    <div class="badge info" style="margin-bottom:12px">Audit Trail</div>
-                    <h1 class="hero-title">Activity Timeline & System Events</h1>
-                    <div class="hero-copy">Track operator actions, webhook events, and system movement through a cleaner audit experience.</div>
+                    <div class="badge info" style="margin-bottom:12px">Production Audit Trail</div>
+                    <h1 class="hero-title">Activity Logs, Filters & System Events</h1>
+                    <div class="hero-copy">Fast searchable logs with pagination, badges, cached summaries and production-safe database indexing.</div>
                 </div>
                 <div class="hero-stats">
-                    <div class="hero-chip"><div class="small">Recent entries</div><div class="big">{{ rows|length }}</div></div>
-                    <div class="hero-chip"><div class="small">View mode</div><div class="big">Timeline</div></div>
+                    <div class="hero-chip"><div class="small">Total Logs</div><div class="big">{{ summary.total or 0 }}</div></div>
+                    <div class="hero-chip"><div class="small">Last 24h</div><div class="big">{{ summary.last_24h or 0 }}</div></div>
+                    <div class="hero-chip"><div class="small">Users</div><div class="big">{{ summary.unique_users or 0 }}</div></div>
+                    <div class="hero-chip"><div class="small">Warnings</div><div class="big">{{ summary.error_like or 0 }}</div></div>
                 </div>
             </div>
         </div>
+
+        <div class="card glass-panel" style="margin-bottom:16px">
+            <div class="section-title"><div><h3 style="margin:0">Audit Search & Filters</h3><p>Use filters to quickly inspect user actions, report events, settings changes, and system logs.</p></div></div>
+            <form method="get" class="audit-filter-grid">
+                <div class="wide"><label>Search</label><input name="q" value="{{ q }}" placeholder="Search action, user, details..."></div>
+                <div><label>Action</label><select name="action"><option value="">All actions</option>{% for act in actions %}<option value="{{ act }}" {% if act==action_filter %}selected{% endif %}>{{ act }}</option>{% endfor %}</select></div>
+                <div><label>User</label><select name="username"><option value="">All users</option>{% for u in users %}<option value="{{ u }}" {% if u==username_filter %}selected{% endif %}>{{ u }}</option>{% endfor %}</select></div>
+                <div><label>From</label><input type="date" name="from_date" value="{{ request.args.get('from_date','') }}"></div>
+                <div><label>To</label><input type="date" name="to_date" value="{{ request.args.get('to_date','') }}"></div>
+                <div><label>Rows</label><select name="per_page"><option value="25" {% if per_page==25 %}selected{% endif %}>25</option><option value="50" {% if per_page==50 %}selected{% endif %}>50</option><option value="100" {% if per_page==100 %}selected{% endif %}>100</option></select></div>
+                <div class="mobile-actions" style="grid-column:1/-1"><button type="submit">Apply Filters</button><a class="ghost-link" href="{{ url_for('activity') }}">Reset</a></div>
+            </form>
+        </div>
+
         <div class="two-col">
             <div class="card glass-panel">
-                <div class="section-title"><div><h3 style="margin:0">Recent Activity Timeline</h3><p>Latest log entries in a quick-scan operational format.</p></div></div>
+                <div class="section-title"><div><h3 style="margin:0">Recent Timeline</h3><p>Latest records from the current filtered result.</p></div></div>
                 <div class="activity-timeline">
-                    {% for a in rows[:18] %}
+                    {% for a in rows[:12] %}
                     <div class="activity-item">
                         <div class="activity-dot">{{ (a.action or '•')[:1]|upper }}</div>
                         <div>
                             <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                                <div style="font-weight:900">{{ a.action }}</div>
+                                <div><span class="audit-badge {{ action_badge(a.action) }}">{{ a.action or 'system' }}</span></div>
                                 <div class="muted">{{ fmt_dt(a.created_at) }}</div>
                             </div>
-                            <div class="muted" style="margin-top:4px">{{ a.username or 'system' }}</div>
+                            <div class="muted" style="margin-top:6px">{{ a.username or 'system' }}</div>
                             <div style="margin-top:6px;font-size:13px">{{ a.details or '-' }}</div>
                         </div>
                     </div>
                     {% else %}
-                    <div class="empty-state"><div class="empty-icon">📝</div><div style="font-weight:900;margin-bottom:6px">No activity yet</div><div class="muted">Once actions occur, the audit timeline will populate here.</div></div>
+                    <div class="empty-state"><div class="empty-icon">📝</div><div style="font-weight:900;margin-bottom:6px">No matching activity</div><div class="muted">Change filters or reset search.</div></div>
                     {% endfor %}
                 </div>
             </div>
             <div class="stack">
                 <div class="card">
                     <h3 style="margin-top:0">Activity Table</h3>
+                    <div class="muted" style="margin-bottom:10px">Showing {{ rows|length }} of {{ total_rows }} matching records.</div>
                     <div class="table-wrap">
                         <table>
                             <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
                             {% for a in rows %}
-                            <tr>
+                            <tr class="audit-row">
                                 <td>{{ fmt_dt(a.created_at) }}</td>
-                                <td>{{ a.username or '-' }}</td>
-                                <td>{{ a.action }}</td>
-                                <td class="long">{{ a.details }}</td>
+                                <td>{{ a.username or 'system' }}</td>
+                                <td><span class="audit-badge {{ action_badge(a.action) }}">{{ a.action or '-' }}</span></td>
+                                <td class="log-details">{{ a.details or '-' }}</td>
                             </tr>
+                            {% else %}
+                            <tr><td colspan="4"><div class="empty-state">No logs found for selected filters.</div></td></tr>
                             {% endfor %}
                         </table>
+                    </div>
+                    <div class="pagination-bar">
+                        <div class="muted">Page {{ page_no }} of {{ total_pages }}</div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap">
+                            <a class="page-btn {% if page_no <= 1 %}disabled{% endif %}" href="{{ page_url(page_no-1) }}">← Previous</a>
+                            <a class="page-btn {% if page_no >= total_pages %}disabled{% endif %}" href="{{ page_url(page_no+1) }}">Next →</a>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
         """,
         rows=rows,
+        total_rows=total_rows,
+        page_no=page_no,
+        per_page=per_page,
+        total_pages=total_pages,
+        q=q,
+        actions=actions,
+        users=users,
+        action_filter=action_filter,
+        username_filter=username_filter,
+        summary=summary,
         fmt_dt=fmt_dt,
+        action_badge=action_badge,
+        page_url=lambda p: url_for('activity', **{**request.args.to_dict(), 'page': max(1, p)}),
     )
     return page("Activity", body, "activity")
 
