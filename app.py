@@ -2332,6 +2332,195 @@ def build_member_intelligence(person, avg_minutes_reference):
     }
 
 
+
+# ===== MEMBER PROFILE INSIGHTS UPGRADE (SAFE ADD-ON) =====
+def build_member_profile_insights(member_id: int):
+    """Build deep member-level analytics without changing attendance logic or schema."""
+    member_id = int(member_id)
+    with db() as conn:
+        with conn.cursor() as cur:
+            member_name_expr = member_name_sql(conn)
+            cur.execute(f"SELECT *, {member_name_expr} AS display_name FROM members WHERE id=%s", (member_id,))
+            member = cur.fetchone()
+            if not member:
+                return None
+
+            cur.execute(
+                """
+                SELECT
+                    a.id AS attendance_id,
+                    a.meeting_uuid,
+                    a.participant_name,
+                    a.participant_email,
+                    a.first_join,
+                    a.last_leave,
+                    a.total_seconds,
+                    a.rejoin_count,
+                    a.current_join,
+                    a.final_status,
+                    a.status,
+                    m.id AS meeting_row_id,
+                    m.topic,
+                    m.meeting_id,
+                    m.start_time,
+                    m.end_time,
+                    m.status AS meeting_status
+                FROM attendance a
+                JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+                WHERE a.member_id=%s
+                ORDER BY m.start_time ASC NULLS LAST, m.id ASC
+                """,
+                (member_id,),
+            )
+            rows = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT id, alert_type, current_state, title, message, email_sent, push_sent, created_at
+                FROM smart_alert_logs
+                WHERE entity_type='member' AND entity_id=%s
+                ORDER BY created_at DESC
+                LIMIT 20
+                """,
+                (str(member_id),),
+            )
+            alert_logs = cur.fetchall()
+
+    present = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "PRESENT")
+    late = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "LATE")
+    absent = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "ABSENT")
+    host = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "HOST")
+    meetings_count = len(rows)
+    total_minutes = round(sum((r.get("total_seconds") or 0) for r in rows) / 60.0, 2)
+    avg_minutes = round(total_minutes / meetings_count, 2) if meetings_count else 0
+    total_rejoins = sum((r.get("rejoin_count") or 0) for r in rows)
+    attendance_percent = round(((present + late) / meetings_count) * 100, 2) if meetings_count else 0
+
+    score_points = []
+    labels = []
+    duration_values = []
+    risk_labels = []
+    risk_values = []
+    table_rows = []
+    late_days = defaultdict(int)
+
+    cumulative_person = {
+        "meetings": 0,
+        "present": 0,
+        "late": 0,
+        "absent": 0,
+        "minutes": 0.0,
+        "rejoins": 0,
+        "score_points": [],
+        "last_seen": None,
+    }
+
+    avg_ref = avg_minutes if avg_minutes > 0 else 1
+    for index, r in enumerate(rows, start=1):
+        status = str(r.get("final_status") or r.get("status") or "UNKNOWN").upper()
+        row_minutes = round((r.get("total_seconds") or 0) / 60.0, 2)
+        start_dt = parse_dt(r.get("start_time"))
+        label = start_dt.strftime("%d-%m-%Y") if start_dt else f"Meeting {index}"
+        labels.append(label)
+        duration_values.append(row_minutes)
+
+        if status == "PRESENT":
+            score_point = 100.0
+            cumulative_person["present"] += 1
+        elif status == "LATE":
+            score_point = 62.0
+            cumulative_person["late"] += 1
+            if start_dt:
+                late_days[start_dt.strftime("%a")] += 1
+        elif status == "ABSENT":
+            score_point = 20.0
+            cumulative_person["absent"] += 1
+        elif status == "HOST":
+            score_point = 100.0
+        else:
+            score_point = 50.0
+        if row_minutes > 0:
+            score_point = min(100.0, score_point + min(row_minutes / 3.0, 16.0))
+        score_point = round(score_point, 2)
+        score_points.append(score_point)
+
+        cumulative_person["meetings"] += 1
+        cumulative_person["minutes"] += row_minutes
+        cumulative_person["rejoins"] += (r.get("rejoin_count") or 0)
+        cumulative_person["score_points"].append(score_point)
+        last_seen_candidate = parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join")) or start_dt
+        if last_seen_candidate and (cumulative_person["last_seen"] is None or last_seen_candidate > cumulative_person["last_seen"]):
+            cumulative_person["last_seen"] = last_seen_candidate
+        intel = build_member_intelligence(dict(cumulative_person), avg_ref)
+        risk_labels.append(intel["risk"]["short"])
+        risk_values.append(intel["risk_driver"])
+
+        table_rows.append({
+            "topic": r.get("topic") or "Zoom Meeting",
+            "date": fmt_dt(r.get("start_time")),
+            "join": fmt_time_ampm(r.get("first_join")),
+            "leave": fmt_time_ampm(r.get("last_leave")),
+            "duration": row_minutes,
+            "rejoins": r.get("rejoin_count") or 0,
+            "status": status,
+        })
+
+    profile_person = {
+        "name": member_display_name(member),
+        "meetings": meetings_count,
+        "present": present,
+        "late": late,
+        "absent": absent,
+        "minutes": total_minutes,
+        "rejoins": total_rejoins,
+        "score_points": score_points,
+        "last_seen": None,
+    }
+    if rows:
+        seen_candidates = [parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join")) or parse_dt(r.get("start_time")) for r in rows]
+        seen_candidates = [x for x in seen_candidates if x]
+        profile_person["last_seen"] = max(seen_candidates) if seen_candidates else None
+    intelligence = build_member_intelligence(profile_person, avg_ref)
+    trend = derive_trend_label(score_points)
+
+    late_pattern = [{"label": day, "count": late_days.get(day, 0)} for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
+    status_distribution = {
+        "labels": ["Present", "Late", "Absent", "Host/Other"],
+        "values": [present, late, absent, host + max(meetings_count - present - late - absent - host, 0)],
+    }
+
+    return {
+        "member": member,
+        "summary": {
+            "attendance_percent": attendance_percent,
+            "overall_score": intelligence.get("overall_score", 0),
+            "attendance_score": intelligence.get("attendance_score", 0),
+            "engagement_score": intelligence.get("engagement_score", 0),
+            "risk": intelligence.get("risk", get_risk_level(0)),
+            "trend": trend,
+            "meetings": meetings_count,
+            "present": present,
+            "late": late,
+            "absent": absent,
+            "total_minutes": total_minutes,
+            "avg_minutes": avg_minutes,
+            "rejoins": total_rejoins,
+            "last_seen": fmt_dt(intelligence.get("last_seen")) if intelligence.get("last_seen") else "-",
+        },
+        "charts": {
+            "labels": labels,
+            "score": score_points,
+            "duration": duration_values,
+            "risk_labels": risk_labels,
+            "risk_values": risk_values,
+            "status_distribution": status_distribution,
+            "late_pattern": late_pattern,
+        },
+        "rows": list(reversed(table_rows)),
+        "alerts": alert_logs,
+    }
+# ===== END MEMBER PROFILE INSIGHTS UPGRADE =====
+
 def calculate_meeting_health_score(present_count, late_count, absent_count, avg_duration_minutes, reference_duration_minutes, unknown_count=0, host_present=False):
     total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
     attendance_component = safe_percent((int(present_count or 0) + (int(late_count or 0) * 0.6)), total) * 0.5
@@ -5329,7 +5518,7 @@ def members():
             <div class="table-wrap">
                 <table>
                     <tr>
-                        <th>Name</th><th>Email</th><th>Phone</th><th>Status</th>
+                        <th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Insights</th>
                         {% if session.get('role') == 'admin' %}<th>Actions</th>{% endif %}
                     </tr>
                     {% for m in rows %}
@@ -5344,6 +5533,7 @@ def members():
                                     <span class='badge danger'>Inactive</span>
                                 {% endif %}
                             </td>
+                            <td><a class='btn secondary small' href='{{ url_for("member_profile", member_id=m.id) }}'>View Profile</a></td>
                             {% if session.get('role') == 'admin' %}
                             <td>
                                 <div class='row'>
@@ -5381,6 +5571,111 @@ def members():
         session=session,
     )
     return page("Members", body, "members")
+
+
+@app.route("/members/<int:member_id>/profile")
+@login_required
+def member_profile(member_id):
+    profile_data = build_member_profile_insights(member_id)
+    if not profile_data:
+        flash("Member not found.", "error")
+        return redirect(url_for("members"))
+
+    body = render_template_string(
+        """
+        <style>
+            .member-profile-hero{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,.6fr);gap:16px;align-items:stretch}
+            .profile-title{font-size:30px;font-weight:950;margin:0 0 8px}.profile-sub{color:#cbd5e1;font-weight:700}.profile-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}.profile-kpi{border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:14px;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.025));box-shadow:0 16px 38px rgba(2,6,23,.18)}.profile-kpi small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.profile-kpi strong{display:block;font-size:28px;margin-top:6px}.profile-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.profile-chart{height:320px;position:relative}.profile-chart.small{height:280px}.risk-pill{display:inline-flex;gap:8px;align-items:center;border-radius:999px;padding:8px 12px;font-weight:950;background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.20)}.timeline-list{display:grid;gap:8px;max-height:360px;overflow:auto}.timeline-item{border:1px solid rgba(148,163,184,.16);border-radius:14px;padding:10px;background:rgba(255,255,255,.04)}.profile-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}@media(max-width:1050px){.member-profile-hero,.profile-chart-grid{grid-template-columns:1fr}}
+        </style>
+        <div class="member-profile-hero">
+            <div class="hero">
+                <div class="profile-sub">Member Profile / Deep Insights</div>
+                <h2 class="profile-title">{{ member_display_name(data.member) }}</h2>
+                <div class="profile-sub">Last seen: {{ data.summary.last_seen }} · Meetings tracked: {{ data.summary.meetings }}</div>
+                <div class="profile-actions">
+                    <a class="btn secondary" href="{{ url_for('members') }}">← Back to Members</a>
+                    <a class="btn secondary" href="{{ url_for('analytics', member_ids=data.member.id) }}">Open in Analytics</a>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Current Risk & Trend</h3>
+                <div class="risk-pill">{{ data.summary.risk.emoji }} {{ data.summary.risk.label }}</div>
+                <div style="height:12px"></div>
+                <div class="risk-pill">{{ data.summary.trend.emoji }} {{ data.summary.trend.label }} {% if data.summary.trend.delta %}({{ data.summary.trend.delta }}){% endif %}</div>
+                <p class="muted">Score combines attendance, consistency, duration participation, rejoins, and recent activity. Existing attendance logic is not changed.</p>
+            </div>
+        </div>
+
+        <div class="profile-kpis">
+            <div class="profile-kpi"><small>Attendance %</small><strong>{{ data.summary.attendance_percent }}%</strong></div>
+            <div class="profile-kpi"><small>Overall Score</small><strong>{{ data.summary.overall_score }}</strong></div>
+            <div class="profile-kpi"><small>Attendance Score</small><strong>{{ data.summary.attendance_score }}</strong></div>
+            <div class="profile-kpi"><small>Engagement Score</small><strong>{{ data.summary.engagement_score }}</strong></div>
+            <div class="profile-kpi"><small>Total Duration</small><strong>{{ data.summary.total_minutes }}m</strong></div>
+            <div class="profile-kpi"><small>Average Duration</small><strong>{{ data.summary.avg_minutes }}m</strong></div>
+            <div class="profile-kpi"><small>Late Count</small><strong>{{ data.summary.late }}</strong></div>
+            <div class="profile-kpi"><small>Rejoins</small><strong>{{ data.summary.rejoins }}</strong></div>
+        </div>
+
+        <div class="profile-chart-grid">
+            <div class="card profile-chart"><h3>Score Over Time</h3><canvas id="memberScoreChart"></canvas></div>
+            <div class="card profile-chart"><h3>Duration Over Time</h3><canvas id="memberDurationChart"></canvas></div>
+            <div class="card profile-chart small"><h3>Status Distribution</h3><canvas id="memberStatusChart"></canvas></div>
+            <div class="card profile-chart small"><h3>Late Pattern</h3><canvas id="memberLateChart"></canvas></div>
+        </div>
+
+        <br>
+        <div class="grid">
+            <div class="card">
+                <h3>Risk History</h3>
+                <div class="timeline-list">
+                    {% for label in data.charts.risk_labels|reverse %}
+                    <div class="timeline-item"><b>{{ label }}</b> · Risk score {{ data.charts.risk_values[loop.revindex0] }}</div>
+                    {% else %}<div class="muted">No risk history yet.</div>{% endfor %}
+                </div>
+            </div>
+            <div class="card">
+                <h3>Alert History</h3>
+                <div class="timeline-list">
+                    {% for alert in data.alerts %}
+                    <div class="timeline-item"><b>{{ alert.title }}</b><br><span class="muted">{{ fmt_dt(alert.created_at) }} · {{ alert.current_state }}</span><br>{{ alert.message }}</div>
+                    {% else %}<div class="muted">No smart alerts recorded for this member yet.</div>{% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <br>
+        <div class="card">
+            <h3>Meeting-wise Member History</h3>
+            <div class="table-wrap">
+                <table>
+                    <tr><th>Meeting</th><th>Date</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr>
+                    {% for r in data.rows %}
+                    <tr><td>{{ r.topic }}</td><td>{{ r.date }}</td><td>{{ r.join }}</td><td>{{ r.leave }}</td><td>{{ r.duration }} min</td><td>{{ r.rejoins }}</td><td><span class="badge {% if r.status == 'PRESENT' %}ok{% elif r.status == 'LATE' %}warn{% elif r.status == 'ABSENT' %}danger{% else %}info{% endif %}">{{ r.status }}</span></td></tr>
+                    {% else %}<tr><td colspan="7">No attendance records found for this member.</td></tr>{% endfor %}
+                </table>
+            </div>
+        </div>
+
+        <script>
+        const memberProfileData = {{ data.charts|tojson }};
+        function memberProfilePalette(){return (window.getThemePalette?window.getThemePalette():{ok:'#22c55e',warn:'#f59e0b',danger:'#ef4444',a:'#6366f1',b:'#22d3ee',c:'#a855f7',text:'#cbd5e1',grid:'rgba(148,163,184,.18)'});}
+        function makeMemberProfileCharts(){
+            if(!window.Chart) return;
+            const p=memberProfilePalette();
+            new Chart(document.getElementById('memberScoreChart'),{type:'line',data:{labels:memberProfileData.labels,datasets:[{label:'Score',data:memberProfileData.score,borderColor:p.a,backgroundColor:p.a,fill:false,tension:.42}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,max:100,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
+            new Chart(document.getElementById('memberDurationChart'),{type:'bar',data:{labels:memberProfileData.labels,datasets:[{label:'Duration minutes',data:memberProfileData.duration,backgroundColor:p.b,borderColor:p.b}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
+            new Chart(document.getElementById('memberStatusChart'),{type:'doughnut',data:{labels:memberProfileData.status_distribution.labels,datasets:[{data:memberProfileData.status_distribution.values,backgroundColor:[p.ok,p.warn,p.danger,p.c]}]},options:{responsive:true,maintainAspectRatio:false}});
+            new Chart(document.getElementById('memberLateChart'),{type:'bar',data:{labels:memberProfileData.late_pattern.map(x=>x.label),datasets:[{label:'Late count',data:memberProfileData.late_pattern.map(x=>x.count),backgroundColor:p.warn,borderColor:p.warn}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
+        }
+        document.addEventListener('DOMContentLoaded',()=>setTimeout(makeMemberProfileCharts,100));
+        </script>
+        """,
+        data=profile_data,
+        member_display_name=member_display_name,
+        fmt_dt=fmt_dt,
+    )
+    return page("Member Profile", body, "members")
 
 
 @app.route("/users", methods=["GET", "POST"])
