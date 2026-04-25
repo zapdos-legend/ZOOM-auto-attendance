@@ -1,4 +1,3 @@
-# UI_UPDATE_V10_AI_LEVEL_2_APPLIED = True
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
@@ -4245,7 +4244,9 @@ BASE_HTML = """
     });
 })();
 </script>
-{{ ai_level2_floating_ui|safe }}
+
+<!-- AI Level 3 Floating Bot -->
+<style>.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}</style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 
 </body>
 </html>
@@ -4257,9 +4258,9 @@ def page(title, body, active="home"):
         {"key": "members", "label": "👥 Members", "href": url_for("members")},
         {"key": "users", "label": "🔐 Users", "href": url_for("users")},
         {"key": "analytics", "label": "📊 Analytics", "href": url_for("analytics")},
+        {"key": "ai_intelligence", "label": "🧠 AI Intelligence", "href": url_for("ai_intelligence")},
         {"key": "attendance_register", "label": "📒 Attendance Register", "href": url_for("attendance_register")},
         {"key": "notification_control", "label": "🔔 Notification Control", "href": url_for("notification_control")},
-        {"key": "ai_intelligence", "label": "🤖 AI Intelligence", "href": url_for("ai_intelligence")},
         {"key": "appearance", "label": "🎨 Appearance Studio", "href": url_for("appearance")},
         {"key": "meetings", "label": "📂 Meetings", "href": url_for("meetings")},
         {"key": "settings", "label": "⚙️ Settings", "href": url_for("settings")},
@@ -7669,314 +7670,272 @@ def appearance():
     """, themes=themes)
     return page("Appearance Studio", body, "appearance")
 
+
 # =========================
-# UI_UPDATE_V10_AI_LEVEL_2_APPLIED
-# Smart AI Intelligence Layer - no external paid APIs, DB-safe, webhook-safe
+# UI_UPDATE_V10_AI_LEVEL3_SMART_ENGINE_APPLIED = True
 # =========================
 
-AI_LOW_ATTENDANCE_DEFAULT_PERCENT = 50.0
+AI_LEVEL3_LOW_ATTENDANCE_DEFAULT = 50.0
 
-def _ai_float(value, default=0.0):
-    try:
-        return float(value) if value is not None else default
-    except Exception:
-        return default
+def _ai_percent(num, den):
+    den = den or 0
+    if den <= 0:
+        return 0.0
+    return round((float(num or 0) / float(den)) * 100, 2)
 
-def _ai_int(value, default=0):
-    try:
-        return int(value) if value is not None else default
-    except Exception:
-        return default
-
-def _ai_pct(part, total):
-    total = _ai_float(total)
-    return round((_ai_float(part) / total) * 100, 2) if total > 0 else 0.0
-
-def _ai_extract_percent(text, default=AI_LOW_ATTENDANCE_DEFAULT_PERCENT):
+def _ai_parse_threshold(query, default=AI_LEVEL3_LOW_ATTENDANCE_DEFAULT):
     import re
-    q = str(text or '').lower()
-    for pattern in [r'(?:less than|below|under|<)\s*(\d+(?:\.\d+)?)\s*%?', r'(\d+(?:\.\d+)?)\s*%']:
-        found = re.search(pattern, q)
-        if found:
-            try:
-                value = float(found.group(1))
-                if 0 <= value <= 100:
-                    return value
-            except Exception:
-                pass
+    q = (query or '').lower()
+    for pattern in [r'(?:below|less than|under|<)\s*(\d{1,3})\s*%?', r'(\d{1,3})\s*%\s*(?:attendance|attend)']:
+        m = re.search(pattern, q)
+        if m:
+            return float(max(0, min(100, int(m.group(1)))))
+    return float(default)
+
+def _ai_parse_days(query, default=None):
+    import re
+    q = (query or '').lower()
+    m = re.search(r'last\s+(\d{1,3})\s+(?:day|days)', q)
+    if m:
+        return max(1, min(365, int(m.group(1))))
+    if 'last week' in q or 'past week' in q:
+        return 7
+    if 'last month' in q or 'past month' in q:
+        return 30
+    if 'this month' in q:
+        return 31
     return default
 
-def _ai_member_suggestion(attendance_pct, late, absent, total):
-    if total == 0:
-        return 'No attendance data yet. Observe after upcoming meetings.'
-    if attendance_pct < 40:
-        return 'Critical follow-up required. Send personal reminder and check reason for absence.'
-    if absent >= 3:
-        return 'Absence pattern detected. Contact member and set attendance expectation.'
-    if late >= 3:
-        return 'Late joining pattern detected. Send pre-meeting reminder 10 minutes earlier.'
-    if attendance_pct >= 85:
-        return 'Good performer. Maintain engagement and consider appreciation.'
-    return 'Monitor regularly and remind before important meetings.'
+def _ai_date_filter_sql(days=None, meeting_alias='mt'):
+    if days:
+        return f" AND {meeting_alias}.start_time >= NOW() - INTERVAL '{int(days)} days' "
+    return ""
 
-def _ai_get_member_stats(limit=None):
+def _ai_member_stats(days=None, limit=None):
+    cache_key = _cache_make_key('ai_member_stats', {'days': days, 'limit': limit})
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     with db() as conn:
         with conn.cursor() as cur:
             name_expr = member_name_sql(conn)
-            cur.execute(f'''
-                SELECT m.id AS member_id,
-                       COALESCE({name_expr}, 'Member ' || m.id::text) AS name,
-                       m.email AS email,
-                       COUNT(a.id) AS total_records,
-                       SUM(CASE WHEN UPPER(COALESCE(a.final_status,'')) IN ('PRESENT','HOST') THEN 1 ELSE 0 END) AS present_count,
-                       SUM(CASE WHEN UPPER(COALESCE(a.final_status,'')) = 'LATE' THEN 1 ELSE 0 END) AS late_count,
-                       SUM(CASE WHEN UPPER(COALESCE(a.final_status,'')) = 'ABSENT' THEN 1 ELSE 0 END) AS absent_count,
-                       COALESCE(SUM(a.total_seconds),0) AS total_seconds,
-                       MAX(COALESCE(a.last_leave, a.current_join, a.first_join)) AS last_seen
+            date_filter = _ai_date_filter_sql(days, 'mt')
+            cur.execute(f"""
+                SELECT m.id, {name_expr} AS name, m.email,
+                    COUNT(a.id) AS total_records,
+                    SUM(CASE WHEN a.final_status IN ('PRESENT','HOST') THEN 1 ELSE 0 END) AS present_count,
+                    SUM(CASE WHEN a.final_status='LATE' THEN 1 ELSE 0 END) AS late_count,
+                    SUM(CASE WHEN a.final_status='ABSENT' THEN 1 ELSE 0 END) AS absent_count,
+                    COALESCE(SUM(a.total_seconds),0) AS total_seconds,
+                    MAX(mt.start_time) AS last_seen
                 FROM members m
-                LEFT JOIN attendance a ON a.member_id = m.id
-                WHERE CAST(m.active AS TEXT) IN ('1','true','t','True','TRUE')
+                LEFT JOIN attendance a ON a.member_id=m.id
+                LEFT JOIN meetings mt ON mt.meeting_uuid=a.meeting_uuid
+                WHERE {ACTIVE_MEMBER_SQL} {date_filter}
                 GROUP BY m.id, name, m.email
                 ORDER BY name ASC
-            ''')
+            """)
             rows = cur.fetchall()
-    stats = []
+    result = []
     for row in rows:
-        total = _ai_int(row.get('total_records'))
-        present = _ai_int(row.get('present_count'))
-        late = _ai_int(row.get('late_count'))
-        absent = _ai_int(row.get('absent_count'))
-        attended = present + late
-        attendance_pct = _ai_pct(attended, total)
-        minutes = round(_ai_float(row.get('total_seconds')) / 60.0, 2)
-        if total == 0:
-            risk, trend = 'unknown', 'no data'
-        elif attendance_pct < 40 or absent >= max(3, total * 0.6):
-            risk, trend = 'critical', 'declining'
-        elif attendance_pct < 65 or late >= max(3, total * 0.35):
-            risk, trend = 'warning', 'unstable'
+        total = int(row.get('total_records') or 0)
+        present = int(row.get('present_count') or 0)
+        late = int(row.get('late_count') or 0)
+        absent = int(row.get('absent_count') or 0)
+        attendance_pct = _ai_percent(present + late, total)
+        absent_pct = _ai_percent(absent, total)
+        if attendance_pct < 50:
+            risk = 'Critical'; suggestion = 'Immediate follow-up needed. Send reminder and personally check availability.'
+        elif attendance_pct < 75:
+            risk = 'Warning'; suggestion = 'Send reminder before next meeting and monitor consistency.'
         else:
-            risk, trend = 'healthy', 'stable'
-        stats.append({'member_id': row.get('member_id'), 'name': row.get('name') or f"Member {row.get('member_id')}", 'email': row.get('email') or '', 'total': total, 'present': present, 'late': late, 'absent': absent, 'attended': attended, 'attendance_pct': attendance_pct, 'minutes': minutes, 'last_seen': row.get('last_seen'), 'risk': risk, 'trend': trend, 'suggestion': _ai_member_suggestion(attendance_pct, late, absent, total)})
-    return stats[:limit] if limit else stats
+            risk = 'Healthy'; suggestion = 'Maintain current engagement.'
+        trend = 'Declining' if total >= 4 and absent_pct >= 50 else ('Improving/Consistent' if attendance_pct >= 85 else 'Stable')
+        tag = 'No Data' if total == 0 else ('Consistent' if attendance_pct >= 85 else ('Risky' if attendance_pct < 50 else ('Irregular' if absent_pct >= 30 else 'Stable')))
+        result.append({'id': row.get('id'), 'name': row.get('name') or f"Member {row.get('id')}", 'email': row.get('email') or '', 'total': total, 'present': present, 'late': late, 'absent': absent, 'attendance_pct': attendance_pct, 'duration_minutes': round((row.get('total_seconds') or 0)/60.0,2), 'last_seen': row.get('last_seen'), 'risk': risk, 'trend': trend, 'tag': tag, 'suggestion': suggestion})
+    if limit:
+        result = result[:int(limit)]
+    return _cache_set(cache_key, result)
 
-def _ai_get_meeting_stats(limit=12):
+def _ai_recent_meetings(limit=8):
+    cache_key = _cache_make_key('ai_recent_meetings', {'limit': limit})
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute('''
-                SELECT id, meeting_uuid, meeting_id, topic, start_time, end_time, status,
-                       unique_participants, member_participants, unknown_participants,
-                       present_count, late_count, absent_count, host_present
+            cur.execute("""
+                SELECT id, meeting_uuid, topic, start_time, end_time, unique_participants, member_participants,
+                       unknown_participants, present_count, late_count, absent_count, host_present, status
                 FROM meetings
                 ORDER BY start_time DESC NULLS LAST, id DESC
                 LIMIT %s
-            ''', (limit,))
-            meetings = cur.fetchall()
-    result = []
-    for m in meetings:
-        start = parse_dt(m.get('start_time'))
-        end = parse_dt(m.get('end_time'))
-        minutes = round((end - start).total_seconds() / 60.0, 2) if start and end and end >= start else 0.0
-        total_known = _ai_int(m.get('present_count')) + _ai_int(m.get('late_count')) + _ai_int(m.get('absent_count'))
-        result.append({'id': m.get('id'), 'uuid': m.get('meeting_uuid'), 'topic': m.get('topic') or 'Zoom Meeting', 'start_time': m.get('start_time'), 'end_time': m.get('end_time'), 'status': m.get('status') or '-', 'unique': _ai_int(m.get('unique_participants')), 'members': _ai_int(m.get('member_participants')), 'unknown': _ai_int(m.get('unknown_participants')), 'present': _ai_int(m.get('present_count')), 'late': _ai_int(m.get('late_count')), 'absent': _ai_int(m.get('absent_count')), 'host_present': bool(m.get('host_present')), 'duration_minutes': minutes, 'attendance_pct': _ai_pct(_ai_int(m.get('present_count')) + _ai_int(m.get('late_count')), total_known)})
-    return result
+            """, (limit,))
+            rows = cur.fetchall()
+    return _cache_set(cache_key, rows)
 
-def generate_ai_insights_v2():
-    insights = []
-    meetings = _ai_get_meeting_stats(limit=8)
-    members = _ai_get_member_stats()
-    if len(meetings) >= 2:
-        latest, prev = meetings[0], meetings[1]
-        change = round(latest['attendance_pct'] - prev['attendance_pct'], 2)
-        if change >= 5:
-            insights.append({'severity':'info','category':'Attendance Trend','title':'Attendance improved','message':f"Latest meeting attendance improved by {change}% compared to previous meeting.",'recommendation':'Continue current engagement pattern.'})
-        elif change <= -5:
-            insights.append({'severity':'warning','category':'Attendance Trend','title':'Attendance dropped','message':f"Latest meeting attendance dropped by {abs(change)}% compared to previous meeting.",'recommendation':'Send reminders earlier and follow up with absent members.'})
-        else:
-            insights.append({'severity':'info','category':'Attendance Trend','title':'Attendance stable','message':f"Latest meeting attendance changed by {change}% compared to previous meeting.",'recommendation':'Keep monitoring consistency.'})
-        if latest['late'] > prev['late']:
-            insights.append({'severity':'warning','category':'Late Trend','title':'Late joining increased','message':f"Late count increased from {prev['late']} to {latest['late']}.",'recommendation':'Send a pre-meeting reminder.'})
+def _ai_meeting_health_score(meeting):
+    present = int(meeting.get('present_count') or 0); late = int(meeting.get('late_count') or 0); absent = int(meeting.get('absent_count') or 0); unknown = int(meeting.get('unknown_participants') or 0)
+    total = present + late + absent
+    score = (_ai_percent(present + late, total) if total else 0) - min(30, unknown*5) + (10 if meeting.get('host_present') else -10)
+    return max(0, min(100, round(score, 1)))
+
+def generate_ai_level3_insights():
+    insights=[]; meetings=_ai_recent_meetings(6); members=_ai_member_stats()
+    critical=[m for m in members if m['risk']=='Critical']; warning=[m for m in members if m['risk']=='Warning']
+    top=sorted([m for m in members if m['total']>0], key=lambda x:(x['attendance_pct'],x['duration_minutes']), reverse=True)[:1]
+    worst=sorted([m for m in members if m['total']>0], key=lambda x:x['attendance_pct'])[:1]
+    if len(meetings)>=2:
+        latest,previous=meetings[0],meetings[1]
+        lt=(latest.get('present_count') or 0)+(latest.get('late_count') or 0)+(latest.get('absent_count') or 0)
+        pt=(previous.get('present_count') or 0)+(previous.get('late_count') or 0)+(previous.get('absent_count') or 0)
+        delta=round(_ai_percent((latest.get('present_count') or 0)+(latest.get('late_count') or 0),lt)-_ai_percent((previous.get('present_count') or 0)+(previous.get('late_count') or 0),pt),2)
+        insights.append({'title':'Attendance trend changed','severity':'warning' if delta<0 else 'info','category':'Trend','message':f'Attendance changed by {delta}% compared with previous meeting.','recommendation':'Send reminders to low attendance members.' if delta<0 else 'Maintain current engagement pattern.'})
+        ls=parse_dt(latest.get('start_time')); le=parse_dt(latest.get('end_time')); ps=parse_dt(previous.get('start_time')); pe=parse_dt(previous.get('end_time'))
+        if ls and le and ps and pe:
+            insights.append({'title':'Meeting duration comparison','severity':'info','category':'Duration','message':f'Latest meeting was {round(((le-ls)-(pe-ps)).total_seconds()/60,1)} minutes different from previous meeting.','recommendation':'Keep meeting duration consistent for better attendance patterns.'})
+    if critical: insights.append({'title':'Critical members detected','severity':'critical','category':'Risk','message':f'{len(critical)} member(s) are below 50% attendance.','recommendation':'Use AI Assistant: send reminder to them.'})
+    if warning: insights.append({'title':'Warning-risk members detected','severity':'warning','category':'Risk','message':f'{len(warning)} member(s) are between 50–75% attendance.','recommendation':'Monitor and send early reminders.'})
     if meetings:
-        latest = meetings[0]
-        if latest['unknown'] >= 5 or (latest['unique'] and latest['unknown'] / max(latest['unique'],1) >= 0.30):
-            insights.append({'severity':'critical','category':'Security','title':'Unknown participant spike','message':f"Latest meeting had {latest['unknown']} unknown participants.",'recommendation':'Verify unknown users and update member list.'})
-    risky = [m for m in members if m['risk'] in ('critical','warning')]
-    critical = [m for m in members if m['risk'] == 'critical']
-    if critical:
-        insights.append({'severity':'critical','category':'Member Risk','title':'Critical risk members found','message':f"{len(critical)} members are in critical risk: {', '.join(m['name'] for m in critical[:5])}.",'recommendation':'Send personal follow-up and reminder.'})
-    elif risky:
-        insights.append({'severity':'warning','category':'Member Risk','title':'Warning risk members found','message':f"{len(risky)} members need monitoring.",'recommendation':'Watch next meeting attendance and send soft reminders.'})
-    members_with_data = [m for m in members if m['total'] > 0]
-    if members_with_data:
-        top = sorted(members_with_data, key=lambda x: (x['attendance_pct'], x['present'], x['minutes']), reverse=True)[0]
-        worst = sorted(members_with_data, key=lambda x: (x['attendance_pct'], -x['absent'], x['minutes']))[0]
-        insights.append({'severity':'info','category':'Performance','title':'Top performer','message':f"{top['name']} has strongest attendance at {top['attendance_pct']}%.",'recommendation':'Consider appreciating consistent members.'})
-        insights.append({'severity':'warning' if worst['attendance_pct'] < 60 else 'info','category':'Performance','title':'Lowest attendance performer','message':f"{worst['name']} has weakest attendance at {worst['attendance_pct']}%.",'recommendation':'Send reminder and check if support is needed.'})
-    if not insights:
-        insights.append({'severity':'info','category':'System','title':'No strong issue detected','message':'No major attendance risk found from available records.','recommendation':'Continue collecting meeting data.'})
-    return insights
+        latest=meetings[0]
+        if (latest.get('unknown_participants') or 0)>=5: insights.append({'title':'Unknown participant spike','severity':'warning','category':'Security','message':f"Latest meeting had {latest.get('unknown_participants')} unknown participant(s).",'recommendation':'Review unknown users and ask members to join with registered names.'})
+        if (latest.get('late_count') or 0)>=3: insights.append({'title':'Late trend increased','severity':'warning','category':'Punctuality','message':f"Latest meeting had {latest.get('late_count')} late participant(s).",'recommendation':'Send pre-meeting reminder 10 minutes earlier.'})
+    if top: insights.append({'title':'Top performer','severity':'info','category':'Performance','message':f"{top[0]['name']} is leading with {top[0]['attendance_pct']}% attendance.",'recommendation':'Appreciate consistent attendance to improve motivation.'})
+    if worst: insights.append({'title':'Worst performer','severity':'critical' if worst[0]['attendance_pct']<50 else 'warning','category':'Performance','message':f"{worst[0]['name']} has {worst[0]['attendance_pct']}% attendance.",'recommendation':'Follow up personally and send attendance reminder.'})
+    return insights[:12]
 
-def _ai_response_low_attendance(query):
-    threshold = _ai_extract_percent(query)
-    members = sorted([m for m in _ai_get_member_stats() if m['total'] > 0 and m['attendance_pct'] < threshold], key=lambda m: m['attendance_pct'])
-    if not members:
-        return f"No members found below {threshold}% attendance based on current records."
-    lines = [f"Members below {threshold}% attendance:"]
-    for m in members[:25]:
-        lines.append(f"• {m['name']}: {m['attendance_pct']}% ({m['attended']}/{m['total']} attended, absent {m['absent']}, late {m['late']})")
-    return "\n".join(lines)
-
-def _ai_response_risk():
-    members = sorted([m for m in _ai_get_member_stats() if m['risk'] in ('critical','warning')], key=lambda x: (0 if x['risk']=='critical' else 1, x['attendance_pct']))
-    if not members:
-        return "No critical or warning-risk members found right now."
-    return "Risk members:\n" + "\n".join([f"{'🔴' if m['risk']=='critical' else '🟡'} {m['name']} — {m['attendance_pct']}% attendance, trend: {m['trend']}. Suggestion: {m['suggestion']}" for m in members[:20]])
-
-def _ai_response_top(count=5):
-    members = sorted([m for m in _ai_get_member_stats() if m['total'] > 0], key=lambda x: (x['attendance_pct'], x['present'], x['minutes']), reverse=True)
-    return "No member attendance data available yet." if not members else "Top performers:\n" + "\n".join([f"🏆 {i+1}. {m['name']} — {m['attendance_pct']}% attendance, {m['minutes']} minutes" for i,m in enumerate(members[:count])])
-
-def _ai_response_worst(count=5):
-    members = sorted([m for m in _ai_get_member_stats() if m['total'] > 0], key=lambda x: (x['attendance_pct'], -x['absent']))
-    return "No member attendance data available yet." if not members else "Lowest attendance members:\n" + "\n".join([f"⚠️ {i+1}. {m['name']} — {m['attendance_pct']}% attendance, absent {m['absent']} times" for i,m in enumerate(members[:count])])
-
-def _ai_response_last_meeting():
-    meetings = _ai_get_meeting_stats(limit=1)
-    if not meetings:
-        return "No meeting data found yet."
-    m = meetings[0]
-    return f"Last meeting summary:\n• Topic: {m['topic']}\n• Date: {fmt_dt(m['start_time'])}\n• Duration: {m['duration_minutes']} minutes\n• Present: {m['present']}, Late: {m['late']}, Absent: {m['absent']}, Unknown: {m['unknown']}\n• Attendance: {m['attendance_pct']}%\n• Host detected: {'Yes' if m['host_present'] else 'No'}"
-
-def _ai_response_why_dropped():
-    meetings = _ai_get_meeting_stats(limit=2)
-    if len(meetings) < 2:
-        return "I need at least two meetings to explain an attendance drop."
-    latest, prev = meetings[0], meetings[1]
-    reasons = []
-    if latest['attendance_pct'] < prev['attendance_pct']:
-        reasons.append(f"Attendance percentage dropped from {prev['attendance_pct']}% to {latest['attendance_pct']}%.")
-    if latest['absent'] > prev['absent']:
-        reasons.append(f"Absent count increased from {prev['absent']} to {latest['absent']}.")
-    if latest['late'] > prev['late']:
-        reasons.append(f"Late count increased from {prev['late']} to {latest['late']}.")
-    if latest['unknown'] > prev['unknown']:
-        reasons.append(f"Unknown participants increased from {prev['unknown']} to {latest['unknown']}.")
-    return "I do not see a clear attendance drop in the last two meetings." if not reasons else "Possible reasons for attendance drop:\n" + "\n".join(f"• {r}" for r in reasons) + "\nRecommendation: send reminders earlier and follow up with absent/late members."
-
-def _ai_response_late_trend():
-    meetings = _ai_get_meeting_stats(limit=5)
-    if not meetings:
-        return "No meeting data available for late trend."
-    return "Late trend in recent meetings:\n" + "\n".join([f"• {fmt_date(m['start_time'])}: {m['late']} late participants" for m in meetings])
-
-def _ai_response_unknown():
-    meetings = _ai_get_meeting_stats(limit=5)
-    if not meetings:
-        return "No meeting data available for unknown participants."
-    lines = ["Unknown participant trend:"] + [f"• {fmt_date(m['start_time'])}: {m['unknown']} unknown participants" for m in meetings]
-    if meetings[0]['unknown'] >= 5:
-        lines.append("Warning: latest meeting has high unknown participant count. Update member list or review participants.")
-    return "\n".join(lines)
-
-def _ai_response_member_query(query):
-    q = str(query or '').lower()
-    best, best_score = None, 0
-    for m in _ai_get_member_stats():
-        name = (m['name'] or '').lower()
-        score = 10 if (name and (name in q or q in name)) else 0
+def _ai_find_member_by_query(query):
+    q=(query or '').lower(); best=None
+    for m in _ai_member_stats():
+        name=(m.get('name') or '').lower()
+        if name and name in q: return m
         for part in name.split():
-            if len(part) >= 3 and part in q:
-                score += 2
-        if score > best_score:
-            best, best_score = m, score
-    if best and best_score >= 2:
-        return f"Member intelligence for {best['name']}:\n• Attendance: {best['attendance_pct']}%\n• Present: {best['present']}, Late: {best['late']}, Absent: {best['absent']}\n• Total duration: {best['minutes']} minutes\n• Risk: {best['risk']}\n• Trend: {best['trend']}\n• Suggestion: {best['suggestion']}"
-    return None
+            if len(part)>=3 and part in q: best=m
+    return best
 
-def ai_answer_query(query):
-    q = str(query or '').strip().lower()
-    if not q:
-        return "Ask me about attendance, risk, low attendance, top performers, late trend, unknown participants, or last meeting summary."
-    member_answer = _ai_response_member_query(q)
-    if member_answer and any(word in q for word in ['member','attendance','risk','late','absent','present','duration','profile','about','show']):
-        return member_answer
-    if any(x in q for x in ['below', 'less than', 'under', '<', 'low attendance', 'attendance less']):
-        return _ai_response_low_attendance(q)
-    if any(x in q for x in ['risk', 'critical', 'warning', 'danger']):
-        return _ai_response_risk()
-    if any(x in q for x in ['top performer', 'best performer', 'top members', 'highest attendance', 'best attendance']):
-        return _ai_response_top()
-    if any(x in q for x in ['worst', 'lowest', 'poor performer', 'weakest']):
-        return _ai_response_worst()
-    if any(x in q for x in ['last meeting', 'summarize last', 'latest meeting', 'meeting summary']):
-        return _ai_response_last_meeting()
-    if any(x in q for x in ['why attendance dropped', 'attendance dropped', 'drop reason', 'why dropped']):
-        return _ai_response_why_dropped()
+def _ai_format_members_list(members,title='Members'):
+    if not members: return f'{title}: No matching members found.'
+    lines=[f'{title}:']
+    for idx,m in enumerate(members[:20],1): lines.append(f"{idx}. {m['name']} — {m['attendance_pct']}% attendance, Risk: {m['risk']}, Trend: {m['trend']}")
+    if len(members)>20: lines.append(f'...and {len(members)-20} more.')
+    return '\n'.join(lines)
+
+def _ai_low_attendance_members(query=''):
+    threshold=_ai_parse_threshold(query); days=_ai_parse_days(query)
+    return sorted([m for m in _ai_member_stats(days=days) if m['total']>0 and m['attendance_pct']<threshold], key=lambda x:x['attendance_pct'])
+
+def _ai_bot_answer(query):
+    q=(query or '').strip().lower(); last_targets=session.get('ai_last_targets',[]) or []
+    if not q: return {'response':'Ask me about attendance, risk members, late trend, top performers, last meeting, or reminders.','targets':[]}
+    if ('send' in q or 'remind' in q or 'reminder' in q) and ('them' in q or 'low attendance' in q or 'risk' in q):
+        if 'them' in q and last_targets:
+            lookup={int(m['id']):m for m in _ai_member_stats() if m.get('id') is not None}; targets=[lookup.get(int(x)) for x in last_targets if str(x).isdigit() and lookup.get(int(x))]
+        else: targets=_ai_low_attendance_members(q)
+        sent=0; failed=[]
+        for m in targets:
+            if not m.get('email'): failed.append(m['name']); continue
+            ok,_=send_email(m['email'],'Attendance Reminder',f"Hello {m['name']}, your attendance is currently {m['attendance_pct']}%. Please attend upcoming meetings regularly.")
+            sent += 1 if ok else 0
+            if not ok: failed.append(m['name'])
+        return {'response':f"Reminder sent to {sent} member(s). Failed/no email: {', '.join(failed) if failed else 'None'}", 'targets':[m['id'] for m in targets]}
+    if 'export' in q and ('low' in q or 'risk' in q or 'attendance' in q): return {'response':'Export links: /ai/export/low-attendance.csv or /ai/export/low-attendance.pdf','targets':last_targets}
+    if 'below' in q or 'less than' in q or 'under' in q or 'low attendance' in q or '<' in q:
+        members=_ai_low_attendance_members(q); session['ai_last_targets']=[m['id'] for m in members if m.get('id') is not None]
+        return {'response':_ai_format_members_list(members,f"Members below {_ai_parse_threshold(q)}% attendance"),'targets':session['ai_last_targets']}
+    if 'risk' in q or 'critical' in q or 'warning' in q:
+        members=[m for m in _ai_member_stats() if m['risk'] in ('Critical','Warning')]; session['ai_last_targets']=[m['id'] for m in members if m.get('id') is not None]
+        return {'response':_ai_format_members_list(members,'At-risk members'),'targets':session['ai_last_targets']}
+    if 'top' in q or 'best' in q or 'performer' in q: return {'response':_ai_format_members_list(sorted([m for m in _ai_member_stats() if m['total']>0], key=lambda x:(x['attendance_pct'],x['duration_minutes']), reverse=True)[:10],'Top performers'),'targets':[]}
+    if 'worst' in q or 'lowest' in q or 'poor' in q:
+        members=sorted([m for m in _ai_member_stats() if m['total']>0], key=lambda x:x['attendance_pct'])[:10]; session['ai_last_targets']=[m['id'] for m in members if m.get('id') is not None]
+        return {'response':_ai_format_members_list(members,'Worst performers'),'targets':session['ai_last_targets']}
     if 'late' in q:
-        return _ai_response_late_trend()
-    if any(x in q for x in ['unknown', 'unregistered', 'guest']):
-        return _ai_response_unknown()
-    if any(x in q for x in ['insight', 'recommendation', 'what should', 'suggest']):
-        return "AI recommendations:\n" + "\n".join([f"• {i['title']}: {i['recommendation']}" for i in generate_ai_insights_v2()[:8]])
-    return "I can answer attendance/project intelligence questions. Try: 'Who is at risk?', 'list members below 50%', 'show top performers', 'why attendance dropped?', or 'summarize last meeting'."
+        lines=['Late trend from recent meetings:']+[f"• {fmt_date(m.get('start_time'))} — {m.get('late_count') or 0} late participant(s)" for m in _ai_recent_meetings(5)]
+        return {'response':'\n'.join(lines),'targets':[]}
+    if 'unknown' in q:
+        lines=['Unknown participant trend:']+[f"• {fmt_date(m.get('start_time'))} — {m.get('unknown_participants') or 0} unknown participant(s)" for m in _ai_recent_meetings(5)]
+        return {'response':'\n'.join(lines),'targets':[]}
+    if 'last meeting' in q or 'summarize' in q or 'summary' in q:
+        meetings=_ai_recent_meetings(1)
+        if not meetings: return {'response':'No meeting found yet.','targets':[]}
+        m=meetings[0]; return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown: {m.get('unknown_participants') or 0}. Health score: {_ai_meeting_health_score(m)}/100.",'targets':[]}
+    member=_ai_find_member_by_query(q)
+    if member: return {'response':f"{member['name']} insight: Attendance {member['attendance_pct']}%, Risk {member['risk']}, Trend {member['trend']}, Tag {member['tag']}. Suggestion: {member['suggestion']}",'targets':[member['id']]}
+    if 'why' in q and ('drop' in q or 'decrease' in q or 'down' in q):
+        related=[i for i in generate_ai_level3_insights() if i['category'] in ('Trend','Risk','Punctuality')]
+        return {'response':'Possible reasons:\n'+'\n'.join([f"• {i['message']} Recommendation: {i['recommendation']}" for i in related[:5]]) if related else 'Need more records for stronger analysis.','targets':[]}
+    insights=generate_ai_level3_insights()[:3]
+    return {'response':'Here are current smart insights:\n'+'\n'.join([f"• {i['title']}: {i['message']}" for i in insights]) if insights else 'I can answer attendance, risk, member, late, unknown, summary, top/worst performer, and reminder questions using your current data.','targets':[]}
 
-@app.route('/api/ai-assistant', methods=['POST'])
+@app.route('/api/ai-assistant-level3', methods=['POST'])
 @login_required
-def ai_assistant_level2():
-    try:
-        payload = request.get_json(silent=True) or {}
-        query = payload.get('query') or request.form.get('query') or ''
-        return jsonify({'ok': True, 'response': ai_answer_query(query), 'query': query})
-    except Exception as exc:
-        return jsonify({'ok': False, 'response': f'AI assistant error handled safely: {exc}'}), 200
+def api_ai_assistant_level3():
+    payload=request.get_json(silent=True) or {}
+    return jsonify(_ai_bot_answer(payload.get('query','')))
 
-@app.route('/api/ai-insights')
+@app.route('/api/ai-insights-level3')
 @login_required
-def api_ai_insights_level2():
-    try:
-        return jsonify({'ok': True, 'insights': generate_ai_insights_v2()})
-    except Exception as exc:
-        return jsonify({'ok': False, 'insights': [], 'error': str(exc)}), 200
+def api_ai_insights_level3():
+    return jsonify({'insights':generate_ai_level3_insights(),'members':_ai_member_stats(),'meetings':[dict(m) for m in _ai_recent_meetings(8)]})
 
 @app.route('/api/member-intelligence/<int:member_id>')
 @login_required
-def api_member_intelligence_level2(member_id):
-    try:
-        for m in _ai_get_member_stats():
-            if _ai_int(m.get('member_id')) == member_id:
-                return jsonify({'ok': True, 'member': m})
-        return jsonify({'ok': False, 'message': 'Member not found'}), 404
-    except Exception as exc:
-        return jsonify({'ok': False, 'message': str(exc)}), 200
+def api_member_intelligence_level3(member_id):
+    matches=[m for m in _ai_member_stats() if int(m.get('id') or 0)==int(member_id)]
+    return (jsonify(matches[0]) if matches else (jsonify({'error':'Member not found'}),404))
+
+@app.route('/ai/export/low-attendance.csv')
+@login_required
+def ai_export_low_attendance_csv():
+    output=io.StringIO(); writer=csv.writer(output); writer.writerow(['Name','Email','Attendance %','Risk','Trend','Suggestion'])
+    for m in _ai_low_attendance_members('below 75'): writer.writerow([m['name'],m['email'],m['attendance_pct'],m['risk'],m['trend'],m['suggestion']])
+    return Response(output.getvalue(), mimetype='text/csv', headers={'Content-Disposition':'attachment; filename=ai_low_attendance_report.csv'})
+
+@app.route('/ai/export/low-attendance.pdf')
+@login_required
+def ai_export_low_attendance_pdf():
+    buf=io.BytesIO(); doc=SimpleDocTemplate(buf,pagesize=letter); styles=getSampleStyleSheet(); story=[Paragraph('AI Low Attendance Report',styles['Title']),Spacer(1,12)]
+    data=[['Name','Attendance %','Risk','Suggestion']]+[[m['name'],str(m['attendance_pct']),m['risk'],m['suggestion'][:60]] for m in _ai_low_attendance_members('below 75')[:50]]
+    table=Table(data, repeatRows=1); table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#111827')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('GRID',(0,0),(-1,-1),0.25,colors.grey),('FONTSIZE',(0,0),(-1,-1),8)])); story.append(table); doc.build(story); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='ai_low_attendance_report.pdf', mimetype='application/pdf')
 
 @app.route('/ai-intelligence')
 @login_required
 def ai_intelligence():
-    insights = generate_ai_insights_v2()
-    members = _ai_get_member_stats()
-    meetings = _ai_get_meeting_stats(limit=5)
-    critical_count = len([m for m in members if m['risk'] == 'critical'])
-    warning_count = len([m for m in members if m['risk'] == 'warning'])
-    with_data = [m for m in members if m['total'] > 0]
-    avg_attendance = round(sum(m['attendance_pct'] for m in with_data) / max(len(with_data), 1), 2)
-    unknown_latest = meetings[0]['unknown'] if meetings else 0
-    body = render_template_string('''
-    <style>.ai-shell{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:18px;align-items:start}.ai-card{background:linear-gradient(145deg,rgba(15,23,42,.92),rgba(30,10,55,.82));border:1px solid rgba(168,85,247,.30);border-radius:24px;padding:20px;box-shadow:0 24px 80px rgba(0,0,0,.38)}.ai-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.ai-kpi{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:16px}.ai-kpi .small{color:#c4b5fd;font-size:12px;font-weight:900;text-transform:uppercase}.ai-kpi .big{font-size:30px;font-weight:1000;margin-top:5px}.ai-insight{padding:14px;border-radius:16px;margin-bottom:12px;border:1px solid rgba(255,255,255,.12);background:rgba(2,6,23,.48)}.ai-insight.critical{border-color:rgba(239,68,68,.45);background:rgba(127,29,29,.22)}.ai-insight.warning{border-color:rgba(245,158,11,.45);background:rgba(120,53,15,.22)}.ai-insight.info{border-color:rgba(56,189,248,.45);background:rgba(8,47,73,.22)}.ai-insight h4{margin:0 0 6px;font-size:15px}.ai-insight p{margin:0;color:#dbeafe;line-height:1.45}.ai-chat-panel{height:680px;display:flex;flex-direction:column}.ai-chat-log{flex:1;overflow:auto;background:rgba(2,6,23,.48);border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:14px;margin-bottom:12px}.ai-msg{padding:11px 13px;border-radius:14px;margin-bottom:10px;white-space:pre-wrap;line-height:1.45}.ai-msg.bot{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10)}.ai-msg.user{background:linear-gradient(90deg,#7c3aed,#06b6d4);color:white;margin-left:35px}.ai-input-row{display:flex;gap:8px}.ai-input-row input{flex:1;border-radius:999px;border:1px solid rgba(168,85,247,.35);background:#12051f;color:#fff;padding:12px 14px}.ai-input-row button,.ai-chip{border:0;border-radius:999px;background:linear-gradient(90deg,#7c3aed,#ec4899);color:white;font-weight:900;padding:10px 14px}.ai-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.ai-table{width:100%;border-collapse:separate;border-spacing:0 8px}.ai-table th{font-size:12px;text-align:left;color:#c4b5fd;padding:8px}.ai-table td{background:rgba(255,255,255,.05);padding:10px 8px;border-top:1px solid rgba(255,255,255,.08);border-bottom:1px solid rgba(255,255,255,.08)}.ai-risk-critical{color:#fca5a5;font-weight:1000}.ai-risk-warning{color:#fcd34d;font-weight:1000}.ai-risk-healthy{color:#86efac;font-weight:1000}@media(max-width:1150px){.ai-shell{grid-template-columns:1fr}.ai-kpis{grid-template-columns:repeat(2,1fr)}}</style>
-    <div class="hero"><div class="hero-grid"><div><div class="badge info" style="margin-bottom:12px">No Paid API · Internal Logic</div><h1 class="hero-title">🤖 AI Intelligence Center</h1><div class="hero-copy">Rule-based AI-style intelligence powered by your own attendance, meeting, member, alert and analytics data.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Critical</div><div class="big">{{ critical_count }}</div></div><div class="hero-chip"><div class="small">Avg Attendance</div><div class="big">{{ avg_attendance }}%</div></div></div></div></div>
-    <div class="ai-kpis"><div class="ai-kpi"><div class="small">Critical Members</div><div class="big">{{ critical_count }}</div></div><div class="ai-kpi"><div class="small">Warning Members</div><div class="big">{{ warning_count }}</div></div><div class="ai-kpi"><div class="small">Latest Unknown</div><div class="big">{{ unknown_latest }}</div></div><div class="ai-kpi"><div class="small">Insights</div><div class="big">{{ insights|length }}</div></div></div>
-    <div class="ai-shell"><div class="stack"><div class="ai-card"><h2 style="margin-top:0">AI Insights</h2>{% for item in insights %}<div class="ai-insight {{ item.severity }}"><h4>{{ item.title }} <span class="badge gray">{{ item.category }}</span></h4><p>{{ item.message }}</p><p style="margin-top:8px"><b>Recommendation:</b> {{ item.recommendation }}</p></div>{% endfor %}</div><div class="ai-card"><h2 style="margin-top:0">Member Intelligence</h2><div class="table-wrap"><table class="ai-table"><thead><tr><th>Name</th><th>Attendance</th><th>Risk</th><th>Trend</th><th>Suggestion</th></tr></thead><tbody>{% for m in members %}<tr><td>{{ m.name }}</td><td>{{ m.attendance_pct }}%</td><td class="ai-risk-{{ m.risk }}">{{ m.risk }}</td><td>{{ m.trend }}</td><td>{{ m.suggestion }}</td></tr>{% endfor %}</tbody></table></div></div></div><div class="ai-card ai-chat-panel"><h2 style="margin-top:0">AI Attendance Assistant</h2><div class="ai-chips"><button class="ai-chip" onclick="aiAsk('Who is at risk?')">Who is at risk?</button><button class="ai-chip" onclick="aiAsk('List members below 50% attendance')">Below 50%</button><button class="ai-chip" onclick="aiAsk('Show top performers')">Top performers</button><button class="ai-chip" onclick="aiAsk('Why attendance dropped?')">Why dropped?</button><button class="ai-chip" onclick="aiAsk('Summarize last meeting')">Last meeting</button></div><div id="aiCenterLog" class="ai-chat-log"><div class="ai-msg bot">Ask me anything related to your attendance project. I answer from your internal database only.</div></div><div class="ai-input-row"><input id="aiCenterInput" placeholder="Ask about attendance, risk, members, meetings..."><button onclick="aiAsk()">Ask</button></div></div></div>
-    <script>function aiAddMsg(text, who){const log=document.getElementById('aiCenterLog');const div=document.createElement('div');div.className='ai-msg '+who;div.textContent=text;log.appendChild(div);log.scrollTop=log.scrollHeight;}function aiAsk(preset){const input=document.getElementById('aiCenterInput');const q=preset||input.value;if(!q)return;aiAddMsg(q,'user');input.value='';fetch('/api/ai-assistant',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>aiAddMsg(d.response||'No response','bot')).catch(()=>aiAddMsg('Connection problem while contacting AI assistant.','bot'));}document.getElementById('aiCenterInput').addEventListener('keydown',e=>{if(e.key==='Enter')aiAsk();});</script>
-    ''', insights=insights, members=members, meetings=meetings, critical_count=critical_count, warning_count=warning_count, avg_attendance=avg_attendance, unknown_latest=unknown_latest)
+    insights=generate_ai_level3_insights(); members=_ai_member_stats(); meetings=_ai_recent_meetings(8); critical=len([m for m in members if m['risk']=='Critical']); warning=len([m for m in members if m['risk']=='Warning']); latest_score=_ai_meeting_health_score(meetings[0]) if meetings else 0; avg_duration=round(sum([m['duration_minutes'] for m in members])/max(len(members),1),2)
+    logs=[]
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                if table_exists(conn,'smart_alert_logs'):
+                    cur.execute('SELECT title, message, current_state, created_at FROM smart_alert_logs ORDER BY created_at DESC LIMIT 8'); logs=cur.fetchall()
+    except Exception: logs=[]
+    heat_members=members[:20]; heat_meetings=list(reversed(meetings[:12])); heat=[]
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                for mem in heat_members:
+                    row={'name':mem['name'],'cells':[]}
+                    for mt in heat_meetings:
+                        cur.execute('SELECT final_status FROM attendance WHERE member_id=%s AND meeting_uuid=%s LIMIT 1',(mem['id'],mt.get('meeting_uuid'))); r=cur.fetchone(); row['cells'].append((r.get('final_status') if r else 'NO_DATA') if r else 'NO_DATA')
+                    heat.append(row)
+    except Exception: heat=[]
+    body=render_template_string('''
+    <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}</style>
+    <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Level 3</div><h1 class="hero-title">🧠 AI Intelligence Center</h1><div class="hero-copy">Natural query assistant, actionable reminders, context memory, member intelligence, risk heatmap, meeting health score, smart alerts, and report export — all without paid APIs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Critical</div><div class="big">{{ critical }}</div></div></div></div></div>
+    <div class="ai-grid"><div class="ai-card"><div class="small">Critical Members</div><div class="ai-big risk-critical">{{ critical }}</div></div><div class="ai-card"><div class="small">Warning Members</div><div class="ai-big risk-warning">{{ warning }}</div></div><div class="ai-card"><div class="small">Avg Duration</div><div class="ai-big">{{ avg_duration }}m</div></div><div class="ai-card"><div class="small">Latest Meeting Health</div><div class="ai-big">{{ latest_score }}/100</div></div></div>
+    <div class="ai-chat" style="margin-top:18px"><div class="ai-card"><h2>🤖 Smart Assistant</h2><div id="aiGreeting" class="ai-msg">Analyzing your latest attendance data...</div><div class="ai-suggest"><button onclick="aiAsk('Who is at risk?')">At-risk members</button><button onclick="aiAsk('List members below 50%')">Below 50%</button><button onclick="aiAsk('Show top performers')">Top performers</button><button onclick="aiAsk('Why attendance dropped?')">Why dropped?</button><button onclick="aiAsk('Summarize last meeting')">Last meeting</button><button onclick="aiAsk('Send reminder to them')">Remind them</button><button onclick="location.href='/ai/export/low-attendance.pdf'">Export PDF</button><button onclick="location.href='/ai/export/low-attendance.csv'">Export CSV</button></div><input id="aiLevel3Input" class="ai-input" placeholder="Ask attendance question..."><div style="margin-top:10px"><button onclick="aiAsk(document.getElementById('aiLevel3Input').value)">Ask AI</button></div><div id="aiLevel3Answer" class="ai-msg">Ready.</div></div><div class="ai-card"><h2>💡 Insights</h2>{% for i in insights %}<div class="ai-msg"><b>{{ i.title }}</b><br><span class="small">{{ i.category }} · {{ i.severity }}</span><br>{{ i.message }}<br><b>Recommendation:</b> {{ i.recommendation }}</div>{% endfor %}</div></div>
+    <div class="ai-card" style="margin-top:18px"><h2>👤 Member Intelligence</h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Attendance %</th><th>Trend</th><th>Risk</th><th>Tag</th><th>Suggestion</th></tr></thead><tbody>{% for m in members %}<tr><td>{{ m.name }}</td><td>{{ m.attendance_pct }}%</td><td>{{ m.trend }}</td><td class="risk-{{ m.risk|lower }}">{{ m.risk }}</td><td>{{ m.tag }}</td><td>{{ m.suggestion }}</td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="ai-card heat" style="margin-top:18px"><h2>🧠 Risk Heatmap</h2><table><thead><tr><th>Member</th>{% for mt in heat_meetings %}<th>{{ fmt_date(mt.start_time) }}</th>{% endfor %}</tr></thead><tbody>{% for row in heat %}<tr><th>{{ row.name }}</th>{% for c in row.cells %}<td class="h-{{ c }}">{{ 'P' if c in ['PRESENT','HOST'] else 'L' if c=='LATE' else 'A' if c=='ABSENT' else '-' }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+    <div class="ai-card" style="margin-top:18px"><h2>🔥 Smart Alert Panel</h2>{% if logs %}{% for l in logs %}<div class="ai-msg"><b>{{ l.title }}</b><br>{{ l.message }}<br><span class="small">{{ fmt_dt(l.created_at) }} · {{ l.current_state }}</span></div>{% endfor %}{% else %}<div class="muted">No smart alert logs yet.</div>{% endif %}</div>
+    <script>function aiAsk(q){if(!q)return;document.getElementById('aiLevel3Answer').innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{document.getElementById('aiLevel3Answer').innerText=d.response||'No answer';});}fetch('/api/ai-insights-level3').then(r=>r.json()).then(d=>{let ins=(d.insights||[]).slice(0,2).map(x=>'• '+x.message).join('\n');document.getElementById('aiGreeting').innerText=ins||'No critical insight right now.';}).catch(()=>{});</script>
+    ''', insights=insights, members=members, critical=critical, warning=warning, latest_score=latest_score, avg_duration=avg_duration, logs=logs, heat=heat, heat_meetings=heat_meetings, fmt_date=fmt_date, fmt_dt=fmt_dt)
     return page('AI Intelligence', body, 'ai_intelligence')
 
-@app.context_processor
-def inject_ai_level2_floating_ui():
-    floating = '''<style>.ai-float-btn{position:fixed;right:22px;bottom:22px;z-index:9998;width:58px;height:58px;border-radius:50%;border:0;background:linear-gradient(135deg,#7c3aed,#ec4899);color:white;font-size:26px;box-shadow:0 18px 55px rgba(236,72,153,.42);cursor:pointer}.ai-float-panel{position:fixed;right:22px;bottom:92px;z-index:9998;width:min(420px,calc(100vw - 34px));height:560px;background:linear-gradient(145deg,rgba(30,10,55,.98),rgba(15,23,42,.98));border:1px solid rgba(236,72,153,.35);border-radius:24px;box-shadow:0 30px 90px rgba(0,0,0,.55);display:none;overflow:hidden}.ai-float-panel.open{display:flex;flex-direction:column}.ai-float-head{padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:space-between}.ai-float-head h3{margin:0;font-size:16px}.ai-float-body{flex:1;overflow:auto;padding:14px}.ai-float-msg{padding:10px 12px;border-radius:14px;margin-bottom:10px;white-space:pre-wrap;line-height:1.42;font-size:13px}.ai-float-msg.bot{background:rgba(255,255,255,.08)}.ai-float-msg.user{background:linear-gradient(90deg,#7c3aed,#06b6d4);color:white;margin-left:28px}.ai-float-foot{padding:12px;border-top:1px solid rgba(255,255,255,.12);display:flex;gap:8px}.ai-float-foot input{flex:1;border-radius:999px;border:1px solid rgba(236,72,153,.35);background:#13051f;color:white;padding:11px 12px}.ai-float-foot button,.ai-float-close{border:0;border-radius:999px;background:linear-gradient(90deg,#7c3aed,#ec4899);color:white;font-weight:900;padding:10px 13px}.ai-suggestion-row{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 8px}.ai-suggestion-row button{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.08);color:#f5d0fe;border-radius:999px;padding:7px 9px;font-size:12px;cursor:pointer}</style><button class="ai-float-btn" id="aiFloatBtn" title="AI Attendance Assistant">🤖</button><div class="ai-float-panel" id="aiFloatPanel"><div class="ai-float-head"><div><h3>AI Attendance Assistant</h3><div class="muted" style="font-size:11px">Internal intelligence · No paid API</div></div><button class="ai-float-close" onclick="document.getElementById('aiFloatPanel').classList.remove('open')">×</button></div><div class="ai-suggestion-row"><button onclick="aiFloatAsk('Who is at risk?')">Risk</button><button onclick="aiFloatAsk('List members below 50% attendance')">Below 50%</button><button onclick="aiFloatAsk('Show top performers')">Top</button><button onclick="aiFloatAsk('Summarize last meeting')">Summary</button></div><div class="ai-float-body" id="aiFloatLog"><div class="ai-float-msg bot">Hi. Ask me about attendance, risk, members, meetings, late trend, unknown participants, or performance.</div></div><div class="ai-float-foot"><input id="aiFloatInput" placeholder="Ask AI about attendance..."><button onclick="aiFloatAsk()">Ask</button></div></div><script>(function(){const btn=document.getElementById('aiFloatBtn');const panel=document.getElementById('aiFloatPanel');if(btn&&panel){btn.addEventListener('click',()=>panel.classList.toggle('open'));}const input=document.getElementById('aiFloatInput');if(input){input.addEventListener('keydown',e=>{if(e.key==='Enter')window.aiFloatAsk();});}window.aiFloatAdd=function(text,who){const log=document.getElementById('aiFloatLog');if(!log)return;const div=document.createElement('div');div.className='ai-float-msg '+who;div.textContent=text;log.appendChild(div);log.scrollTop=log.scrollHeight;};window.aiFloatAsk=function(preset){const input=document.getElementById('aiFloatInput');const q=preset||(input?input.value:'');if(!q)return;window.aiFloatAdd(q,'user');if(input)input.value='';fetch('/api/ai-assistant',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>window.aiFloatAdd(d.response||'No response','bot')).catch(()=>window.aiFloatAdd('Connection problem while contacting AI assistant.','bot'));};})();</script>'''
-    return dict(ai_level2_floating_ui=floating)
+# =========================
+# END UI_UPDATE_V10_AI_LEVEL3_SMART_ENGINE_APPLIED
+# =========================
 
-# =========================
-# END UI_UPDATE_V10_AI_LEVEL_2_APPLIED
-# =========================
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
