@@ -25,6 +25,7 @@ import os
 import smtplib
 import tempfile
 import time
+import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from difflib import SequenceMatcher
@@ -8434,6 +8435,7 @@ def ai_frontend_patch_v112(response):
 
 # =========================
 # UI_UPDATE_V12_ALERT_AUTOMATION_SYSTEM_APPLIED = True
+# UI_UPDATE_V12_1_RENDER_SAFE_ALERT_SCHEDULER_FIX_APPLIED = True
 # Intelligent Alert Automation System - Render safe, no webhook/attendance logic changes
 # =========================
 
@@ -8453,6 +8455,7 @@ except Exception as _alert_label_exc:
 
 ALERT_AUTOMATION_LAST_RUN_TS = 0
 ALERT_AUTOMATION_TABLES_READY = False
+ALERT_AUTOMATION_BG_RUNNING = False
 try:
     ALERT_AUTOMATION_COOLDOWN_SECONDS = int(os.getenv("ALERT_AUTOMATION_COOLDOWN_SECONDS", "1800") or "1800")
 except Exception:
@@ -8721,15 +8724,41 @@ def run_smart_scheduler(force=False):
     return {"skipped": False, "results": results, "count": len(results)}
 
 
-@app.before_request
-def smart_alert_automation_before_request():
+def _smart_alert_scheduler_worker():
+    global ALERT_AUTOMATION_BG_RUNNING
     try:
-        path = request.path or ""
-        if path.startswith("/static") or path.endswith("favicon.ico"):
-            return
         run_smart_scheduler(force=False)
     except Exception as exc:
-        print(f"⚠️ smart_alert_automation_before_request skipped: {exc}")
+        print(f"⚠️ smart alert background scheduler skipped: {exc}")
+    finally:
+        ALERT_AUTOMATION_BG_RUNNING = False
+
+
+@app.after_request
+def smart_alert_automation_after_request(response):
+    """Render-safe scheduler trigger.
+    Never blocks health checks, HEAD /, login, static files, or normal page loading.
+    It runs in a tiny background thread and run_smart_scheduler() still throttles itself.
+    """
+    global ALERT_AUTOMATION_BG_RUNNING
+    try:
+        path = request.path or ""
+        if request.method == "HEAD":
+            return response
+        if path in ("/", "/login", "/favicon.ico") or path.startswith("/static"):
+            return response
+        if path.startswith("/api/live") or path.startswith("/api/ai-assistant"):
+            return response
+        if ALERT_AUTOMATION_BG_RUNNING:
+            return response
+        if time.time() - ALERT_AUTOMATION_LAST_RUN_TS < ALERT_AUTOMATION_RUN_EVERY_SECONDS:
+            return response
+        ALERT_AUTOMATION_BG_RUNNING = True
+        threading.Thread(target=_smart_alert_scheduler_worker, daemon=True).start()
+    except Exception as exc:
+        ALERT_AUTOMATION_BG_RUNNING = False
+        print(f"⚠️ smart_alert_automation_after_request skipped: {exc}")
+    return response
 
 
 @app.route("/api/alerts/run", methods=["POST", "GET"])
