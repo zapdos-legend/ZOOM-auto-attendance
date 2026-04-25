@@ -7673,6 +7673,7 @@ def appearance():
 
 # =========================
 # UI_UPDATE_V10_AI_LEVEL3_SMART_ENGINE_APPLIED = True
+# UI_UPDATE_V10_1_AI_LEVEL3_PERFORMANCE_FIX_APPLIED = True
 # =========================
 
 AI_LEVEL3_LOW_ATTENDANCE_DEFAULT = 50.0
@@ -7911,15 +7912,30 @@ def ai_intelligence():
                     cur.execute('SELECT title, message, current_state, created_at FROM smart_alert_logs ORDER BY created_at DESC LIMIT 8'); logs=cur.fetchall()
     except Exception: logs=[]
     heat_members=members[:20]; heat_meetings=list(reversed(meetings[:12])); heat=[]
+    # Fast heatmap: one lightweight query instead of member x meeting nested queries.
+    # This prevents Render/Gunicorn worker timeout and Neon connection overload.
     try:
-        with db() as conn:
-            with conn.cursor() as cur:
-                for mem in heat_members:
-                    row={'name':mem['name'],'cells':[]}
-                    for mt in heat_meetings:
-                        cur.execute('SELECT final_status FROM attendance WHERE member_id=%s AND meeting_uuid=%s LIMIT 1',(mem['id'],mt.get('meeting_uuid'))); r=cur.fetchone(); row['cells'].append((r.get('final_status') if r else 'NO_DATA') if r else 'NO_DATA')
-                    heat.append(row)
-    except Exception: heat=[]
+        heat_member_ids=[m.get('id') for m in heat_members if m.get('id') is not None]
+        heat_meeting_uuids=[mt.get('meeting_uuid') for mt in heat_meetings if mt.get('meeting_uuid')]
+        status_map={}
+        if heat_member_ids and heat_meeting_uuids:
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute('''
+                        SELECT member_id, meeting_uuid, final_status
+                        FROM attendance
+                        WHERE member_id = ANY(%s) AND meeting_uuid = ANY(%s)
+                    ''', (heat_member_ids, heat_meeting_uuids))
+                    for r in cur.fetchall():
+                        status_map[(r.get('member_id'), r.get('meeting_uuid'))] = r.get('final_status') or 'NO_DATA'
+        for mem in heat_members:
+            row={'name':mem.get('name') or 'Member','cells':[]}
+            for mt in heat_meetings:
+                row['cells'].append(status_map.get((mem.get('id'), mt.get('meeting_uuid')), 'NO_DATA'))
+            heat.append(row)
+    except Exception as exc:
+        print(f"AI heatmap skipped safely: {exc}")
+        heat=[]
     body=render_template_string('''
     <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}</style>
     <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Level 3</div><h1 class="hero-title">🧠 AI Intelligence Center</h1><div class="hero-copy">Natural query assistant, actionable reminders, context memory, member intelligence, risk heatmap, meeting health score, smart alerts, and report export — all without paid APIs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Critical</div><div class="big">{{ critical }}</div></div></div></div></div>
