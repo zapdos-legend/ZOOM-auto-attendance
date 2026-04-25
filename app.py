@@ -4259,6 +4259,7 @@ def page(title, body, active="home"):
         {"key": "users", "label": "🔐 Users", "href": url_for("users")},
         {"key": "analytics", "label": "📊 Analytics", "href": url_for("analytics")},
         {"key": "ai_intelligence", "label": "🧠 AI Intelligence", "href": url_for("ai_intelligence")},
+        {"key": "ai_level4", "label": "🔮 AI Level 4", "href": url_for("ai_level4_dashboard")},
         {"key": "attendance_register", "label": "📒 Attendance Register", "href": url_for("attendance_register")},
         {"key": "notification_control", "label": "🔔 Notification Control", "href": url_for("notification_control")},
         {"key": "appearance", "label": "🎨 Appearance Studio", "href": url_for("appearance")},
@@ -7951,6 +7952,142 @@ def ai_intelligence():
 # =========================
 # END UI_UPDATE_V10_AI_LEVEL3_SMART_ENGINE_APPLIED
 # =========================
+
+
+# UI_UPDATE_V11_AI_LEVEL4_CORE_APPLIED = True
+# AI LEVEL 4 CORE: Prediction + Behavioral Tagging + Auto Actions + Smart Reports
+AI_LEVEL4_LOW_THRESHOLD = float(os.getenv("AI_LEVEL4_LOW_THRESHOLD", "75") or "75")
+AI_LEVEL4_CRITICAL_THRESHOLD = float(os.getenv("AI_LEVEL4_CRITICAL_THRESHOLD", "50") or "50")
+
+def _ai_l4_clamp(v):
+    try: v=float(v)
+    except Exception: v=0
+    return max(0, min(100, round(v,2)))
+
+def _ai_l4_status_map(limit_meetings=8, limit_members=80):
+    members=_ai_member_stats()[:limit_members]; meetings=list(reversed(_ai_recent_meetings(limit_meetings)))
+    mids=[m.get('id') for m in members if m.get('id') is not None]; uuids=[m.get('meeting_uuid') for m in meetings if m.get('meeting_uuid')]
+    smap={}
+    if mids and uuids:
+        try:
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT member_id, meeting_uuid, final_status FROM attendance WHERE member_id=ANY(%s) AND meeting_uuid=ANY(%s)",(mids,uuids))
+                    for r in cur.fetchall(): smap[(r.get('member_id'), r.get('meeting_uuid'))]=r.get('final_status') or 'NO_DATA'
+        except Exception as e: print('AI L4 status map skipped:', e)
+    return members, meetings, smap
+
+def _ai_l4_tag(member, statuses):
+    total=int(member.get('total') or 0); pct=float(member.get('attendance_pct') or 0); recent=statuses[-5:]
+    absent=sum(1 for s in recent if s=='ABSENT'); late=sum(1 for s in recent if s=='LATE'); present=sum(1 for s in recent if s in ('PRESENT','HOST'))
+    if total==0: return 'No Data'
+    if pct>=90 and absent==0: return 'Consistent'
+    if pct<AI_LEVEL4_CRITICAL_THRESHOLD or absent>=3: return 'Risky'
+    if len(recent)>=4 and present>=3 and recent[-1:] and recent[-1] in ('PRESENT','HOST'): return 'Improving'
+    if late>=3: return 'Late Pattern'
+    if pct<AI_LEVEL4_LOW_THRESHOLD: return 'Irregular'
+    return 'Stable'
+
+def _ai_l4_probability(member, statuses):
+    total=max(int(member.get('total') or 0),1); absent=int(member.get('absent') or 0); late=int(member.get('late') or 0); pct=float(member.get('attendance_pct') or 0)
+    recent_abs=sum(1 for s in statuses[-5:] if s=='ABSENT')*7; recent_late=sum(1 for s in statuses[-5:] if s=='LATE')*3
+    return _ai_l4_clamp((absent/total)*55 + (late/total)*15 + recent_abs + recent_late + max(0,AI_LEVEL4_LOW_THRESHOLD-pct)*0.45 + (15 if int(member.get('total') or 0)==0 else 0))
+
+def generate_ai_level4_predictions(limit=80):
+    ck=_cache_make_key('ai_l4_predictions', {'limit':limit}); cached=_cache_get(ck)
+    if cached is not None: return cached
+    members, meetings, smap = _ai_l4_status_map(8, limit); out=[]
+    for mem in members:
+        statuses=[smap.get((mem.get('id'), mt.get('meeting_uuid')), 'NO_DATA') for mt in meetings]
+        prob=_ai_l4_probability(mem,statuses); tag=_ai_l4_tag(mem,statuses)
+        label='High absence risk' if prob>=70 else ('Medium absence risk' if prob>=45 else 'Low absence risk')
+        rec='Send reminder and follow up personally before next meeting.' if prob>=70 else ('Send early reminder before meeting.' if tag in ('Late Pattern','Irregular') else ('Appreciate improvement.' if tag=='Improving' else 'Monitor next meeting attendance.'))
+        out.append({'id':mem.get('id'),'name':mem.get('name'),'email':mem.get('email') or '','attendance_pct':mem.get('attendance_pct'),'risk':mem.get('risk'),'trend':mem.get('trend'),'behavior_tag':tag,'absence_probability':prob,'prediction':label,'recommendation':rec,'recent_statuses':statuses})
+    out.sort(key=lambda x:(x['absence_probability'],100-float(x.get('attendance_pct') or 0)), reverse=True)
+    return _cache_set(ck,out)
+
+def generate_ai_level4_recommendations():
+    preds=generate_ai_level4_predictions(); rec=[]
+    high=[p for p in preds if p['absence_probability']>=70]; med=[p for p in preds if 45<=p['absence_probability']<70]; late=[p for p in preds if p['behavior_tag']=='Late Pattern']
+    if high: rec.append({'severity':'critical','title':'High absence risk detected','message':f'{len(high)} member(s) may miss next meeting.','action':'Send reminders and follow up personally.'})
+    if med: rec.append({'severity':'warning','title':'Medium risk members','message':f'{len(med)} member(s) need monitoring.','action':'Send early reminder.'})
+    if late: rec.append({'severity':'warning','title':'Late pattern found','message':f'{len(late)} member(s) are repeatedly late.','action':'Send reminder 10-15 minutes before meeting.'})
+    if not rec: rec.append({'severity':'info','title':'System stable','message':'No major attendance risk detected.','action':'Continue monitoring.'})
+    return rec
+
+def run_ai_level4_auto_actions(execute=False, max_members=20):
+    targets=[p for p in generate_ai_level4_predictions() if p['absence_probability']>=70][:max_members]
+    result={'mode':'execute' if execute else 'preview','target_count':len(targets),'sent':0,'skipped':0,'failed':[],'targets':targets}
+    if not execute: return result
+    with db() as conn:
+        with conn.cursor() as cur:
+            for p in targets:
+                key=f"level4:auto-reminder:{p.get('id')}"
+                try:
+                    cur.execute('SELECT 1 FROM smart_alert_logs WHERE alert_key=%s AND created_at::date=CURRENT_DATE LIMIT 1',(key,))
+                    if cur.fetchone(): result['skipped']+=1; continue
+                except Exception: pass
+                if not p.get('email'): result['failed'].append(f"{p.get('name')} (no email)"); continue
+                ok,msg=send_email(p['email'],'Attendance Risk Reminder',f"Hello {p.get('name')},\n\nAI Level 4 predicts {p.get('absence_probability')}% absence risk for the next meeting. Current attendance: {p.get('attendance_pct')}%. Please attend upcoming sessions regularly.\n\nRecommendation: {p.get('recommendation')}\n\nRegards,\nZoom Attendance Platform")
+                if ok:
+                    result['sent']+=1
+                    try: cur.execute("INSERT INTO smart_alert_logs(alert_key,alert_type,entity_type,entity_id,current_state,title,message,email_sent,push_sent) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)",(key,'level4_auto_reminder','member',str(p.get('id')),'sent','AI Level 4 auto reminder',f"Reminder sent to {p.get('name')} due to {p.get('absence_probability')}% absence risk.",True,0))
+                    except Exception: pass
+                else: result['failed'].append(f"{p.get('name')} ({msg})")
+        conn.commit()
+    return result
+
+@app.route('/api/ai-level4/predictions')
+@login_required
+def api_ai_level4_predictions(): return jsonify({'predictions':generate_ai_level4_predictions(),'recommendations':generate_ai_level4_recommendations()})
+
+@app.route('/api/ai-level4/auto-actions', methods=['POST'])
+@login_required
+@admin_required
+def api_ai_level4_auto_actions():
+    payload=request.get_json(silent=True) or {}; execute=str(payload.get('execute','false')).lower() in ('1','true','yes','on')
+    return jsonify(run_ai_level4_auto_actions(execute=execute, max_members=int(payload.get('max_members',20) or 20)))
+
+@app.route('/ai-level4/report.csv')
+@login_required
+def ai_level4_report_csv():
+    output=io.StringIO(); w=csv.writer(output); w.writerow(['AI Level 4 Smart Report']); w.writerow([]); w.writerow(['Recommendations']); w.writerow(['Severity','Title','Message','Action'])
+    for r in generate_ai_level4_recommendations(): w.writerow([r.get('severity'),r.get('title'),r.get('message'),r.get('action')])
+    w.writerow([]); w.writerow(['Member Predictions']); w.writerow(['Name','Attendance %','Absence Probability','Prediction','Behavior Tag','Recommendation'])
+    for p in generate_ai_level4_predictions(): w.writerow([p.get('name'),p.get('attendance_pct'),p.get('absence_probability'),p.get('prediction'),p.get('behavior_tag'),p.get('recommendation')])
+    return Response(output.getvalue(), mimetype='text/csv', headers={'Content-Disposition':'attachment; filename=ai_level4_smart_report.csv'})
+
+@app.route('/ai-level4/report.pdf')
+@login_required
+def ai_level4_report_pdf():
+    preds=generate_ai_level4_predictions(); recs=generate_ai_level4_recommendations(); buf=io.BytesIO(); doc=SimpleDocTemplate(buf,pagesize=letter); styles=getSampleStyleSheet(); story=[Paragraph('AI Level 4 Smart Report',styles['Title']),Spacer(1,12),Paragraph('Recommendations',styles['Heading2'])]
+    t=Table([['Severity','Title','Action']]+[[r.get('severity'),r.get('title'),r.get('action')] for r in recs], repeatRows=1); t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#111827')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('GRID',(0,0),(-1,-1),0.25,colors.grey),('FONTSIZE',(0,0),(-1,-1),8)])); story.append(t); story.append(Spacer(1,14)); story.append(Paragraph('Top Absence Risk Predictions',styles['Heading2']))
+    t2=Table([['Name','Attendance %','Absence Risk','Tag','Prediction']]+[[p.get('name'),str(p.get('attendance_pct')),str(p.get('absence_probability')),p.get('behavior_tag'),p.get('prediction')] for p in preds[:25]], repeatRows=1); t2.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#111827')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('GRID',(0,0),(-1,-1),0.25,colors.grey),('FONTSIZE',(0,0),(-1,-1),7)])); story.append(t2); doc.build(story); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='ai_level4_smart_report.pdf', mimetype='application/pdf')
+
+try: _ai_level3_original_bot_answer = _ai_bot_answer
+except Exception: _ai_level3_original_bot_answer = None
+
+def _ai_bot_answer(query):
+    q=(query or '').strip().lower()
+    if any(w in q for w in ['predict','prediction','likely absent','absent next','who will be absent','future risk']):
+        preds=generate_ai_level4_predictions()[:10]; lines=['AI Level 4 predictions for next meeting:']+[f"{i}. {p.get('name')} - {p.get('absence_probability')}% absence risk ({p.get('prediction')}), Tag: {p.get('behavior_tag')}" for i,p in enumerate(preds,1)]; session['ai_last_targets']=[p.get('id') for p in preds if p.get('id') is not None]; return {'response':'\n'.join(lines),'targets':session.get('ai_last_targets',[])}
+    if 'behavior' in q or 'tag' in q or 'consistent' in q or 'irregular' in q:
+        return {'response':'\n'.join(['Behavioral tags:']+[f"• {p.get('name')} - {p.get('behavior_tag')} ({p.get('attendance_pct')}%)" for p in generate_ai_level4_predictions()[:20]]),'targets':[]}
+    if 'auto action' in q or 'automatic action' in q or 'auto reminder' in q:
+        preview=run_ai_level4_auto_actions(False); return {'response':f"Auto-action preview: {preview.get('target_count')} high-risk member(s) will receive reminders. Admin can execute from AI Level 4 dashboard.",'targets':[p.get('id') for p in preview.get('targets',[])]}
+    if 'smart report' in q or 'level 4 report' in q or 'generate ai report' in q:
+        return {'response':'Smart report is ready:\nPDF: /ai-level4/report.pdf\nCSV: /ai-level4/report.csv','targets':[]}
+    return _ai_level3_original_bot_answer(query) if _ai_level3_original_bot_answer else {'response':'I can answer prediction, behavior tags, auto actions, reports, attendance, risk, and member intelligence questions.','targets':[]}
+
+@app.route('/ai-level4')
+@login_required
+def ai_level4_dashboard():
+    preds=generate_ai_level4_predictions(); recs=generate_ai_level4_recommendations(); high=len([p for p in preds if p.get('absence_probability',0)>=70]); med=len([p for p in preds if 45<=p.get('absence_probability',0)<70]); consistent=len([p for p in preds if p.get('behavior_tag')=='Consistent']); risky=len([p for p in preds if p.get('behavior_tag')=='Risky'])
+    body=render_template_string('''<style>.l4-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.l4-card{background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.l4-big{font-size:30px;font-weight:950}.l4-layout{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:18px}.l4-pill{display:inline-flex;border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px}.l4-high{background:rgba(239,68,68,.18);color:#fecaca;border:1px solid rgba(239,68,68,.35)}.l4-med{background:rgba(245,158,11,.18);color:#fde68a;border:1px solid rgba(245,158,11,.35)}.l4-low{background:rgba(34,197,94,.14);color:#bbf7d0;border:1px solid rgba(34,197,94,.28)}.l4-actions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.l4-actions button,.l4-actions a{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed);text-decoration:none}.l4-actions .danger{background:linear-gradient(90deg,#dc2626,#f97316)}.l4-msg{white-space:pre-wrap;background:rgba(2,6,23,.55);border:1px solid rgba(148,163,184,.14);border-radius:14px;padding:12px;margin-top:10px}@media(max-width:1100px){.l4-grid{grid-template-columns:1fr 1fr}.l4-layout{grid-template-columns:1fr}}@media(max-width:700px){.l4-grid{grid-template-columns:1fr}}</style><div class="hero"><div class="hero-grid"><div><div class="badge">AI Level 4 Core</div><h1 class="hero-title">Predictive Attendance Intelligence</h1><div class="hero-copy">Prediction engine, behavioral tagging, safe auto-actions, and smart reports. No paid APIs. No webhook or attendance-logic changes.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">High Risk</div><div class="big">{{ high }}</div></div><div class="hero-chip"><div class="small">Risky Tags</div><div class="big">{{ risky }}</div></div></div></div></div><div class="l4-grid"><div class="l4-card"><div class="small">High Absence Risk</div><div class="l4-big">{{ high }}</div></div><div class="l4-card"><div class="small">Medium Risk</div><div class="l4-big">{{ med }}</div></div><div class="l4-card"><div class="small">Consistent Members</div><div class="l4-big">{{ consistent }}</div></div><div class="l4-card"><div class="small">Risky Behavioral Tags</div><div class="l4-big">{{ risky }}</div></div></div><div class="l4-layout" style="margin-top:18px"><div class="l4-card"><h2>Next Meeting Prediction Table</h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Attendance %</th><th>Absence Risk</th><th>Prediction</th><th>Behavior Tag</th><th>Recommendation</th></tr></thead><tbody>{% for p in preds %}<tr><td>{{ p.name }}</td><td>{{ p.attendance_pct }}%</td><td><span class="l4-pill {{ 'l4-high' if p.absence_probability >= 70 else 'l4-med' if p.absence_probability >= 45 else 'l4-low' }}">{{ p.absence_probability }}%</span></td><td>{{ p.prediction }}</td><td>{{ p.behavior_tag }}</td><td>{{ p.recommendation }}</td></tr>{% endfor %}</tbody></table></div></div><div class="l4-card"><h2>Auto Actions</h2><p class="muted">Preview first, then execute. Reminders are logged and limited to avoid spam.</p><div class="l4-actions"><button onclick="l4Run(false)">Preview Auto Actions</button><button class="danger" onclick="if(confirm('Send reminders to high-risk members?'))l4Run(true)">Execute Reminders</button><a href="/ai-level4/report.pdf">Smart PDF</a><a href="/ai-level4/report.csv">Smart CSV</a></div><div id="l4ActionResult" class="l4-msg">Ready.</div><h2 style="margin-top:18px">Recommendations</h2>{% for r in recs %}<div class="l4-msg"><b>{{ r.title }}</b><br>{{ r.message }}<br><b>Action:</b> {{ r.action }}</div>{% endfor %}</div></div><script>function l4Run(execute){const box=document.getElementById('l4ActionResult');box.innerText=execute?'Executing safe reminders...':'Checking preview...';fetch('/api/ai-level4/auto-actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execute:execute,max_members:20})}).then(r=>r.json()).then(d=>{box.innerText=`Mode: ${d.mode}\nTargets: ${d.target_count}\nSent: ${d.sent||0}\nSkipped: ${d.skipped||0}\nFailed: ${(d.failed||[]).join(', ')||'None'}`;}).catch(()=>{box.innerText='Auto action failed. Check logs.';});}</script>''', preds=preds, recs=recs, high=high, med=med, consistent=consistent, risky=risky)
+    return page('AI Level 4', body, 'ai_level4')
+
+# END UI_UPDATE_V11_AI_LEVEL4_CORE_APPLIED
 
 
 if __name__ == "__main__":
