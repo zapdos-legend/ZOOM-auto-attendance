@@ -1,4 +1,3 @@
-# FINAL_LIVE_ATTENDANCE_LINKING_FIX_2026_04_26 = True
 # UUID_NORMALIZATION_FINAL_PATCH_2026_04_26 = True
 # LIVE_DASHBOARD_FINAL_REAL_FIX_2026_04_26 = True
 # LIVE_ROUTE_SERVER_RENDER_PATCH_2026_04_26 = True
@@ -1342,32 +1341,6 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
             has_meeting_pk = column_exists(conn, "attendance", "meeting_pk")
             meeting_pk = None
 
-            # FINAL FIX: bind participant rows to the latest real meeting row.
-            cur.execute(
-                """
-                SELECT *
-                FROM meetings
-                WHERE meeting_uuid = ANY(%s)
-                   OR (
-                        meeting_id IS NOT NULL
-                        AND meeting_id = (
-                            SELECT meeting_id
-                            FROM meetings
-                            WHERE meeting_uuid = ANY(%s)
-                            ORDER BY id DESC
-                            LIMIT 1
-                        )
-                        AND COALESCE(start_time, created_at) >= NOW() - INTERVAL '15 minutes'
-                      )
-                ORDER BY CASE WHEN status='live' THEN 0 ELSE 1 END, id DESC
-                LIMIT 1
-                """,
-                (zoom_uuid_candidates(meeting_uuid), zoom_uuid_candidates(meeting_uuid)),
-            )
-            bound_meeting = cur.fetchone()
-            if bound_meeting and bound_meeting.get("meeting_uuid"):
-                meeting_uuid = normalize_zoom_uuid(bound_meeting.get("meeting_uuid"))
-
             if has_meeting_pk:
                 cur.execute("SELECT * FROM meetings WHERE meeting_uuid = ANY(%s) ORDER BY id DESC LIMIT 1", (zoom_uuid_candidates(meeting_uuid),))
                 meeting = cur.fetchone()
@@ -1380,16 +1353,10 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                     return
 
             cur.execute(
-                "SELECT * FROM attendance WHERE meeting_uuid = ANY(%s) AND participant_key=%s ORDER BY id DESC LIMIT 1",
+                "SELECT * FROM attendance WHERE meeting_uuid = ANY(%s) AND participant_key=%s",
                 (zoom_uuid_candidates(meeting_uuid), key),
             )
             row = cur.fetchone()
-
-            if row and row.get("meeting_uuid") != meeting_uuid:
-                cur.execute(
-                    "UPDATE attendance SET meeting_uuid=%s, updated_at=NOW() WHERE id=%s",
-                    (meeting_uuid, row["id"]),
-                )
 
             if not row:
                 first_join = event_time if event_type == "join" else None
@@ -1715,7 +1682,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_actions=True):
                     late_count=%s,
                     absent_count=%s,
                     host_present=%s
-                WHERE meeting_uuid = ANY(%s)
+                WHERE meeting_uuid=%s
                 RETURNING *
                 """,
                 (
@@ -1727,7 +1694,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_actions=True):
                     late_count,
                     absent_count,
                     host_present,
-                    zoom_uuid_candidates(meeting_uuid),
+                    meeting_uuid,
                 ),
             )
             updated = cur.fetchone()
@@ -1753,11 +1720,10 @@ def refresh_live_meeting_summary(meeting_uuid):
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM attendance WHERE meeting_uuid = ANY(%s)", (zoom_uuid_candidates(meeting_uuid),))
             rows = cur.fetchall()
-            print("🔥 REFRESH LIVE SUMMARY:", {"uuid": meeting_uuid, "rows": len(rows)})
 
-            member_participants = sum(1 for r in rows if r.get("is_member"))
-            unknown_participants = sum(1 for r in rows if not r.get("is_member"))
-            host_present = any(r.get("is_host") and r.get("current_join") is not None for r in rows)
+            member_participants = sum(1 for r in rows if r["is_member"])
+            unknown_participants = sum(1 for r in rows if not r["is_member"])
+            host_present = any(r["is_host"] and r["current_join"] is not None for r in rows)
 
             cur.execute(
                 """
@@ -1766,9 +1732,9 @@ def refresh_live_meeting_summary(meeting_uuid):
                     member_participants=%s,
                     unknown_participants=%s,
                     host_present=%s
-                WHERE meeting_uuid = ANY(%s)
+                WHERE meeting_uuid=%s
                 """,
-                (len(rows), member_participants, unknown_participants, host_present, zoom_uuid_candidates(meeting_uuid)),
+                (len(rows), member_participants, unknown_participants, host_present, meeting_uuid),
             )
         conn.commit()
 
@@ -1797,11 +1763,8 @@ def read_live_snapshot():
                 SELECT *
                 FROM meetings
                 WHERE status IN ('live','ended')
-                  AND COALESCE(start_time, created_at) >= NOW() - INTERVAL '15 minutes'
-                ORDER BY
-                    CASE WHEN status='live' THEN 0 ELSE 1 END,
-                    COALESCE(start_time, created_at) DESC,
-                    id DESC
+                AND start_time >= NOW() - INTERVAL '10 minutes'
+                ORDER BY start_time DESC
                 LIMIT 1
                 """
             )
@@ -1809,8 +1772,6 @@ def read_live_snapshot():
 
             if not meeting:
                 return None
-
-            print("🔥 LIVE SNAPSHOT MEETING:", {"id": meeting.get("id"), "uuid": meeting.get("meeting_uuid"), "status": meeting.get("status"), "meeting_id": meeting.get("meeting_id")})
 
             meeting_uuid = (meeting.get("meeting_uuid") or "").strip()
             if meeting_uuid:
@@ -1824,28 +1785,12 @@ def read_live_snapshot():
                     (zoom_uuid_candidates(meeting_uuid),),
                 )
                 participants = cur.fetchall()
-
-                if not participants and meeting.get("meeting_id"):
-                    cur.execute(
-                        """
-                        SELECT a.*
-                        FROM attendance a
-                        JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
-                        WHERE m.meeting_id=%s
-                          AND COALESCE(m.start_time, m.created_at) >= NOW() - INTERVAL '15 minutes'
-                        ORDER BY a.updated_at DESC NULLS LAST, a.id DESC
-                        """,
-                        (meeting.get("meeting_id"),),
-                    )
-                    participants = cur.fetchall()
             else:
                 participants = []
 
             member_name_expr = member_name_sql(conn)
             cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
             members = cur.fetchall()
-
-    print("🔥 LIVE SNAPSHOT PARTICIPANTS FOUND:", len(participants))
 
     # Enrich live rows now so UI/API do not depend on stale total_seconds.
     enriched_participants = []
@@ -1865,8 +1810,8 @@ def read_live_snapshot():
         reverse=True,
     )
 
-    joined_member_ids = {p.get("member_id") for p in enriched_participants if p.get("member_id") and p.get("first_join")}
-    not_joined_members = [m for m in members if m.get("id") not in joined_member_ids]
+    joined_member_ids = {p["member_id"] for p in enriched_participants if p.get("member_id") and p.get("first_join")}
+    not_joined_members = [m for m in members if m["id"] not in joined_member_ids]
     active_now = [p for p in enriched_participants if p.get("current_join") is not None]
 
     return {
@@ -2109,15 +2054,7 @@ def _graph_analytics_payload_uncached():
         minutes = seconds / 60.0
         if selected_single_member:
             dt = parse_dt(row.get("start_time"))
-            label = dt.strftime("%d-%m-%Y") if dt else "Unknown Date"
-            sort_key = dt.strftime("%Y-%m-%d") if dt else label
-            duration_buckets[(sort_key, label)] += minutes
-        else:
-            mid = row.get("member_id")
-            name = member_names.get(int(mid), row.get("participant_name") or f"Member {mid}") if mid else (row.get("participant_name") or "Unknown")
-            duration_buckets[(name.lower(), name)] += minutes
-
-    duration_items = sorted(duration_buckets.items(), key=lambda item: item[0][0])
+            label = dt.strftime("%d-%m-%Y") if dt else "Unknown {{ participants | rejectattr('is_member') | list | length }}][0])
     duration_labels = [item[0][1] for item in duration_items]
     duration_values = [round(item[1], 2) for item in duration_items]
     if not selected_single_member and len(duration_labels) > 60:
@@ -2155,30 +2092,7 @@ NOTIFICATION_ALERT_TYPE_LABELS = {
     "member_risk": "Member Critical / Warning Risk",
     "declining_trend": "Declining Trend",
     "host_absent": "Host Absent",
-    "unknown_participant_spike": "Unknown Participant Spike",
-}
-NOTIFICATION_DEFAULT_ALERT_TYPES = list(NOTIFICATION_ALERT_TYPE_LABELS.keys())
-NOTIFICATION_DEFAULT_TEMPLATE = "{title}\n\n{message}\n\nState: {state}"
-
-
-def _json_setting(name, default):
-    raw = get_setting(name, str)
-    if not raw:
-        return default
-    try:
-        parsed = json.loads(raw)
-        return parsed if isinstance(parsed, type(default)) else default
-    except Exception:
-        if isinstance(default, list):
-            return [x.strip() for x in str(raw).split(",") if x.strip()] or default
-        return default
-
-
-def get_notification_settings():
-    alert_types = _json_setting("notification_alert_types", NOTIFICATION_DEFAULT_ALERT_TYPES)
-    timings = _json_setting("notification_timings", ["before", "during", "after"])
-    return {
-        "email_enabled": get_setting("notification_email_enabled", str).strip().lower() not in ("0", "false", "no", "off"),
+    "unknown_participant_spike": "Unknown {{ participants | rejectattr('is_member') | list | length }}", "false", "no", "off"),
         "push_enabled": get_setting("notification_push_enabled", str).strip().lower() not in ("0", "false", "no", "off"),
         "alert_types": alert_types,
         "timings": timings,
@@ -2365,12 +2279,7 @@ def evaluate_smart_alerts_for_meeting(meeting_uuid):
                     alert_type="unknown_participant_spike",
                     state=f"unknown_{unknown_count}_{round(unknown_pct,1)}",
                     meeting=meeting,
-                    title="⚠️ Unknown participant spike",
-                    message=f"Meeting has {unknown_count} unknown participants ({round(unknown_pct,1)}%).",
-                )
-
-            people = _member_alert_people_for_meeting(conn, meeting_uuid)
-            avg_ref = 1.0
+                    title="⚠️ Unknown {{ participants | rejectattr('is_member') | list | length }}
             if people:
                 avg_ref = max(sum(float(p.get("minutes") or 0) for p in people) / max(len(people), 1), 1.0)
             for person in people:
@@ -2867,13 +2776,13 @@ def build_phase3_alerts(summary, latest_meeting_summary, previous_meeting_summar
         alerts.append({"level": "warn", "title": "Warning members found", "text": f"{summary.get('warning_members_count', 0)} member(s) are slipping below healthy attendance."})
 
     if summary.get("unknown_rows", 0) >= 3:
-        alerts.append({"level": "info", "title": "Unknown participants trend", "text": f"{summary.get('unknown_rows', 0)} unknown participant records appeared in the current filtered view."})
+        alerts.append({"level": "info", "title": "Unknown {{ participants | rejectattr('is_member') | list | length }})} unknown participant records appeared in the current filtered view."})
 
     if latest_meeting_summary and not latest_meeting_summary.get("present"):
         alerts.append({"level": "warn", "title": "Latest meeting has weak turnout", "text": "The latest meeting has no present classifications in the filtered dataset."})
 
     if latest_meeting_summary and latest_meeting_summary.get("unknown", 0) >= 2:
-        alerts.append({"level": "info", "title": "Unknown participant watch", "text": f"{latest_meeting_summary.get('unknown', 0)} unknown attendees appeared in the latest meeting snapshot."})
+        alerts.append({"level": "info", "title": "Unknown {{ participants | rejectattr('is_member') | list | length }})} unknown attendees appeared in the latest meeting snapshot."})
 
     if latest_meeting_summary and previous_meeting_summary:
         latest_health = float(latest_meeting_summary.get("health") or 0)
@@ -3018,22 +2927,7 @@ def build_professional_report_workbook_rows(report_data):
         ["Total Members", summary.get("total_members")],
         ["Present Members", summary.get("total_present_members")],
         ["Absent Members", summary.get("total_absent_members")],
-        ["Unknown Participants", summary.get("total_unknown_participants")],
-        ["Average Duration (Minutes)", summary.get("avg_duration_minutes")],
-        ["Present Threshold (Minutes)", summary.get("present_threshold_minutes")],
-        ["Late Threshold (Minutes)", summary.get("late_summary_threshold_minutes")],
-        [],
-        ["Smart Insights"],
-    ]
-    summary_rows += [[idx, line] for idx, line in enumerate(insights, start=1)]
-
-    attendance_rows = [["Name", "Join", "Leave", "Duration Minutes", "Rejoins", "Status", "Unknown"]]
-    for row in rows:
-        attendance_rows.append([
-            row.get("participant_name") or "",
-            row.get("join_display") or "",
-            row.get("leave_display") or "",
-            row.get("duration_minutes") or 0,
+        ["Unknown {{ participants | rejectattr('is_member') | list | length }},
             row.get("rejoin_count") or 0,
             row.get("status") or "",
             "Yes" if row.get("is_unknown_joined") else "No",
@@ -3147,12 +3041,7 @@ def _analytics_data_uncached(filters):
     by_meeting = {}
 
     for r in rows:
-        key = r.get("participant_name") or "Unknown Participant"
-        by_person.setdefault(
-            key,
-            {
-                "name": key,
-                "meetings": 0,
+        key = r.get("participant_name") or "Unknown {{ participants | rejectattr('is_member') | list | length }},
                 "minutes": 0.0,
                 "present": 0,
                 "late": 0,
@@ -3452,9 +3341,7 @@ def _analytics_data_uncached(filters):
     if any(item.get("trend", {}).get("short") == "DECLINING" for item in leaderboard[:8]):
         alerts.insert(0, {"level": "warn", "title": "Low attendance trend", "text": "At least one high-visibility member is showing a declining attendance trend."})
     if unknown_spike_flag:
-        alerts.insert(0, {"level": "danger", "title": "Too many unknown participants", "text": f"Unknown participant ratio reached {round(latest_unknown_ratio, 2)}% in the latest meeting."})
-    if host_absent_flag:
-        alerts.insert(0, {"level": "warn", "title": "Host absent", "text": "The latest tracked meeting snapshot does not show the host as present."})
+        alerts.insert(0, {"level": "danger", "title": "Too many unknown participants", "text": f"Unknown {{ participants | rejectattr('is_member') | list | length }}, {"level": "warn", "title": "Host absent", "text": "The latest tracked meeting snapshot does not show the host as present."})
     if ended_early_flag:
         alerts.insert(0, {"level": "warn", "title": "Meeting ended early", "text": "Latest meeting duration looks lower than the recent meeting baseline."})
     alerts = alerts[:6]
@@ -3668,8 +3555,7 @@ def export_meeting_pdf_bytes(title, report_data):
 
     summary_table = Table([
         ["Participants", summary["total_participants"], "Members", summary["total_members"], "Health", f"{summary['meeting_health_score']} / 100"],
-        ["Present", summary["total_present_members"], "Absent", summary["total_absent_members"], "Unknown", summary["total_unknown_participants"]],
-        ["Healthy", summary.get("healthy_count", 0), "Warning", summary.get("warning_count", 0), "Critical", summary.get("critical_count", 0)],
+        ["Present", summary["total_present_members"], "Absent", summary["total_absent_members"], "Unknown {{ participants | rejectattr('is_member') | list | length }}), "Warning", summary.get("warning_count", 0), "Critical", summary.get("critical_count", 0)],
     ], colWidths=[75, 70, 75, 70, 75, 75])
     summary_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eff6ff")),
@@ -3759,17 +3645,7 @@ def export_meeting_pdf_bytes(title, report_data):
 
     elements.extend(build_people_table(member_rows[:120], "Member Attendance Section"))
     if unknown_rows:
-        elements.extend(build_people_table(unknown_rows[:40], "Unknown Participants Section"))
-
-    criteria_text = (
-        "<b>Attendance Criteria</b><br/>"
-        f"• Present threshold for this meeting: {summary['present_threshold_minutes']} minutes<br/>"
-        f"• Late threshold for this meeting: {summary['late_summary_threshold_minutes']} minutes<br/>"
-        "• Smart health score uses attendance, duration, participation quality, and host visibility.<br/>"
-        "• Host rows are preserved separately and not treated as absent.<br/>"
-        "• Unknown participants are attendees not matched to your member directory."
-    )
-    criteria_table = Table([[Paragraph(criteria_text, styles["Normal"])]], colWidths=[520])
+        elements.extend(build_people_table(unknown_rows[:40], "Unknown {{ participants | rejectattr('is_member') | list | length }}])
     criteria_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
         ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cbd5e1")),
@@ -3841,7 +3717,7 @@ def export_pdf_bytes(title, rows, summary):
     elements.append(
         Paragraph(
             f"Total: {summary.get('total_rows', 0)} | Present: {summary.get('present_rows', 0)} | Late: {summary.get('late_rows', 0)} | "
-            f"Absent: {summary.get('absent_rows', 0)} | Unknown: {summary.get('unknown_rows', 0)} | Avg Minutes: {summary.get('avg_minutes', 0)}",
+            f"Absent: {summary.get('absent_rows', 0)} | Unknown {{ participants | rejectattr('is_member') | list | length }})} | Avg Minutes: {summary.get('avg_minutes', 0)}",
             styles["Normal"],
         )
     )
@@ -4653,38 +4529,7 @@ BASE_HTML = """
         'Present':'Met the present threshold for the meeting.',
         'Late':'Joined but stayed below the present threshold.',
         'Absent':'Did not meet the required duration or did not join.',
-        'Unknown':'Participants not matched to a registered member.',
-        'Predicted Next':'Simple prediction based on the recent average attendance.',
-        'Duration':'Effective attendance duration after join/leave adjustment.',
-        'Rejoins':'How many times the participant re-entered the meeting.',
-        'Status':'Final classification for the participant or meeting.',
-        'Attendance Trend':'Meeting attendance change across the selected period.',
-        'Status Mix':'Distribution of present, late and absent records.',
-        'Member Duration':'Total attended minutes for selected members.',
-        'Health Delta':'Difference between the latest and previous meeting health.'
-    };
-
-    function applyAutoTooltips(){
-        const selectors = 'th, h4, .label-with-tip';
-        document.querySelectorAll(selectors).forEach((el) => {
-            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\s+/g,' ').trim();
-            if (!raw || el.querySelector('.tooltip')) return;
-            if (!tooltipMap[raw]) return;
-            const tip = document.createElement('span');
-            tip.className = 'tooltip';
-            tip.textContent = '?';
-            tip.setAttribute('data-tip', tooltipMap[raw]);
-            el.appendChild(tip);
-        });
-    }
-
-    function animateMetrics(){
-        document.querySelectorAll('.metric').forEach((el) => {
-            if (el.dataset.animated === '1') return;
-            const raw = (el.textContent || '').trim();
-            const match = raw.match(/^-?\\d+(?:\\.\\d+)?/);
-            if (!match) return;
-            const value = parseFloat(match[0]);
+        'Unknown {{ participants | rejectattr('is_member') | list | length }}]);
             if (!Number.isFinite(value)) return;
             const suffix = raw.slice(match[0].length);
             const duration = 900;
@@ -5127,8 +4972,7 @@ def home():
             },
             {
                 "level": "warn" if latest_meeting and (latest_meeting.get("unknown_participants") or 0) > 0 else "ok",
-                "title": "Unknown participant watch",
-                "text": f"{(latest_meeting.get('unknown_participants') or 0) if latest_meeting else 0} unknown participant(s) detected in the latest meeting snapshot.",
+                "title": "Unknown {{ participants | rejectattr('is_member') | list | length }}) if latest_meeting else 0} unknown participant(s) detected in the latest meeting snapshot.",
             },
             {
                 "level": "danger" if health < 75 else "ok",
@@ -5178,8 +5022,7 @@ def home():
                 <div class="muted">{{ 'Webhook stream is tracking a current live meeting.' if live_info else 'No live session is open right now, but the control center is healthy.' }}</div>
             </div>
             <div class="alert-chip {{ 'warn' if latest_meeting and (latest_meeting.unknown_participants or 0) > 0 else 'ok' }}">
-                <strong>Unknown participant watch</strong>
-                <div class="muted">{{ ((latest_meeting.unknown_participants or 0)|string) if latest_meeting else '0' }} unknown participant(s) detected in the latest meeting snapshot.</div>
+                <strong>Unknown {{ participants | rejectattr('is_member') | list | length }})|string) if latest_meeting else '0' }} unknown participant(s) detected in the latest meeting snapshot.</div>
             </div>
             <div class="alert-chip {{ 'danger' if health < 75 else 'ok' }}">
                 <strong>Attendance health signal</strong>
@@ -5190,50 +5033,7 @@ def home():
         <div class="alert-rail">
             <div class="alert-chip ok"><strong>Live engine status</strong><div class="muted">Participants are being recalculated in real time every refresh cycle.</div></div>
             <div class="alert-chip {{ 'warn' if host_now != 'Yes' else 'ok' }}"><strong>Host presence</strong><div class="muted">{{ 'Host is not currently active in the meeting.' if host_now != 'Yes' else 'Host presence has been detected successfully.' }}</div></div>
-            <div class="alert-chip {{ 'danger' if unknown_live_count >= 3 else 'info' }}"><strong>Unknown participant watch</strong><div class="muted">{{ unknown_live_count }} unknown participant(s) are currently part of this session.</div></div>
-        </div>
-
-        <div class="grid">
-            <div class="card kpi-card">
-                <div class="kpi-icon">📂</div>
-                <h4>Total Meetings</h4>
-                <div class="metric">{{ total_meetings }}</div>
-                <div class="metric-sub">Completed and live meetings recorded in PostgreSQL.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">👥</div>
-                <h4>Active Members</h4>
-                <div class="metric">{{ active_members }}</div>
-                <div class="metric-sub">Total members in directory: {{ total_members }}</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">🩺</div>
-                <h4>Attendance Health</h4>
-                <div class="metric">{{ health }}%</div>
-                <div class="metric-sub">Present plus late records across finalized attendance rows.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">📡</div>
-                <h4>Live Status</h4>
-                <div class="metric">{{ 'LIVE' if live_info else 'IDLE' }}</div>
-                <div class="metric-sub">Webhook monitoring status for current Zoom traffic.</div>
-            </div>
-        </div>
-
-        <div class="alert-rail">
-            {% for alert in data.phase3_alerts %}
-            <div class="alert-chip {{ alert.level }}">
-                <strong>{{ alert.title }}</strong>
-                <div class="muted">{{ alert.text }}</div>
-            </div>
-            {% endfor %}
-        </div>
-
-        <div class="grid-2" style="margin-top:16px">
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Latest Meeting Spotlight</h3>
+            <div class="alert-chip {{ 'danger' if unknown_live_count >= 3 else 'info' }}"><strong>Unknown {{ participants | rejectattr('is_member') | list | length }}">Latest Meeting Spotlight</h3>
                         <p>Quick summary of the most recent tracked meeting.</p>
                     </div>
                     {% if latest_meeting %}
@@ -5250,7 +5050,7 @@ def home():
                             <span class="badge ok">Present {{ latest_meeting.present_count or 0 }}</span>
                             <span class="badge warn">Late {{ latest_meeting.late_count or 0 }}</span>
                             <span class="badge danger">Absent {{ latest_meeting.absent_count or 0 }}</span>
-                            <span class="badge info">Unknown {{ latest_meeting.unknown_participants or 0 }}</span>
+                            <span class="badge info">Unknown {{ participants | rejectattr('is_member') | list | length }} }}</span>
                         </div>
                     </div>
                     <div class="stack">
@@ -5666,9 +5466,9 @@ def live():
                 </div>
 
                 <div class="rt-stat-grid">
-                    <div class="rt-stat"><div class="rt-stat-label">Live Participants</div><div class="rt-stat-value" data-counter="active_now">0</div><div class="rt-stat-sub">Currently inside meeting</div></div>
-                    <div class="rt-stat"><div class="rt-stat-label">Known Members</div><div class="rt-stat-value" data-counter="known_count">0</div><div class="rt-stat-sub">Registered and active now</div></div>
-                    <div class="rt-stat"><div class="rt-stat-label">Unknown</div><div class="rt-stat-value" data-counter="unknown_count">0</div><div class="rt-stat-sub">Unmatched live participants</div></div>
+                    <div class="rt-stat"><div class="rt-stat-label">Live Participants {{ participants|length }}</div><div class="rt-stat-sub">Currently inside meeting</div></div>
+                    <div class="rt-stat"><div class="rt-stat-label">Known Members {{ participants | selectattr('is_member') | list | length }}</div><div class="rt-stat-sub">Registered and active now</div></div>
+                    <div class="rt-stat"><div class="rt-stat-label">Unknown {{ participants | rejectattr('is_member') | list | length }}</div><div class="rt-stat-sub">Unmatched live participants</div></div>
                     <div class="rt-stat"><div class="rt-stat-label">Host Status</div><div class="rt-stat-value rt-host absent" id="rtHostStatus">Absent</div><div class="rt-stat-sub">Present / absent indicator</div></div>
                     <div class="rt-stat"><div class="rt-stat-label">Not Joined</div><div class="rt-stat-value" data-counter="not_joined_count">0</div><div class="rt-stat-sub">Active members pending</div></div>
                 </div>
@@ -5683,12 +5483,7 @@ def live():
         <div id="rtLiveContent" class="grid-2 rt-hidden" style="margin-top:16px;grid-template-columns:minmax(0,1.45fr) minmax(320px,.55fr)">
             <div class="card">
                 <div class="section-title">
-                    <div><h3 style="margin:0">Live Participants Board</h3><p>Animated participant status, duration, join/leave movement and known/unknown split.</p></div>
-                    <span class="badge ok"><span class="rt-pulse-dot" style="width:8px;height:8px"></span> AJAX Live</span>
-                </div>
-                <div id="rtNoLive" class="rt-empty-live">
-                    <div class="empty-icon">📡</div>
-                    <h3 style="margin:0 0 8px 0">Waiting for active Zoom meeting</h3>
+                    <div><h3 style="margin:0">Live Participants {{ participants|length }} 0 8px 0">Waiting for active Zoom meeting</h3>
                     <div class="muted">Start a meeting and send Zoom webhook events. This dashboard will update automatically without reload.</div>
                 </div>
                 <div class="table-wrap" id="rtTableWrap">
@@ -6402,21 +6197,7 @@ def analytics():
                         <select name="participant_type">
                             <option value="all" {% if filters.participant_type == 'all' %}selected{% endif %}>All</option>
                             <option value="member" {% if filters.participant_type == 'member' %}selected{% endif %}>Member</option>
-                            <option value="unknown" {% if filters.participant_type == 'unknown' %}selected{% endif %}>Unknown</option>
-                            <option value="host" {% if filters.participant_type == 'host' %}selected{% endif %}>Host</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="toolbar" style="margin-top:8px">
-                    <button type="submit">Apply Filters</button>
-                    <a class="btn success" href="{{ export_csv_url }}">Export CSV</a>
-                    <a class="btn secondary" href="{{ export_pdf_url }}">Export PDF</a>
-                </div>
-            </form>
-        </div>
-
-        <style>
-        .dash-showcase{display:grid;grid-template-columns:180px minmax(0,1fr) 310px;gap:14px;margin-top:16px;align-items:start}
+                            <option value="unknown" {% if filters.participant_type == 'unknown' %}selected{% endif %}>Unknown {{ participants | rejectattr('is_member') | list | length }}px minmax(0,1fr) 310px;gap:14px;margin-top:16px;align-items:start}
         .dash-mini-sidebar{background:#0f172a;color:#e5e7eb;border-radius:16px;padding:14px;box-shadow:0 14px 35px rgba(15,23,42,.18);position:sticky;top:92px}
         .dash-mini-brand{font-weight:950;font-size:15px;line-height:1.25;margin-bottom:14px;display:flex;gap:8px;align-items:center}
         .dash-mini-nav{display:grid;gap:8px}.dash-mini-nav a,.dash-note{border-radius:12px;padding:10px 11px;text-decoration:none;color:#e5e7eb;font-weight:800;font-size:13px;background:rgba(255,255,255,.04)}
@@ -6483,19 +6264,7 @@ def analytics():
                     <a href="#analyticsRows">Participants</a>
                     <a href="{{ export_pdf_url }}">Reports</a>
                 </nav>
-                <div class="dash-note"><b>GRAPH 1: PARTICIPATION OVER TIME</b><br>Line graph with 4 lines: Present, Late, Absent and Unknown.</div>
-                <div class="dash-note" style="background:#eaf4ff;border-color:#93c5fd"><b>GRAPH 2: TIME SPENT</b><br>Multiple members → members on X-axis.<br>Single member → date vs duration.</div>
-            </aside>
-
-            <main>
-                <div class="dash-main-title">
-                    <div class="dash-title-pill">1. ANALYTICAL DASHBOARD (GRAPHS & INSIGHTS)</div>
-                    <div class="dash-actions"><span>⬇ Export</span><span>⟳ Refresh</span><span>⚿ Filters</span></div>
-                </div>
-
-                <div class="analytics-layout">
-                    <div class="dash-card">
-                        <div class="analytics-layout" style="grid-template-columns:minmax(0,1fr) 230px">
+                <div class="dash-note"><b>GRAPH 1: PARTICIPATION OVER TIME</b><br>Line graph with 4 lines: Present, Late, Absent and Unknown {{ participants | rejectattr('is_member') | list | length }},1fr) 230px">
                             <div>
                                 <div class="chart-title">Participants Over Time</div>
                                 <div class="chart-big"><canvas id="gaTrendChart"></canvas></div>
@@ -6604,23 +6373,7 @@ def analytics():
             </div>
             <div class="card kpi-card">
                 <div class="kpi-icon">❓</div>
-                <h4>Unknown</h4>
-                <div class="metric">{{ data.summary.unknown_rows }}</div>
-                <div class="metric-sub">Participants not matched to a registered member.</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-icon">🔮</div>
-                <h4>Meeting Health</h4>
-                <div class="metric">{{ data.summary.current_meeting_health }}</div>
-                <div class="metric-sub">Weighted score from attendance, duration and participation.</div>
-            </div>
-        </div>
-
-        <div class="grid-2 analytics-anchor-section" id="analyticsTrends" style="margin-top:16px">
-            <div class="card">
-                <div class="section-title">
-                    <div>
-                        <h3 style="margin:0">Attendance Trend</h3>
+                <h4>Unknown {{ participants | rejectattr('is_member') | list | length }}">Attendance Trend</h3>
                         <p>Present, late and absent distribution over the selected period.</p>
                     </div>
                 </div>
@@ -6833,15 +6586,7 @@ def analytics():
             <div class="card">
                 <div class="section-title">
                     <div>
-                        <h3 style="margin:0">Unknown Match Suggestions</h3>
-                        <p>Potential member matches for unknown participant names.</p>
-                    </div>
-                </div>
-                <div class="list-card">
-                    {% for suggestion in data.unknown_match_suggestions %}
-                    <div class="list-row">
-                        <div>
-                            <div style="font-weight:900">{{ suggestion.unknown }}</div>
+                        <h3 style="margin:0">Unknown {{ participants | rejectattr('is_member') | list | length }}0">{{ suggestion.unknown }}</div>
                             <div class="muted">Possible match: {{ suggestion.member }}</div>
                         </div>
                         <span class="badge info">{{ suggestion.score }}%</span>
@@ -7021,7 +6766,7 @@ def analytics():
                             {label: 'Present', data: trend.present, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.10)', fill: false},
                             {label: 'Late', data: trend.late, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.10)', fill: false},
                             {label: 'Absent', data: trend.absent, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.10)', fill: false},
-                            {label: 'Unknown', data: trend.unknown, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,.10)', fill: false}
+                            {label: 'Unknown {{ participants | rejectattr('is_member') | list | length }})', fill: false}
                         ]
                     },
                     options: {
@@ -7498,13 +7243,7 @@ def attendance_register():
                 <span style="color:#15803d;font-weight:900">P</span> Present - Green<br>
                 <span style="color:#ea580c;font-weight:900">L</span> Late - Orange<br>
                 <span style="color:#dc2626;font-weight:900">A</span> Absent - Red<br>
-                <span style="color:#64748b;font-weight:900">U</span> Unknown - Gray<br><br>
-                Click on participant name to view summary.
-            </aside>
-
-            <main class="register-book">
-                <div class="register-heading"><span>2. ATTENDANCE REGISTER (MONTHLY VIEW)</span></div>
-                <div style="display:flex;justify-content:flex-end;margin:-6px 0 8px"><button type="button" id="registerThemeToggle" class="btn secondary small">🌙 Dark Register</button></div>
+                <span style="color:#64748b;font-weight:900">U</span> Unknown {{ participants | rejectattr('is_member') | list | length }} 8px"><button type="button" id="registerThemeToggle" class="btn secondary small">🌙 Dark Register</button></div>
                 <div class="register-paper">
                     <form method="get" class="reg-topbar">
                         <div class="reg-month-nav">
@@ -7827,48 +7566,8 @@ def auto_send_smart_meeting_report(meeting_uuid, force=False):
             f"Health Score: {summary.get('meeting_health_score')} / 100 ({summary.get('health_grade')})\n"
             f"Present Members: {summary.get('total_present_members')}/{summary.get('total_members')}\n"
             f"Absent Members: {summary.get('total_absent_members')}\n"
-            f"Unknown Participants: {summary.get('total_unknown_participants')}\n\n"
-            "PDF and Excel reports are attached."
-        )
-        html = f"""
-        <div style='font-family:Arial,sans-serif;color:#111827'>
-          <h2>Zoom Attendance Platform - Smart Report</h2>
-          <p><b>Topic:</b> {xml_escape(str(summary.get('topic') or '-'))}</p>
-          <p><b>Health Score:</b> {summary.get('meeting_health_score')} / 100 ({xml_escape(str(summary.get('health_grade') or '-'))})</p>
-          <p><b>Present:</b> {summary.get('total_present_members')}/{summary.get('total_members')} &nbsp; <b>Absent:</b> {summary.get('total_absent_members')} &nbsp; <b>Unknown:</b> {summary.get('total_unknown_participants')}</p>
-          <h3>Insights</h3><ul>{insights_html}</ul>
-          <h3>Critical Members</h3><ul>{critical_html}</ul>
-          <p>PDF and Excel reports are attached.</p>
-        </div>
-        """
-
-        ok, message = send_email_with_attachments(
-            recipient,
-            subject,
-            body,
-            html,
-            attachments=[
-                {"filename": f"{base_name}.pdf", "content": pdf_bytes, "mime": "application/pdf"},
-                {"filename": f"{base_name}.xlsx", "content": excel_bytes, "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
-            ],
-        )
-        if ok:
-            log_activity("smart_report_auto_sent" if not force else "smart_report_manual_sent", f"{meeting_uuid} -> {recipient}")
-        return ok, message
-    except Exception as exc:
-        print(f"⚠️ auto_send_smart_meeting_report skipped: {exc}")
-        return False, str(exc)
-
-
-@app.route("/meetings")
-@login_required
-def meetings():
-    maybe_finalize_stale_live_meetings()
-    try:
-        page_no = max(int(request.args.get("page", 1)), 1)
-    except Exception:
-        page_no = 1
-    per_page = 50
+            f"Unknown {{ participants | rejectattr('is_member') | list | length }}0 ({xml_escape(str(summary.get('health_grade') or '-'))})</p>
+          <p><b>Present:</b> {summary.get('total_present_members')}/{summary.get('total_members')} &nbsp; <b>Absent:</b> {summary.get('total_absent_members')} &nbsp; <b>Unknown {{ participants | rejectattr('is_member') | list | length }}
     offset = (page_no - 1) * per_page
 
     with db() as conn:
@@ -7894,15 +7593,7 @@ def meetings():
                         <th>Status</th>
                         <th>Participants</th>
                         <th>Members</th>
-                        <th>Unknown</th>
-                        <th>Reports</th>
-                    </tr>
-                    {% for m in rows %}
-                    <tr>
-                        <td>{{ fmt_dt(m.start_time) }}</td>
-                        <td>{{ m.topic or 'Untitled Meeting' }}</td>
-                        <td>{{ m.status or '-' }}</td>
-                        <td>{{ m.unique_participants or 0 }}</td>
+                        <th>Unknown {{ participants | rejectattr('is_member') | list | length }} }}</td>
                         <td>{{ m.member_participants or 0 }}</td>
                         <td>{{ m.unknown_participants or 0 }}</td>
                         <td>
@@ -8396,41 +8087,7 @@ def zoom_webhook():
                 or participant.get("name")
                 or participant.get("participant_name")
                 or participant.get("screen_name")
-                or "Unknown Participant"
-            )
-            participant_email = (
-                participant.get("email")
-                or participant.get("user_email")
-                or participant.get("participant_email")
-                or None
-            )
-
-            print("📌 PARSED PARTICIPANT:", {
-                "meeting_uuid": meeting_uuid,
-                "event_type": event_type,
-                "participant_name": participant_name,
-                "participant_email": participant_email,
-                "event_raw": event_raw,
-                "event_time": str(event_time),
-            })
-
-            update_participant(
-                meeting_uuid,
-                participant_name,
-                participant_email,
-                event_time,
-                event_type,
-            )
-            log_activity("zoom_participant_event", f"{event} :: {meeting_uuid} :: {participant_name}")
-            return jsonify({"ok": True})
-
-        if event in ("meeting.ended", "meeting.end"):
-            meeting = ensure_meeting(obj)
-            print("✅ MEETING ENDED RESOLVED:", meeting)
-
-            if not meeting:
-                print("❌ meeting not resolved")
-                return jsonify({"ok": False, "reason": "meeting not resolved"}), 200
+                or "Unknown {{ participants | rejectattr('is_member') | list | length }}0
 
             finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local(), run_post_actions=False)
             print("✅ FINALIZED:", finalized)
@@ -8576,61 +8233,7 @@ def push_setup():
                 const vapidResp = await fetch('{url_for('push_vapid_key')}');
                 const vapidData = await vapidResp.json();
                 if (!vapidData.ok) {{
-                    setStatus('Unable to load VAPID key: ' + (vapidData.error || 'Unknown error'));
-                    return;
-                }}
-
-                const registration = await navigator.serviceWorker.register('{url_for('service_worker_js')}');
-                let subscription = await registration.pushManager.getSubscription();
-                if (!subscription) {{
-                    subscription = await registration.pushManager.subscribe({{
-                        userVisibleOnly: true,
-                        applicationServerKey: urlBase64ToUint8Array(vapidData.publicKey)
-                    }});
-                }}
-
-                const saveResp = await fetch('{url_for('push_subscribe')}', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify(subscription)
-                }});
-                const saveData = await saveResp.json();
-                if (saveData.ok) {{
-                    setStatus('Notifications enabled successfully for this browser.');
-                }} else {{
-                    setStatus('Subscription save failed: ' + (saveData.error || 'Unknown error'));
-                }}
-            }} catch (err) {{
-                setStatus('Push setup failed: ' + err);
-            }}
-        }}
-
-        async function sendTestPush() {{
-            try {{
-                const resp = await fetch('{url_for('test_push')}');
-                const data = await resp.json();
-                setStatus('Test push result: ' + JSON.stringify(data));
-            }} catch (err) {{
-                setStatus('Test push failed: ' + err);
-            }}
-        }}
-        </script>
-    </body>
-    </html>
-    """
-    return render_template_string(html)
-
-
-@app.route("/test-push")
-@login_required
-def test_push():
-    results = send_push_notification(
-        title="Test Push from Zoom Attendance Platform",
-        body="Browser push setup is working successfully.",
-        target_username=session.get("username"),
-        click_url=url_for("home", _external=True),
-    )
-    if results.get("sent", 0) > 0:
+                    setStatus('Unable to load VAPID key: ' + (vapidData.error || 'Unknown {{ participants | rejectattr('is_member') | list | length }}) > 0:
         log_activity("test_push_sent", session.get("username") or "unknown")
     return jsonify({"ok": results.get("sent", 0) > 0, **results})
 
@@ -8851,8 +8454,7 @@ def generate_ai_level3_insights():
     if warning: insights.append({'title':'Warning-risk members detected','severity':'warning','category':'Risk','message':f'{len(warning)} member(s) are between 50–75% attendance.','recommendation':'Monitor and send early reminders.'})
     if meetings:
         latest=meetings[0]
-        if (latest.get('unknown_participants') or 0)>=5: insights.append({'title':'Unknown participant spike','severity':'warning','category':'Security','message':f"Latest meeting had {latest.get('unknown_participants')} unknown participant(s).",'recommendation':'Review unknown users and ask members to join with registered names.'})
-        if (latest.get('late_count') or 0)>=3: insights.append({'title':'Late trend increased','severity':'warning','category':'Punctuality','message':f"Latest meeting had {latest.get('late_count')} late participant(s).",'recommendation':'Send pre-meeting reminder 10 minutes earlier.'})
+        if (latest.get('unknown_participants') or 0)>=5: insights.append({'title':'Unknown {{ participants | rejectattr('is_member') | list | length }})>=3: insights.append({'title':'Late trend increased','severity':'warning','category':'Punctuality','message':f"Latest meeting had {latest.get('late_count')} late participant(s).",'recommendation':'Send pre-meeting reminder 10 minutes earlier.'})
     if top: insights.append({'title':'Top performer','severity':'info','category':'Performance','message':f"{top[0]['name']} is leading with {top[0]['attendance_pct']}% attendance.",'recommendation':'Appreciate consistent attendance to improve motivation.'})
     if worst: insights.append({'title':'Worst performer','severity':'critical' if worst[0]['attendance_pct']<50 else 'warning','category':'Performance','message':f"{worst[0]['name']} has {worst[0]['attendance_pct']}% attendance.",'recommendation':'Follow up personally and send attendance reminder.'})
     return insights[:12]
@@ -8906,12 +8508,12 @@ def _ai_bot_answer(query):
         lines=['Late trend from recent meetings:']+[f"• {fmt_date(m.get('start_time'))} — {m.get('late_count') or 0} late participant(s)" for m in _ai_recent_meetings(5)]
         return {'response':'\n'.join(lines),'targets':[]}
     if 'unknown' in q:
-        lines=['Unknown participant trend:']+[f"• {fmt_date(m.get('start_time'))} — {m.get('unknown_participants') or 0} unknown participant(s)" for m in _ai_recent_meetings(5)]
+        lines=['Unknown {{ participants | rejectattr('is_member') | list | length }}} unknown participant(s)" for m in _ai_recent_meetings(5)]
         return {'response':'\n'.join(lines),'targets':[]}
     if 'last meeting' in q or 'summarize' in q or 'summary' in q:
         meetings=_ai_recent_meetings(1)
         if not meetings: return {'response':'No meeting found yet.','targets':[]}
-        m=meetings[0]; return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown: {m.get('unknown_participants') or 0}. Health score: {_ai_meeting_health_score(m)}/100.",'targets':[]}
+        m=meetings[0]; return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown {{ participants | rejectattr('is_member') | list | length }}}. Health score: {_ai_meeting_health_score(m)}/100.",'targets':[]}
     member=_ai_find_member_by_query(q)
     if member: return {'response':f"{member['name']} insight: Attendance {member['attendance_pct']}%, Risk {member['risk']}, Trend {member['trend']}, Tag {member['tag']}. Suggestion: {member['suggestion']}",'targets':[member['id']]}
     if 'why' in q and ('drop' in q or 'decrease' in q or 'down' in q):
@@ -9192,19 +8794,7 @@ def _ai_answer_member_attendance(q):
         f"{member.get('name')} attendance intelligence:\n"
         f"• Attendance: {member.get('attendance_pct')}%\n"
         f"• Total meetings counted: {member.get('total')}\n"
-        f"• Present: {member.get('present')} | Late: {member.get('late')} | Absent: {member.get('absent')} | Unknown: {member.get('unknown')}\n"
-        f"• Risk: {member.get('risk')}\n"
-        f"• Trend: {member.get('trend')}\n"
-        f"• Behavior tag: {member.get('tag')}\n"
-        f"• Suggestion: {member.get('suggestion')}\n"
-        f"• Basis: {member.get('basis','current data')}"
-    ), [member.get('id')]
-
-def _ai_answer_project_help(q):
-    ql=(q or '').lower()
-    if any(w in ql for w in ['what can you do','help','commands','features','capabilities']):
-        return ("I can help with attendance intelligence using your project data. Try:\n"
-                "• list all members below 50% attendance\n"
+        f"• Present: {member.get('present')} | Late: {member.get('late')} | Absent: {member.get('absent')} | Unknown {{ participants | rejectattr('is_member') | list | length }}% attendance\n"
                 "• show all members\n"
                 "• who is at risk?\n"
                 "• show top performers\n"
@@ -9235,8 +8825,8 @@ def _ai_answer_compare_last_meetings():
     delta=round(latest_pct-prev_pct,2)
     return (
         f"Last 2 meetings comparison:\n"
-        f"Latest: {latest.get('topic') or 'Meeting'} ({fmt_dt(latest.get('start_time'))}) — attendance {latest_pct}% | Present {latest.get('present_count') or 0}, Late {latest.get('late_count') or 0}, Absent {latest.get('absent_count') or 0}, Unknown {latest.get('unknown_participants') or 0}\n"
-        f"Previous: {prev.get('topic') or 'Meeting'} ({fmt_dt(prev.get('start_time'))}) — attendance {prev_pct}% | Present {prev.get('present_count') or 0}, Late {prev.get('late_count') or 0}, Absent {prev.get('absent_count') or 0}, Unknown {prev.get('unknown_participants') or 0}\n"
+        f"Latest: {latest.get('topic') or 'Meeting'} ({fmt_dt(latest.get('start_time'))}) — attendance {latest_pct}% | Present {latest.get('present_count') or 0}, Late {latest.get('late_count') or 0}, Absent {latest.get('absent_count') or 0}, Unknown {{ participants | rejectattr('is_member') | list | length }}}\n"
+        f"Previous: {prev.get('topic') or 'Meeting'} ({fmt_dt(prev.get('start_time'))}) — attendance {prev_pct}% | Present {prev.get('present_count') or 0}, Late {prev.get('late_count') or 0}, Absent {prev.get('absent_count') or 0}, Unknown {{ participants | rejectattr('is_member') | list | length }}}\n"
         f"Change: {delta}%"
     )
 
@@ -9379,14 +8969,14 @@ def _ai_command_answer_v112(query):
         return {'response':'\n'.join(lines), 'targets': []}
 
     if 'unknown' in ql:
-        lines=['Unknown participant trend:']+[f"• {fmt_date(m.get('start_time'))} — {m.get('unknown_participants') or 0} unknown participant(s)" for m in _ai_recent_meetings(8)]
+        lines=['Unknown {{ participants | rejectattr('is_member') | list | length }}} unknown participant(s)" for m in _ai_recent_meetings(8)]
         return {'response':'\n'.join(lines), 'targets': []}
 
     if any(x in ql for x in ['last meeting','summarize','summary']):
         meetings=_ai_recent_meetings(1)
         if not meetings: return {'response':'No meeting found yet.', 'targets': []}
         m=meetings[0]
-        return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown: {m.get('unknown_participants') or 0}. Health score: {_ai_meeting_health_score(m)}/100.", 'targets': []}
+        return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown {{ participants | rejectattr('is_member') | list | length }}}. Health score: {_ai_meeting_health_score(m)}/100.", 'targets': []}
 
     if any(x in ql for x in ['why','drop','decrease','down']):
         related=[i for i in generate_ai_level3_insights() if i.get('category') in ('Trend','Risk','Punctuality','Duration')]
@@ -9483,15 +9073,7 @@ try:
         "warning_risk": "Warning Risk",
         "declining_trend": "Declining Trend",
         "host_absent": "Host Absent",
-        "unknown_participant_spike": "Unknown Participant Spike",
-        "meeting_health_drop": "Meeting Health Drop",
-        "meeting_reminder": "Scheduled Meeting Reminder",
-    })
-    NOTIFICATION_DEFAULT_ALERT_TYPES = list(NOTIFICATION_ALERT_TYPE_LABELS.keys())
-except Exception as _alert_label_exc:
-    print(f"⚠️ Alert label extension skipped: {_alert_label_exc}")
-
-ALERT_AUTOMATION_LAST_RUN_TS = 0
+        "unknown_participant_spike": "Unknown {{ participants | rejectattr('is_member') | list | length }}
 ALERT_AUTOMATION_TABLES_READY = False
 ALERT_AUTOMATION_BG_RUNNING = False
 try:
@@ -9706,9 +9288,7 @@ def evaluate_meeting_alerts():
         if not latest.get("host_present"):
             results.append(trigger_intelligent_alert("host_absent", "absent", "🚨 Host absent detected", f"Host was not detected in meeting '{latest.get('topic') or latest.get('meeting_uuid')}'. Recommendation: verify host name hint and meeting ownership.", "critical", meeting=meeting_ref, phase="during"))
         if latest_unknown >= UNKNOWN_SPIKE_COUNT or unknown_pct >= UNKNOWN_SPIKE_PERCENT:
-            results.append(trigger_intelligent_alert("unknown_participant_spike", "spike", "⚠️ Unknown participant spike", f"Latest meeting has {latest_unknown} unknown participant(s) ({round(unknown_pct,1)}%). Recommendation: verify member list and restrict access if needed.", "warning", meeting=meeting_ref, phase="during"))
-        if len(meetings) >= 2:
-            h1 = _meeting_health_score_from_row(meetings[0]); h2 = _meeting_health_score_from_row(meetings[1])
+            results.append(trigger_intelligent_alert("unknown_participant_spike", "spike", "⚠️ Unknown {{ participants | rejectattr('is_member') | list | length }}]); h2 = _meeting_health_score_from_row(meetings[1])
             if h1 + 15 < h2:
                 results.append(trigger_intelligent_alert("meeting_health_drop", "dropped", "⚠️ Meeting health dropped", f"Meeting health dropped from {h2}/100 to {h1}/100. Recommendation: review absentees, unknown users and meeting duration.", "warning", meeting=meeting_ref, phase="after"))
     except Exception as exc:
