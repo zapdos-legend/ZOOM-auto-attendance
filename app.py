@@ -1,3 +1,4 @@
+# FINAL_LIVE_ATTENDANCE_LINKING_FIX_2026_04_26 = True
 # UUID_NORMALIZATION_FINAL_PATCH_2026_04_26 = True
 # LIVE_DASHBOARD_FINAL_REAL_FIX_2026_04_26 = True
 # LIVE_ROUTE_SERVER_RENDER_PATCH_2026_04_26 = True
@@ -1341,6 +1342,32 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
             has_meeting_pk = column_exists(conn, "attendance", "meeting_pk")
             meeting_pk = None
 
+            # FINAL FIX: bind participant rows to the latest real meeting row.
+            cur.execute(
+                """
+                SELECT *
+                FROM meetings
+                WHERE meeting_uuid = ANY(%s)
+                   OR (
+                        meeting_id IS NOT NULL
+                        AND meeting_id = (
+                            SELECT meeting_id
+                            FROM meetings
+                            WHERE meeting_uuid = ANY(%s)
+                            ORDER BY id DESC
+                            LIMIT 1
+                        )
+                        AND COALESCE(start_time, created_at) >= NOW() - INTERVAL '15 minutes'
+                      )
+                ORDER BY CASE WHEN status='live' THEN 0 ELSE 1 END, id DESC
+                LIMIT 1
+                """,
+                (zoom_uuid_candidates(meeting_uuid), zoom_uuid_candidates(meeting_uuid)),
+            )
+            bound_meeting = cur.fetchone()
+            if bound_meeting and bound_meeting.get("meeting_uuid"):
+                meeting_uuid = normalize_zoom_uuid(bound_meeting.get("meeting_uuid"))
+
             if has_meeting_pk:
                 cur.execute("SELECT * FROM meetings WHERE meeting_uuid = ANY(%s) ORDER BY id DESC LIMIT 1", (zoom_uuid_candidates(meeting_uuid),))
                 meeting = cur.fetchone()
@@ -1353,10 +1380,16 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                     return
 
             cur.execute(
-                "SELECT * FROM attendance WHERE meeting_uuid = ANY(%s) AND participant_key=%s",
+                "SELECT * FROM attendance WHERE meeting_uuid = ANY(%s) AND participant_key=%s ORDER BY id DESC LIMIT 1",
                 (zoom_uuid_candidates(meeting_uuid), key),
             )
             row = cur.fetchone()
+
+            if row and row.get("meeting_uuid") != meeting_uuid:
+                cur.execute(
+                    "UPDATE attendance SET meeting_uuid=%s, updated_at=NOW() WHERE id=%s",
+                    (meeting_uuid, row["id"]),
+                )
 
             if not row:
                 first_join = event_time if event_type == "join" else None
@@ -1682,7 +1715,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_actions=True):
                     late_count=%s,
                     absent_count=%s,
                     host_present=%s
-                WHERE meeting_uuid=%s
+                WHERE meeting_uuid = ANY(%s)
                 RETURNING *
                 """,
                 (
@@ -1694,7 +1727,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_actions=True):
                     late_count,
                     absent_count,
                     host_present,
-                    meeting_uuid,
+                    zoom_uuid_candidates(meeting_uuid),
                 ),
             )
             updated = cur.fetchone()
@@ -1720,10 +1753,11 @@ def refresh_live_meeting_summary(meeting_uuid):
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM attendance WHERE meeting_uuid = ANY(%s)", (zoom_uuid_candidates(meeting_uuid),))
             rows = cur.fetchall()
+            print("🔥 REFRESH LIVE SUMMARY:", {"uuid": meeting_uuid, "rows": len(rows)})
 
-            member_participants = sum(1 for r in rows if r["is_member"])
-            unknown_participants = sum(1 for r in rows if not r["is_member"])
-            host_present = any(r["is_host"] and r["current_join"] is not None for r in rows)
+            member_participants = sum(1 for r in rows if r.get("is_member"))
+            unknown_participants = sum(1 for r in rows if not r.get("is_member"))
+            host_present = any(r.get("is_host") and r.get("current_join") is not None for r in rows)
 
             cur.execute(
                 """
@@ -1732,9 +1766,9 @@ def refresh_live_meeting_summary(meeting_uuid):
                     member_participants=%s,
                     unknown_participants=%s,
                     host_present=%s
-                WHERE meeting_uuid=%s
+                WHERE meeting_uuid = ANY(%s)
                 """,
-                (len(rows), member_participants, unknown_participants, host_present, meeting_uuid),
+                (len(rows), member_participants, unknown_participants, host_present, zoom_uuid_candidates(meeting_uuid)),
             )
         conn.commit()
 
@@ -1763,8 +1797,11 @@ def read_live_snapshot():
                 SELECT *
                 FROM meetings
                 WHERE status IN ('live','ended')
-                AND start_time >= NOW() - INTERVAL '10 minutes'
-                ORDER BY start_time DESC
+                  AND COALESCE(start_time, created_at) >= NOW() - INTERVAL '15 minutes'
+                ORDER BY
+                    CASE WHEN status='live' THEN 0 ELSE 1 END,
+                    COALESCE(start_time, created_at) DESC,
+                    id DESC
                 LIMIT 1
                 """
             )
@@ -1772,6 +1809,8 @@ def read_live_snapshot():
 
             if not meeting:
                 return None
+
+            print("🔥 LIVE SNAPSHOT MEETING:", {"id": meeting.get("id"), "uuid": meeting.get("meeting_uuid"), "status": meeting.get("status"), "meeting_id": meeting.get("meeting_id")})
 
             meeting_uuid = (meeting.get("meeting_uuid") or "").strip()
             if meeting_uuid:
@@ -1785,12 +1824,28 @@ def read_live_snapshot():
                     (zoom_uuid_candidates(meeting_uuid),),
                 )
                 participants = cur.fetchall()
+
+                if not participants and meeting.get("meeting_id"):
+                    cur.execute(
+                        """
+                        SELECT a.*
+                        FROM attendance a
+                        JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+                        WHERE m.meeting_id=%s
+                          AND COALESCE(m.start_time, m.created_at) >= NOW() - INTERVAL '15 minutes'
+                        ORDER BY a.updated_at DESC NULLS LAST, a.id DESC
+                        """,
+                        (meeting.get("meeting_id"),),
+                    )
+                    participants = cur.fetchall()
             else:
                 participants = []
 
             member_name_expr = member_name_sql(conn)
             cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
             members = cur.fetchall()
+
+    print("🔥 LIVE SNAPSHOT PARTICIPANTS FOUND:", len(participants))
 
     # Enrich live rows now so UI/API do not depend on stale total_seconds.
     enriched_participants = []
@@ -1810,8 +1865,8 @@ def read_live_snapshot():
         reverse=True,
     )
 
-    joined_member_ids = {p["member_id"] for p in enriched_participants if p.get("member_id") and p.get("first_join")}
-    not_joined_members = [m for m in members if m["id"] not in joined_member_ids]
+    joined_member_ids = {p.get("member_id") for p in enriched_participants if p.get("member_id") and p.get("first_join")}
+    not_joined_members = [m for m in members if m.get("id") not in joined_member_ids]
     active_now = [p for p in enriched_participants if p.get("current_join") is not None]
 
     return {
