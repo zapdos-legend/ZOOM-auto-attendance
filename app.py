@@ -1665,7 +1665,7 @@ def read_live_snapshot():
                 """
                 SELECT *
                 FROM meetings
-                WHERE status='live' AND meeting_uuid IS NOT NULL AND meeting_uuid <> ''
+                WHERE lower(COALESCE(status, ''))='live'
                 ORDER BY id DESC
                 LIMIT 1
                 """
@@ -1675,11 +1675,15 @@ def read_live_snapshot():
             if not meeting:
                 return None
 
-            meeting_uuid = meeting.get("meeting_uuid")
-            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
-            participants = cur.fetchall()
+            meeting_uuid = meeting.get("meeting_uuid") or meeting.get("meeting_id") or str(meeting.get("id") or "")
+            if meeting_uuid:
+                cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s", (meeting_uuid,))
+                participants = cur.fetchall()
+            else:
+                participants = []
 
-            cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY full_name")
+            member_name_expr = member_name_sql(conn)
+            cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
             members = cur.fetchall()
 
     joined_member_ids = {p["member_id"] for p in participants if p.get("member_id") and p.get("first_join")}
@@ -1692,7 +1696,6 @@ def read_live_snapshot():
         "active_now": active_now,
         "not_joined_members": not_joined_members,
     }
-
 
 def normalize_period_dates(filters):
     period_mode = filters.get("period_mode", "custom")
@@ -4383,7 +4386,7 @@ BASE_HTML = """
 
     </style>
 </head>
-<body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
+<body class="{{ 'dark' if session.get('theme') == 'dark' else '' }} page-{{ active if active else 'login' }}">
 
 <script>
 (function(){
@@ -4633,7 +4636,7 @@ BASE_HTML = """
 </script>
 
 <!-- AI Level 3 Floating Bot -->
-<style>.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}</style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
+<style>body.page-login .ai-floating-bot{display:none!important}.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}</style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 
 </body>
 </html>
@@ -5284,7 +5287,8 @@ def build_live_snapshot_payload(include_feed=True):
             "id": row_id,
             "name": p.get("participant_name") or "-",
             "email": p.get("participant_email") or "",
-            "type": "Known" if is_known else "Unknown",
+            "type": "Host" if is_host else ("Member" if is_known else "Unknown"),
+            "category": "Host" if is_host else ("Member" if is_known else "Unknown"),
             "is_known": is_known,
             "is_host": is_host,
             "is_active": is_active_now,
@@ -5293,7 +5297,8 @@ def build_live_snapshot_payload(include_feed=True):
             "duration_seconds": int(live_total or 0),
             "duration_min": mins_from_seconds(live_total),
             "rejoins": p.get("rejoin_count") or 0,
-            "status": live_status,
+            "status": "LIVE" if is_active_now else "LEFT",
+            "attendance_status": live_status,
             "current_join_iso": current_join.isoformat() if current_join else "",
         })
 
@@ -5319,6 +5324,11 @@ def build_live_snapshot_payload(include_feed=True):
                     "sort": (parse_dt(p.get("last_leave")) or start_dt).timestamp(),
                 })
 
+    participant_payload = sorted(
+        participant_payload,
+        key=lambda item: (int(item.get("duration_seconds") or 0), 1 if item.get("is_active") else 0, str(item.get("name") or "").lower()),
+        reverse=True,
+    )
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
@@ -5465,7 +5475,7 @@ def live():
                 </div>
                 <div class="table-wrap" id="rtTableWrap">
                     <table class="rt-live-table">
-                        <thead><tr><th>Name</th><th>Type</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr></thead>
+                        <thead><tr><th>Name</th><th>Category</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th><th>Attendance</th></tr></thead>
                         <tbody id="rtParticipantsBody"></tbody>
                     </table>
                 </div>
@@ -5497,9 +5507,9 @@ def live():
             function animateCounter(key,next){const el=document.querySelector(`[data-counter="${key}"]`); if(!el) return; const from=counters[key] ?? parseInt(el.textContent||'0',10) || 0; const to=parseInt(next||0,10); counters[key]=to; const start=performance.now(); const dur=450; function step(t){const p=Math.min(1,(t-start)/dur); const val=Math.round(from+(to-from)*(1-Math.pow(1-p,3))); el.textContent=val; if(p<1) requestAnimationFrame(step);} requestAnimationFrame(step);}
             function startDurationClock(baseSeconds){ if(state.durationTimer) clearInterval(state.durationTimer); let startTick=Date.now(); state.durationTimer=setInterval(()=>{const elapsed=Math.floor((Date.now()-startTick)/1000); $('rtMeetingDuration').textContent='Duration '+fmtSeconds((baseSeconds||0)+elapsed); updateActiveDurations(elapsed);},1000); }
             function updateActiveDurations(extra){ document.querySelectorAll('[data-base-duration]').forEach(el=>{const active=el.getAttribute('data-active')==='1'; const base=parseInt(el.getAttribute('data-base-duration')||'0',10); el.textContent=fmtSeconds(base+(active?extra:0));}); }
-            function renderParticipants(rows){ const body=$('rtParticipantsBody'); const incoming=new Set(); let html=''; (rows||[]).forEach(p=>{const id=String(p.id||p.name); incoming.add(id); const isNew=!state.knownRows.has(id) && !state.firstLoad; const active=p.is_active; state.knownRows.set(id,p); html+=`<tr class="rt-row ${isNew?'new':''} ${active?'':'left'}" data-row-id="${esc(id)}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${p.is_known?'ok':'warn'}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="rt-duration" data-base-duration="${parseInt(p.duration_seconds||0,10)}" data-active="${active?'1':'0'}">${fmtSeconds(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td>${active?`<span class="status-pill status-live"><span class="status-pulse"></span>${esc(p.status)}</span>`:`<span class="badge ${badgeClass(p.status)}">${esc(p.status)}</span>`}</td></tr>`; });
+            function renderParticipants(rows){ const body=$('rtParticipantsBody'); const incoming=new Set(); let html=''; (rows||[]).forEach(p=>{const id=String(p.id||p.name); incoming.add(id); const isNew=!state.knownRows.has(id) && !state.firstLoad; const active=p.is_active; state.knownRows.set(id,p); html+=`<tr class="rt-row ${isNew?'new':''} ${active?'':'left'}" data-row-id="${esc(id)}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${p.category==='Host'?'info':(p.category==='Member'?'ok':'warn')}">${esc(p.category||p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="rt-duration" data-base-duration="${parseInt(p.duration_seconds||0,10)}" data-active="${active?'1':'0'}">${fmtSeconds(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td>${active?`<span class="status-pill status-live"><span class="status-pulse"></span>LIVE</span>`:`<span class="badge gray">LEFT</span>`}</td><td><span class="badge ${badgeClass(p.attendance_status)}">${esc(p.attendance_status||'-')}</span></td></tr>`; });
                 for (const id of Array.from(state.knownRows.keys())) { if(!incoming.has(id)) state.knownRows.delete(id); }
-                body.innerHTML=html || '<tr><td colspan="7" class="muted">No participant data yet.</td></tr>'; }
+                body.innerHTML=html || '<tr><td colspan="8" class="muted">No participant data yet.</td></tr>'; }
             function renderFeed(feed){ const box=$('rtFeed'); if(!feed || !feed.length){box.innerHTML='<div class="muted">No join/leave events yet.</div>';return;} box.innerHTML=feed.map(item=>`<div class="list-row rt-feed-item"><div><div style="font-weight:900">${esc(item.name)}</div><div class="muted">${esc(item.label)} · ${esc(item.time)}</div></div><span class="badge ${item.kind==='join'?'ok':'gray'}">${esc(item.tag)}</span></div>`).join(''); }
             function renderNotJoined(rows){ const box=$('rtNotJoined'); if(!rows || !rows.length){box.innerHTML='<div class="empty-state" style="padding:22px 18px"><div class="empty-icon" style="width:58px;height:58px;font-size:22px">✅</div><div style="font-weight:900;margin-bottom:6px">All active members joined</div><div class="muted">No pending active member remains outside the current session.</div></div>';return;} box.innerHTML=rows.map(m=>`<div class="list-row"><div><div style="font-weight:800">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''); }
             function renderSnapshot(data){
