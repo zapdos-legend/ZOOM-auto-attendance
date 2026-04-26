@@ -848,7 +848,7 @@ def finalize_stale_live_meetings():
 
                 if last_activity and last_activity <= threshold_time:
                     try:
-                        finalize_meeting(meeting_uuid, last_activity)
+                        finalize_meeting(meeting_uuid, last_activity, run_post_actions=False)
                     except Exception as e:
                         print(f"⚠️ finalize_meeting skipped for {meeting_uuid}: {e}")
 
@@ -1247,7 +1247,23 @@ def get_meeting_rows_last_activity(attendance_rows):
 
 
 def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type):
-    is_host = bool(HOST_NAME_HINT and HOST_NAME_HINT in (participant_name or "").strip().lower())
+    # Host detection must work even when Zoom sends host email instead of a name.
+    participant_name_l = (participant_name or "").strip().lower()
+    participant_email_l = (participant_email or "").strip().lower()
+    meeting_host_l = ""
+    try:
+        with db() as _host_conn:
+            with _host_conn.cursor() as _host_cur:
+                _host_cur.execute("SELECT host_name FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                _host_row = _host_cur.fetchone()
+                meeting_host_l = ((_host_row or {}).get("host_name") or "").strip().lower()
+    except Exception as _host_err:
+        print(f"⚠️ Host lookup skipped: {_host_err}")
+    is_host = bool(
+        (HOST_NAME_HINT and HOST_NAME_HINT in participant_name_l)
+        or (meeting_host_l and participant_email_l and meeting_host_l == participant_email_l)
+        or (meeting_host_l and participant_name_l and meeting_host_l == participant_name_l)
+    )
     member = find_member(participant_name, participant_email)
     key = participant_key(participant_name, participant_email)
 
@@ -1519,7 +1535,7 @@ def classify_row_for_meeting(row, start_time, end_time, present_percentage=None,
     return "ABSENT", total
 
 
-def finalize_meeting(meeting_uuid, ended_at=None):
+def finalize_meeting(meeting_uuid, ended_at=None, run_post_actions=True):
     ended_at = parse_dt(ended_at) or now_local()
     present_percentage = get_setting("present_percentage", int)
     late_pct = get_setting("late_count_as_present_percentage", int)
@@ -1616,14 +1632,17 @@ def finalize_meeting(meeting_uuid, ended_at=None):
             )
             updated = cur.fetchone()
         conn.commit()
-    try:
-        evaluate_smart_alerts_for_meeting(meeting_uuid)
-    except Exception as e:
-        print(f"⚠️ Smart alert evaluation skipped: {e}")
-    try:
-        auto_send_smart_meeting_report(meeting_uuid, force=False)
-    except Exception as e:
-        print(f"⚠️ Smart report auto-send skipped: {e}")
+    # Post-finalization actions can be slow (email/web-push/settings DB reads).
+    # Keep Zoom webhook responses fast and reliable by allowing callers to skip them.
+    if run_post_actions:
+        try:
+            evaluate_smart_alerts_for_meeting(meeting_uuid)
+        except BaseException as e:
+            print(f"⚠️ Smart alert evaluation skipped: {e}")
+        try:
+            auto_send_smart_meeting_report(meeting_uuid, force=False)
+        except BaseException as e:
+            print(f"⚠️ Smart report auto-send skipped: {e}")
     return updated
 
 
@@ -5224,8 +5243,9 @@ def _live_seconds_since(value):
 
 
 def build_live_snapshot_payload(include_feed=True):
-    """Lightweight live dashboard payload for AJAX polling. Does not change attendance logic."""
-    maybe_finalize_stale_live_meetings()
+    """Lightweight live dashboard payload for AJAX polling.
+    This endpoint must stay fast and must not run finalization, email, or alert work.
+    """
     info = read_live_snapshot()
     server_now = now_local()
     if not info:
@@ -5371,13 +5391,21 @@ def build_live_snapshot_payload(include_feed=True):
 @app.route("/api/live-snapshot")
 @login_required
 def api_live_snapshot():
-    return jsonify(build_live_snapshot_payload(include_feed=True))
+    try:
+        return jsonify(build_live_snapshot_payload(include_feed=True))
+    except BaseException as e:
+        print(f"❌ LIVE SNAPSHOT ERROR: {e}")
+        return jsonify({"ok": False, "has_live": False, "error": str(e), "participants": [], "feed": [], "not_joined": []}), 200
 
 
 @app.route("/api/live-summary")
 @login_required
 def api_live_summary():
-    payload = build_live_snapshot_payload(include_feed=False)
+    try:
+        payload = build_live_snapshot_payload(include_feed=False)
+    except BaseException as e:
+        print(f"❌ LIVE SUMMARY ERROR: {e}")
+        payload = {"ok": False, "has_live": False, "server_now": now_local().isoformat(), "meeting": None, "summary": {}}
     return jsonify({
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
@@ -5390,7 +5418,11 @@ def api_live_summary():
 @app.route("/api/live-feed")
 @login_required
 def api_live_feed():
-    payload = build_live_snapshot_payload(include_feed=True)
+    try:
+        payload = build_live_snapshot_payload(include_feed=True)
+    except BaseException as e:
+        print(f"❌ LIVE FEED ERROR: {e}")
+        payload = {"ok": False, "has_live": False, "server_now": now_local().isoformat(), "feed": []}
     return jsonify({
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
@@ -8206,7 +8238,7 @@ def zoom_webhook():
                 print("❌ meeting not resolved")
                 return jsonify({"ok": False, "reason": "meeting not resolved"}), 200
 
-            finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local())
+            finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local(), run_post_actions=False)
             print("✅ FINALIZED:", finalized)
             log_activity("zoom_meeting_ended", meeting["meeting_uuid"])
             return jsonify({"ok": True, "finalized": bool(finalized)})
