@@ -1,4 +1,5 @@
 # LIVE_DASHBOARD_FINAL_REAL_FIX_2026_04_26 = True
+# LIVE_ROUTE_SERVER_RENDER_PATCH_2026_04_26 = True
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
@@ -5481,6 +5482,31 @@ def api_live_feed():
 @login_required
 
 def live():
+    try:
+        initial_live_payload = json.dumps(build_live_snapshot_payload(include_feed=True), default=str)
+    except BaseException as e:
+        print(f"❌ LIVE INITIAL PAYLOAD ERROR: {e}")
+        initial_live_payload = json.dumps({
+            "ok": False,
+            "has_live": False,
+            "server_now": now_local().isoformat(),
+            "meeting": None,
+            "summary": {
+                "active_now": 0,
+                "known_count": 0,
+                "unknown_count": 0,
+                "not_joined_count": 0,
+                "total_tracked": 0,
+                "host_present": False,
+                "meeting_duration_seconds": 0,
+                "risk": "Idle",
+            },
+            "participants": [],
+            "not_joined": [],
+            "feed": [],
+            "error": str(e),
+        }, default=str)
+
     body = render_template_string(
         """
         <style>
@@ -5573,6 +5599,7 @@ def live():
 
         <script>
         (function(){
+            const initialPayload = {{ initial_live_payload|safe }};
             const pollMs = 2500;
             const state = { knownRows:new Map(), lastSnapshot:null, failed:0, firstLoad:true, meetingStart:null, durationTimer:null };
             const $ = (id) => document.getElementById(id);
@@ -5596,10 +5623,17 @@ def live():
                 const m=data.meeting||{}, s=data.summary||{}; $('rtLiveBadgeText').textContent='LIVE OPERATIONS BOARD'; $('rtMeetingTopic').textContent=m.topic||'Untitled Meeting'; $('rtMeetingCopy').textContent='Real-time command board for participant flow, host visibility, member presence, unknown risk, and attendance movement.'; $('rtMeetingId').textContent='Meeting ID '+(m.id||'-'); $('rtMeetingStarted').textContent='Started '+(m.start_time||'-'); $('rtRiskBadge').textContent='Risk '+(s.risk||'Idle'); $('rtRiskBadge').className='badge '+(s.risk==='Healthy'?'ok':s.risk==='Warning'?'warn':'danger'); $('rtHostStatus').textContent=s.host_present?'Present':'Absent'; $('rtHostStatus').className='rt-stat-value rt-host '+(s.host_present?'present':'absent'); animateCounter('active_now',s.active_now); animateCounter('known_count',s.known_count); animateCounter('unknown_count',s.unknown_count); animateCounter('not_joined_count',s.not_joined_count); $('rtNoLive').classList.add('rt-hidden'); $('rtTableWrap').classList.remove('rt-hidden'); renderParticipants(data.participants||[]); renderFeed(data.feed||[]); renderNotJoined(data.not_joined||[]); startDurationClock(s.meeting_duration_seconds||0);
             }
             async function poll(){ try{ const res=await fetch('{{ url_for('api_live_snapshot') }}',{headers:{'Accept':'application/json'},cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status); const data=await res.json(); state.failed=0; setConnection(true,'updated '+new Date().toLocaleTimeString()); renderSnapshot(data); }catch(err){ state.failed++; setConnection(false, state.failed>1?'retrying':''); console.warn('Live polling failed',err); } finally { setTimeout(poll,pollMs); } }
+            try {
+                renderSnapshot(initialPayload || {has_live:false, participants:[], feed:[], not_joined:[], summary:{}});
+                setConnection(true, 'initial render');
+            } catch (err) {
+                console.warn('Initial live render failed', err);
+            }
             poll();
         })();
         </script>
-        """
+        """,
+        initial_live_payload=initial_live_payload,
     )
     return page("Live", body, "live")
 
