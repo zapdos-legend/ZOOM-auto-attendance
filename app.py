@@ -2054,7 +2054,7 @@ def _graph_analytics_payload_uncached():
         minutes = seconds / 60.0
         if selected_single_member:
             dt = parse_dt(row.get("start_time"))
-            label = dt.strftime("%d-%m-%Y") if dt else "Unknown {{ participants | rejectattr('is_member') | list | length }}][0])
+            label = dt.strftime("%d-%m-%Y") if dt else "Unknown ][0])
     duration_labels = [item[0][1] for item in duration_items]
     duration_values = [round(item[1], 2) for item in duration_items]
     if not selected_single_member and len(duration_labels) > 60:
@@ -2092,7 +2092,7 @@ NOTIFICATION_ALERT_TYPE_LABELS = {
     "member_risk": "Member Critical / Warning Risk",
     "declining_trend": "Declining Trend",
     "host_absent": "Host Absent",
-    "unknown_participant_spike": "Unknown {{ participants | rejectattr('is_member') | list | length }}", "false", "no", "off"),
+    "unknown_participant_spike": "Unknown", "false", "no", "off"),
         "push_enabled": get_setting("notification_push_enabled", str).strip().lower() not in ("0", "false", "no", "off"),
         "alert_types": alert_types,
         "timings": timings,
@@ -2279,7 +2279,7 @@ def evaluate_smart_alerts_for_meeting(meeting_uuid):
                     alert_type="unknown_participant_spike",
                     state=f"unknown_{unknown_count}_{round(unknown_pct,1)}",
                     meeting=meeting,
-                    title="⚠️ Unknown {{ participants | rejectattr('is_member') | list | length }}
+                    title="⚠️ Unknown 
             if people:
                 avg_ref = max(sum(float(p.get("minutes") or 0) for p in people) / max(len(people), 1), 1.0)
             for person in people:
@@ -2776,13 +2776,13 @@ def build_phase3_alerts(summary, latest_meeting_summary, previous_meeting_summar
         alerts.append({"level": "warn", "title": "Warning members found", "text": f"{summary.get('warning_members_count', 0)} member(s) are slipping below healthy attendance."})
 
     if summary.get("unknown_rows", 0) >= 3:
-        alerts.append({"level": "info", "title": "Unknown {{ participants | rejectattr('is_member') | list | length }})} unknown participant records appeared in the current filtered view."})
+        alerts.append({"level": "info", "title": "Unknown"})
 
     if latest_meeting_summary and not latest_meeting_summary.get("present"):
         alerts.append({"level": "warn", "title": "Latest meeting has weak turnout", "text": "The latest meeting has no present classifications in the filtered dataset."})
 
     if latest_meeting_summary and latest_meeting_summary.get("unknown", 0) >= 2:
-        alerts.append({"level": "info", "title": "Unknown {{ participants | rejectattr('is_member') | list | length }})} unknown attendees appeared in the latest meeting snapshot."})
+        alerts.append({"level": "info", "title": "Unknown"})
 
     if latest_meeting_summary and previous_meeting_summary:
         latest_health = float(latest_meeting_summary.get("health") or 0)
@@ -2927,7 +2927,7 @@ def build_professional_report_workbook_rows(report_data):
         ["Total Members", summary.get("total_members")],
         ["Present Members", summary.get("total_present_members")],
         ["Absent Members", summary.get("total_absent_members")],
-        ["Unknown {{ participants | rejectattr('is_member') | list | length }},
+        ["Unknown ,
             row.get("rejoin_count") or 0,
             row.get("status") or "",
             "Yes" if row.get("is_unknown_joined") else "No",
@@ -3041,7 +3041,7 @@ def _analytics_data_uncached(filters):
     by_meeting = {}
 
     for r in rows:
-        key = r.get("participant_name") or "Unknown {{ participants | rejectattr('is_member') | list | length }},
+        key = r.get("participant_name") or "Unknown ,
                 "minutes": 0.0,
                 "present": 0,
                 "late": 0,
@@ -3341,7 +3341,7 @@ def _analytics_data_uncached(filters):
     if any(item.get("trend", {}).get("short") == "DECLINING" for item in leaderboard[:8]):
         alerts.insert(0, {"level": "warn", "title": "Low attendance trend", "text": "At least one high-visibility member is showing a declining attendance trend."})
     if unknown_spike_flag:
-        alerts.insert(0, {"level": "danger", "title": "Too many unknown participants", "text": f"Unknown {{ participants | rejectattr('is_member') | list | length }}, {"level": "warn", "title": "Host absent", "text": "The latest tracked meeting snapshot does not show the host as present."})
+        alerts.insert(0, {"level": "danger", "title": "Too many unknown participants", "text": f"Unknown"level": "warn", "title": "Host absent", "text": "The latest tracked meeting snapshot does not show the host as present."})
     if ended_early_flag:
         alerts.insert(0, {"level": "warn", "title": "Meeting ended early", "text": "Latest meeting duration looks lower than the recent meeting baseline."})
     alerts = alerts[:6]
@@ -3555,7 +3555,7 @@ def export_meeting_pdf_bytes(title, report_data):
 
     summary_table = Table([
         ["Participants", summary["total_participants"], "Members", summary["total_members"], "Health", f"{summary['meeting_health_score']} / 100"],
-        ["Present", summary["total_present_members"], "Absent", summary["total_absent_members"], "Unknown {{ participants | rejectattr('is_member') | list | length }}), "Warning", summary.get("warning_count", 0), "Critical", summary.get("critical_count", 0)],
+        ["Present", summary["total_present_members"], "Absent", summary["total_absent_members"], "Unknown"Warning", summary.get("warning_count", 0), "Critical", summary.get("critical_count", 0)],
     ], colWidths=[75, 70, 75, 70, 75, 75])
     summary_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eff6ff")),
@@ -3645,7 +3645,7 @@ def export_meeting_pdf_bytes(title, report_data):
 
     elements.extend(build_people_table(member_rows[:120], "Member Attendance Section"))
     if unknown_rows:
-        elements.extend(build_people_table(unknown_rows[:40], "Unknown {{ participants | rejectattr('is_member') | list | length }}])
+        elements.extend(build_people_table(unknown_rows[:40], "Unknown ])
     criteria_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
         ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cbd5e1")),
@@ -3717,7 +3717,7 @@ def export_pdf_bytes(title, rows, summary):
     elements.append(
         Paragraph(
             f"Total: {summary.get('total_rows', 0)} | Present: {summary.get('present_rows', 0)} | Late: {summary.get('late_rows', 0)} | "
-            f"Absent: {summary.get('absent_rows', 0)} | Unknown {{ participants | rejectattr('is_member') | list | length }})} | Avg Minutes: {summary.get('avg_minutes', 0)}",
+            f"Absent: {summary.get('absent_rows', 0)} | Unknown )} | Avg Minutes: {summary.get('avg_minutes', 0)}",
             styles["Normal"],
         )
     )
@@ -3818,7 +3818,7 @@ BASE_HTML = """
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ title }}</title>
+    <title></title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -4441,7 +4441,7 @@ BASE_HTML = """
 
     </style>
 </head>
-<body class="{{ 'dark' if session.get('theme') == 'dark' else '' }} page-{{ active if active else 'login' }}">
+<body class=" page-">
 
 <script>
 (function(){
@@ -4468,7 +4468,7 @@ BASE_HTML = """
         </div>
         <div class="top-actions">
             {% if session.get('username') %}
-            <span class="chip chip-user">👋 {{ session.get('username') }} ({{ session.get('role') }})</span>
+            <span class="chip chip-user">👋  ()</span>
             {% endif %}
             {% if session.get('user_id') %}
             <label class="global-theme-control" title="Switch full app theme">
@@ -4484,9 +4484,9 @@ BASE_HTML = """
                     <option value="light-professional">Light Professional</option>
                 </select>
             </label>
-            <a href="{{ url_for('toggle_theme') }}" class="theme-switch">{{ 'Light Mode' if session.get('theme') == 'dark' else 'Dark Mode' }}</a>
-            <a href="{{ url_for('profile') }}" class="chip">🙍 Profile</a>
-            <a href="{{ url_for('logout') }}" class="chip">🚪 Logout</a>
+            <a href="" class="theme-switch"></a>
+            <a href="" class="chip">🙍 Profile</a>
+            <a href="" class="chip">🚪 Logout</a>
             {% endif %}
         </div>
     </div>
@@ -4497,9 +4497,9 @@ BASE_HTML = """
             <div class="nav-group">
                 {% for item in nav %}
                     {% set parts = item.label.split(' ', 1) %}
-                    <a href="{{ item.href }}" class="{% if active == item.key %}active{% endif %}">
-                        <span class="nav-icon">{{ parts[0] }}</span>
-                        <span>{{ parts[1] if parts|length > 1 else item.label }}</span>
+                    <a href="" class="{% if active == item.key %}active{% endif %}">
+                        <span class="nav-icon"></span>
+                        <span></span>
                     </a>
                 {% endfor %}
             </div>
@@ -4510,11 +4510,11 @@ BASE_HTML = """
                 {% with msgs = get_flashed_messages(with_categories=true) %}
                     {% if msgs %}
                         {% for category, message in msgs %}
-                            <div class="flash {{ 'error' if category == 'error' else 'success' }}">{{ message }}</div>
+                            <div class="flash "></div>
                         {% endfor %}
                     {% endif %}
                 {% endwith %}
-                {{ body|safe }}
+                
             </div>
         </div>
     </div>
@@ -4529,7 +4529,7 @@ BASE_HTML = """
         'Present':'Met the present threshold for the meeting.',
         'Late':'Joined but stayed below the present threshold.',
         'Absent':'Did not meet the required duration or did not join.',
-        'Unknown {{ participants | rejectattr('is_member') | list | length }}]);
+        'Unknown ]);
             if (!Number.isFinite(value)) return;
             const suffix = raw.slice(match[0].length);
             const duration = 900;
@@ -4716,7 +4716,7 @@ def handle_any_error(e):
         <div class="two-col">
             <div class="card glass-panel">
                 <h3 style="margin-top:0">Technical Details</h3>
-                <div class="debug-box">{{ error_text }}</div>
+                <div class="debug-box"></div>
             </div>
             <div class="stack">
                 <div class="card">
@@ -4726,8 +4726,8 @@ def handle_any_error(e):
                         <div class="mini-item"><div class="muted">Check data quality</div><div style="font-weight:900;margin-top:4px">Legacy or invalid rows are now handled more safely.</div></div>
                     </div>
                     <div class="mobile-actions" style="margin-top:14px">
-                        <a class="btn" href="{{ url_for('home') }}">Go Home</a>
-                        <a class="btn secondary" href="{{ url_for('login') }}">Back to Login</a>
+                        <a class="btn" href="">Go Home</a>
+                        <a class="btn secondary" href="">Back to Login</a>
                     </div>
                 </div>
             </div>
@@ -4801,12 +4801,12 @@ def login():
                 <p class="muted">Login to continue to your attendance dashboard.</p>
 
                 {% if login_error %}
-                    <div class='login-error'>{{ login_error }}</div>\n                    <div class='app-note'>Use your assigned role credentials. The UI is mobile-friendly and tuned for dark SaaS mode.</div>
+                    <div class='login-error'></div>\n                    <div class='app-note'>Use your assigned role credentials. The UI is mobile-friendly and tuned for dark SaaS mode.</div>
                 {% endif %}
 
                 <form method='post'>
                     <label>Username</label>
-                    <input name='username' required value='{{ request.form.get("username", "") if request.method == "POST" else "" }}'>
+                    <input name='username' required value=''>
                     <label>Password</label>
                     <input type='password' name='password' required>
                     <button type='submit' style="width:100%">Login</button>
@@ -4872,14 +4872,14 @@ def profile():
                     <div class="hero-copy">Manage account identity, password security, and access posture from one polished control area.</div>
                 </div>
                 <div class="hero-stats">
-                    <div class="hero-chip"><div class="small">Username</div><div class="big">{{ session.get('username') }}</div></div>
-                    <div class="hero-chip"><div class="small">Role</div><div class="big">{{ session.get('role') }}</div></div>
+                    <div class="hero-chip"><div class="small">Username</div><div class="big"></div></div>
+                    <div class="hero-chip"><div class="small">Role</div><div class="big"></div></div>
                 </div>
             </div>
         </div>
         <div class="stat-strip">
             <div class="compact-kpi"><div class="k">Account status</div><div class="v">Active</div></div>
-            <div class="compact-kpi"><div class="k">Session theme</div><div class="v">{{ session.get('theme', 'light')|title }}</div></div>
+            <div class="compact-kpi"><div class="k">Session theme</div><div class="v"></div></div>
             <div class="compact-kpi"><div class="k">Security mode</div><div class="v">Protected</div></div>
         </div>
         <div class="profile-shell" style="margin-top:16px">
@@ -4889,8 +4889,8 @@ def profile():
                     <span class="badge ok">Stable</span>
                 </div>
                 <div class="mini-list">
-                    <div class="mini-item"><div class="muted">Username</div><div style="font-weight:900;margin-top:4px">{{ session.get('username') }}</div></div>
-                    <div class="mini-item"><div class="muted">Role</div><div style="font-weight:900;margin-top:4px">{{ session.get('role') }}</div></div>
+                    <div class="mini-item"><div class="muted">Username</div><div style="font-weight:900;margin-top:4px"></div></div>
+                    <div class="mini-item"><div class="muted">Role</div><div style="font-weight:900;margin-top:4px"></div></div>
                     <div class="mini-item"><div class="muted">Recommendation</div><div style="font-weight:900;margin-top:4px">Change your password regularly and avoid sharing admin credentials.</div></div>
                 </div>
             </div>
@@ -4972,7 +4972,7 @@ def home():
             },
             {
                 "level": "warn" if latest_meeting and (latest_meeting.get("unknown_participants") or 0) > 0 else "ok",
-                "title": "Unknown {{ participants | rejectattr('is_member') | list | length }}) if latest_meeting else 0} unknown participant(s) detected in the latest meeting snapshot.",
+                "title": "Unknown",
             },
             {
                 "level": "danger" if health < 75 else "ok",
@@ -4996,76 +4996,76 @@ def home():
                         <span class="badge ok">Stable tracking</span>
                         <span class="badge info">Reports ready</span>
                         <span class="badge warn">Analytics enabled</span>
-                        <span class="badge gray">{{ 'Live meeting detected' if live_info else 'Waiting for next live session' }}</span>
+                        <span class="badge gray"></span>
                     </div>
                 </div>
                 <div class="hero-stats">
                     <div class="hero-chip">
                         <div class="small">System Health</div>
-                        <div class="big">{{ health }}%</div>
+                        <div class="big">%</div>
                     </div>
                     <div class="hero-chip">
                         <div class="small">Current State</div>
-                        <div class="big">{{ 'LIVE' if live_info else 'IDLE' }}</div>
+                        <div class="big"></div>
                     </div>
                     <div class="hero-chip">
                         <div class="small">Members</div>
-                        <div class="big">{{ active_members }}/{{ total_members }}</div>
+                        <div class="big">/</div>
                     </div>
                 </div>
             </div>
         </div>
 
         <div class="alert-rail">
-            <div class="alert-chip {{ 'ok' if live_info else 'info' }}">
-                <strong>{{ 'Live monitoring active' if live_info else 'System standing by' }}</strong>
-                <div class="muted">{{ 'Webhook stream is tracking a current live meeting.' if live_info else 'No live session is open right now, but the control center is healthy.' }}</div>
+            <div class="alert-chip ">
+                <strong></strong>
+                <div class="muted"></div>
             </div>
-            <div class="alert-chip {{ 'warn' if latest_meeting and (latest_meeting.unknown_participants or 0) > 0 else 'ok' }}">
-                <strong>Unknown {{ participants | rejectattr('is_member') | list | length }})|string) if latest_meeting else '0' }} unknown participant(s) detected in the latest meeting snapshot.</div>
+            <div class="alert-chip ">
+                <strong>Unknown )|string) if latest_meeting else '0' }} unknown participant(s) detected in the latest meeting snapshot.</div>
             </div>
-            <div class="alert-chip {{ 'danger' if health < 75 else 'ok' }}">
+            <div class="alert-chip ">
                 <strong>Attendance health signal</strong>
-                <div class="muted">{{ 'Attention is needed because attendance quality is below target.' if health < 75 else 'Attendance health is currently in a comfortable zone.' }}</div>
+                <div class="muted"></div>
             </div>
         </div>
 
         <div class="alert-rail">
             <div class="alert-chip ok"><strong>Live engine status</strong><div class="muted">Participants are being recalculated in real time every refresh cycle.</div></div>
-            <div class="alert-chip {{ 'warn' if host_now != 'Yes' else 'ok' }}"><strong>Host presence</strong><div class="muted">{{ 'Host is not currently active in the meeting.' if host_now != 'Yes' else 'Host presence has been detected successfully.' }}</div></div>
-            <div class="alert-chip {{ 'danger' if unknown_live_count >= 3 else 'info' }}"><strong>Unknown {{ participants | rejectattr('is_member') | list | length }}">Latest Meeting Spotlight</h3>
+            <div class="alert-chip "><strong>Host presence</strong><div class="muted"></div></div>
+            <div class="alert-chip "><strong>Unknown ">Latest Meeting Spotlight</h3>
                         <p>Quick summary of the most recent tracked meeting.</p>
                     </div>
                     {% if latest_meeting %}
-                    <span class="badge gray">{{ fmt_dt(latest_meeting.start_time) }}</span>
+                    <span class="badge gray"></span>
                     {% endif %}
                 </div>
                 {% if latest_meeting %}
                     <div class="split-head" style="margin-bottom:14px">
                         <div>
-                            <div style="font-size:22px;font-weight:900;letter-spacing:-.03em">{{ latest_meeting.topic or 'Untitled Meeting' }}</div>
-                            <div class="muted" style="margin-top:6px">Meeting ID: {{ latest_meeting.meeting_id or '-' }}</div>
+                            <div style="font-size:22px;font-weight:900;letter-spacing:-.03em"></div>
+                            <div class="muted" style="margin-top:6px">Meeting ID: </div>
                         </div>
                         <div class="row">
-                            <span class="badge ok">Present {{ latest_meeting.present_count or 0 }}</span>
-                            <span class="badge warn">Late {{ latest_meeting.late_count or 0 }}</span>
-                            <span class="badge danger">Absent {{ latest_meeting.absent_count or 0 }}</span>
-                            <span class="badge info">Unknown {{ participants | rejectattr('is_member') | list | length }} }}</span>
+                            <span class="badge ok">Present </span>
+                            <span class="badge warn">Late </span>
+                            <span class="badge danger">Absent </span>
+                            <span class="badge info">Unknown  }}</span>
                         </div>
                     </div>
                     <div class="stack">
                         <div class="mini-kpi">
                             <div class="label">Command spotlight progress</div>
-                            <div class="value">{{ latest_meeting.present_count or 0 }} + {{ latest_meeting.late_count or 0 }}</div>
+                            <div class="value"> + </div>
                             {% set spotlight_total = (latest_meeting.present_count or 0) + (latest_meeting.late_count or 0) + (latest_meeting.absent_count or 0) %}
                             <div class="spotlight-bar" style="margin-top:10px">
-                                <span style="width: {{ ((latest_meeting.present_count or 0) + (latest_meeting.late_count or 0)) / spotlight_total * 100 if spotlight_total else 0 }}%"></span>
+                                <span style="width: %"></span>
                             </div>
                         </div>
                         <div class="toolbar">
-                            <a class="btn" href="{{ url_for('meetings') }}">Open Meetings</a>
-                            <a class="btn secondary" href="{{ url_for('analytics') }}">Open Analytics</a>
-                            <a class="btn success" href="{{ url_for('live') }}">Open Live</a>
+                            <a class="btn" href="">Open Meetings</a>
+                            <a class="btn secondary" href="">Open Analytics</a>
+                            <a class="btn success" href="">Open Live</a>
                         </div>
                     </div>
                 {% else %}
@@ -5083,28 +5083,28 @@ def home():
                         <h3 style="margin:0">Quick Actions</h3>
                         <p>Fast navigation into your most-used platform flows.</p>
                     </div>
-                    <span class="badge {{ 'ok' if live_info else 'gray' }}">
-                        <span class="{{ 'status-pulse' if live_info else 'status-off' }}"></span>
-                        {{ 'Live now' if live_info else 'Idle now' }}
+                    <span class="badge ">
+                        <span class=""></span>
+                        
                     </span>
                 </div>
                 <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
-                    <a class="card card-tight" href="{{ url_for('live') }}" style="text-decoration:none;color:inherit">
+                    <a class="card card-tight" href="" style="text-decoration:none;color:inherit">
                         <div class="kpi-icon">🟢</div>
                         <h4 style="margin:0">Live Monitor</h4>
                         <div class="muted">Track active participants, duration and live status.</div>
                     </a>
-                    <a class="card card-tight" href="{{ url_for('analytics') }}" style="text-decoration:none;color:inherit">
+                    <a class="card card-tight" href="" style="text-decoration:none;color:inherit">
                         <div class="kpi-icon">📈</div>
                         <h4 style="margin:0">Analytics</h4>
                         <div class="muted">Open charts, health view, risk members and exports.</div>
                     </a>
-                    <a class="card card-tight" href="{{ url_for('members') }}" style="text-decoration:none;color:inherit">
+                    <a class="card card-tight" href="" style="text-decoration:none;color:inherit">
                         <div class="kpi-icon">👥</div>
                         <h4 style="margin:0">Members</h4>
                         <div class="muted">Manage active members and import new people safely.</div>
                     </a>
-                    <a class="card card-tight" href="{{ url_for('settings') }}" style="text-decoration:none;color:inherit">
+                    <a class="card card-tight" href="" style="text-decoration:none;color:inherit">
                         <div class="kpi-icon">⚙️</div>
                         <h4 style="margin:0">Settings</h4>
                         <div class="muted">Tune thresholds and finalization behavior.</div>
@@ -5120,7 +5120,7 @@ def home():
                         <h3 style="margin:0">Recent Meetings</h3>
                         <p>Latest meeting sessions with participant counts and status.</p>
                     </div>
-                    <a class="btn small secondary" href="{{ url_for('meetings') }}">See All</a>
+                    <a class="btn small secondary" href="">See All</a>
                 </div>
                 <div class="table-wrap">
                     <table>
@@ -5135,13 +5135,13 @@ def home():
                         {% set total_rows = (m.present_count or 0) + (m.late_count or 0) + (m.absent_count or 0) %}
                         {% set meeting_health = (((m.present_count or 0) + (m.late_count or 0)) / total_rows * 100) if total_rows else 0 %}
                         <tr>
-                            <td>{{ fmt_dt(m.start_time) }}</td>
-                            <td>{{ m.topic or 'Untitled Meeting' }}</td>
+                            <td></td>
+                            <td></td>
                             <td>
-                                <span class="badge {{ 'ok' if m.status == 'live' else 'gray' }}">{{ m.status or '-' }}</span>
+                                <span class="badge "></span>
                             </td>
-                            <td>{{ m.unique_participants or 0 }}</td>
-                            <td>{{ '%.1f'|format(meeting_health) }}%</td>
+                            <td></td>
+                            <td>%</td>
                         </tr>
                         {% endfor %}
                     </table>
@@ -5154,18 +5154,18 @@ def home():
                         <h3 style="margin:0">Recent Activity</h3>
                         <p>Most recent system actions and webhook events.</p>
                     </div>
-                    <a class="btn small secondary" href="{{ url_for('activity') }}">Open Log</a>
+                    <a class="btn small secondary" href="">Open Log</a>
                 </div>
                 <div class="list-card">
                     {% for item in recent_activity %}
                     <div class="list-row">
                         <div>
-                            <div style="font-weight:800">{{ item.action or '-' }}</div>
-                            <div class="muted">{{ item.username or 'system' }}</div>
+                            <div style="font-weight:800"></div>
+                            <div class="muted"></div>
                         </div>
                         <div style="text-align:right;max-width:58%">
-                            <div class="muted">{{ fmt_dt(item.created_at) }}</div>
-                            <div style="margin-top:4px;font-size:12px">{{ item.details or '-' }}</div>
+                            <div class="muted"></div>
+                            <div style="margin-top:4px;font-size:12px"></div>
                         </div>
                     </div>
                     {% endfor %}
@@ -5466,9 +5466,9 @@ def live():
                 </div>
 
                 <div class="rt-stat-grid">
-                    <div class="rt-stat"><div class="rt-stat-label">Live Participants {{ participants|length }}</div><div class="rt-stat-sub">Currently inside meeting</div></div>
-                    <div class="rt-stat"><div class="rt-stat-label">Known Members {{ participants | selectattr('is_member') | list | length }}</div><div class="rt-stat-sub">Registered and active now</div></div>
-                    <div class="rt-stat"><div class="rt-stat-label">Unknown {{ participants | rejectattr('is_member') | list | length }}</div><div class="rt-stat-sub">Unmatched live participants</div></div>
+                    <div class="rt-stat"><div class="rt-stat-label">Live Participants </div><div class="rt-stat-sub">Currently inside meeting</div></div>
+                    <div class="rt-stat"><div class="rt-stat-label">Known Members </div><div class="rt-stat-sub">Registered and active now</div></div>
+                    <div class="rt-stat"><div class="rt-stat-label">Unknown </div><div class="rt-stat-sub">Unmatched live participants</div></div>
                     <div class="rt-stat"><div class="rt-stat-label">Host Status</div><div class="rt-stat-value rt-host absent" id="rtHostStatus">Absent</div><div class="rt-stat-sub">Present / absent indicator</div></div>
                     <div class="rt-stat"><div class="rt-stat-label">Not Joined</div><div class="rt-stat-value" data-counter="not_joined_count">0</div><div class="rt-stat-sub">Active members pending</div></div>
                 </div>
@@ -5483,7 +5483,7 @@ def live():
         <div id="rtLiveContent" class="grid-2 rt-hidden" style="margin-top:16px;grid-template-columns:minmax(0,1.45fr) minmax(320px,.55fr)">
             <div class="card">
                 <div class="section-title">
-                    <div><h3 style="margin:0">Live Participants {{ participants|length }} 0 8px 0">Waiting for active Zoom meeting</h3>
+                    <div><h3 style="margin:0">Live Participants  0 8px 0">Waiting for active Zoom meeting</h3>
                     <div class="muted">Start a meeting and send Zoom webhook events. This dashboard will update automatically without reload.</div>
                 </div>
                 <div class="table-wrap" id="rtTableWrap">
@@ -5508,7 +5508,7 @@ def live():
 
         <script>
         (function(){
-            const initialPayload = {{ initial_live_payload|safe }};
+            const initialPayload = ;
             const pollMs = 2500;
             const state = { knownRows:new Map(), lastSnapshot:null, failed:0, firstLoad:true, meetingStart:null, durationTimer:null };
             const $ = (id) => document.getElementById(id);
@@ -5531,7 +5531,7 @@ def live():
                 if(!data.has_live){ $('rtLiveBadgeText').textContent='LIVE DASHBOARD IDLE'; $('rtMeetingTopic').textContent='Waiting for the next Zoom session'; $('rtMeetingCopy').textContent='No active live meeting right now. This page will reconnect automatically when Zoom webhook events arrive.'; $('rtMeetingId').textContent='Meeting ID -'; $('rtMeetingStarted').textContent='Started -'; $('rtRiskBadge').textContent='Risk Idle'; $('rtRiskBadge').className='badge gray'; $('rtHostStatus').textContent='Absent'; $('rtHostStatus').className='rt-stat-value rt-host absent'; ['active_now','known_count','unknown_count','not_joined_count'].forEach(k=>animateCounter(k,0)); $('rtNoLive').classList.remove('rt-hidden'); $('rtTableWrap').classList.add('rt-hidden'); renderFeed([]); renderNotJoined([]); startDurationClock(0); return; }
                 const m=data.meeting||{}, s=data.summary||{}; $('rtLiveBadgeText').textContent='LIVE OPERATIONS BOARD'; $('rtMeetingTopic').textContent=m.topic||'Untitled Meeting'; $('rtMeetingCopy').textContent='Real-time command board for participant flow, host visibility, member presence, unknown risk, and attendance movement.'; $('rtMeetingId').textContent='Meeting ID '+(m.id||'-'); $('rtMeetingStarted').textContent='Started '+(m.start_time||'-'); $('rtRiskBadge').textContent='Risk '+(s.risk||'Idle'); $('rtRiskBadge').className='badge '+(s.risk==='Healthy'?'ok':s.risk==='Warning'?'warn':'danger'); $('rtHostStatus').textContent=s.host_present?'Present':'Absent'; $('rtHostStatus').className='rt-stat-value rt-host '+(s.host_present?'present':'absent'); animateCounter('active_now',s.active_now); animateCounter('known_count',s.known_count); animateCounter('unknown_count',s.unknown_count); animateCounter('not_joined_count',s.not_joined_count); $('rtNoLive').classList.add('rt-hidden'); $('rtTableWrap').classList.remove('rt-hidden'); renderParticipants(data.participants||[]); renderFeed(data.feed||[]); renderNotJoined(data.not_joined||[]); startDurationClock(s.meeting_duration_seconds||0);
             }
-            async function poll(){ try{ const res=await fetch('{{ url_for('api_live_snapshot') }}',{headers:{'Accept':'application/json'},cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status); const data=await res.json(); state.failed=0; setConnection(true,'updated '+new Date().toLocaleTimeString()); renderSnapshot(data); }catch(err){ state.failed++; setConnection(false, state.failed>1?'retrying':''); console.warn('Live polling failed',err); } finally { setTimeout(poll,pollMs); } }
+            async function poll(){ try{ const res=await fetch('',{headers:{'Accept':'application/json'},cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status); const data=await res.json(); state.failed=0; setConnection(true,'updated '+new Date().toLocaleTimeString()); renderSnapshot(data); }catch(err){ state.failed++; setConnection(false, state.failed>1?'retrying':''); console.warn('Live polling failed',err); } finally { setTimeout(poll,pollMs); } }
             try {
                 renderSnapshot(initialPayload || {has_live:false, participants:[], feed:[], not_joined:[], summary:{}});
                 setConnection(true, 'initial render');
@@ -5687,31 +5687,31 @@ def members():
         </div>
 
         <div class='grid'>
-            <div class='card stat-card'><h4>Total Members</h4><div class='metric'>{{ total_members_count }}</div></div>
-            <div class='card stat-card'><h4>Active Members</h4><div class='metric'>{{ active_members_count }}</div></div>
-            <div class='card stat-card'><h4>Inactive Members</h4><div class='metric'>{{ inactive_members_count }}</div></div>
+            <div class='card stat-card'><h4>Total Members</h4><div class='metric'></div></div>
+            <div class='card stat-card'><h4>Active Members</h4><div class='metric'></div></div>
+            <div class='card stat-card'><h4>Inactive Members</h4><div class='metric'></div></div>
         </div>
 
         <br>
 
         <div class='grid'>
             <div class='card'>
-                <h3>{{ 'Edit Member' if edit_member else 'Add Member' }}</h3>
+                <h3></h3>
                 {% if session.get('role') == 'admin' %}
                 <form method='post'>
-                    <input type='hidden' name='action' value='{{ "edit" if edit_member else "add" }}'>
-                    {% if edit_member %}<input type='hidden' name='member_id' value='{{ edit_member.id }}'>{% endif %}
+                    <input type='hidden' name='action' value=''>
+                    {% if edit_member %}<input type='hidden' name='member_id' value=''>{% endif %}
                     <label>Full Name</label>
-                    <input name='full_name' required value='{{ member_display_name(edit_member) if edit_member else "" }}'>
+                    <input name='full_name' required value=''>
                     {% if edit_member %}
                     <label>Email</label>
-                    <input name='email' value='{{ edit_member.email if edit_member else "" }}'>
+                    <input name='email' value=''>
                     {% endif %}
                     <label>Phone</label>
-                    <input name='phone' value='{{ edit_member.phone if edit_member else "" }}'>
-                    <button type='submit'>{{ 'Update Member' if edit_member else 'Save Member' }}</button>
+                    <input name='phone' value=''>
+                    <button type='submit'></button>
                     {% if edit_member %}
-                        <a class='btn secondary' href='{{ url_for("members") }}'>Cancel</a>
+                        <a class='btn secondary' href=''>Cancel</a>
                     {% endif %}
                 </form>
                 {% else %}
@@ -5737,7 +5737,7 @@ def members():
         <div class='card'>
             <h3>Search Members</h3>
             <form method='get'>
-                <input name='q' value='{{ q }}' placeholder='Search by name, email or phone'>
+                <input name='q' value='' placeholder='Search by name, email or phone'>
                 <button type='submit'>Search</button>
             </form>
 
@@ -5751,9 +5751,9 @@ def members():
                     </tr>
                     {% for m in rows %}
                         <tr>
-                            <td>{{ member_display_name(m) }}</td>
-                            <td>{{ m.email or '-' }}</td>
-                            <td>{{ m.phone or '-' }}</td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
                             <td>
                                 {% if m.active|string in ['1', 'True', 'true', 't'] %}
                                     <span class='badge ok'>Active</span>
@@ -5761,14 +5761,14 @@ def members():
                                     <span class='badge danger'>Inactive</span>
                                 {% endif %}
                             </td>
-                            <td><a class='btn secondary small' href='{{ url_for("member_profile", member_id=m.id) }}'>View Profile</a></td>
+                            <td><a class='btn secondary small' href=''>View Profile</a></td>
                             {% if session.get('role') == 'admin' %}
                             <td>
                                 <div class='row'>
-                                    <a class='btn secondary small' href='{{ url_for("members", edit_id=m.id) }}'>Edit</a>
+                                    <a class='btn secondary small' href=''>Edit</a>
                                     <form method='post' class='toggle-form'>
                                         <input type='hidden' name='action' value='toggle'>
-                                        <input type='hidden' name='member_id' value='{{ m.id }}'>
+                                        <input type='hidden' name='member_id' value=''>
                                         <button type='submit' class='toggle-switch {% if m.active|string in ['1', 'True', 'true', 't'] %}on{% else %}off{% endif %}' aria-label='Toggle member status'>
                                             <span class='toggle-knob'></span>
                                             <span class='toggle-icon toggle-on'>✓</span>
@@ -5777,7 +5777,7 @@ def members():
                                     </form>
                                     <form method='post' onsubmit='return confirm("Delete this member?")'>
                                         <input type='hidden' name='action' value='delete'>
-                                        <input type='hidden' name='member_id' value='{{ m.id }}'>
+                                        <input type='hidden' name='member_id' value=''>
                                         <button type='submit' class='btn danger small'>Delete</button>
                                     </form>
                                 </div>
@@ -5818,31 +5818,31 @@ def member_profile(member_id):
         <div class="member-profile-hero">
             <div class="hero">
                 <div class="profile-sub">Member Profile / Deep Insights</div>
-                <h2 class="profile-title">{{ member_display_name(data.member) }}</h2>
-                <div class="profile-sub">Last seen: {{ data.summary.last_seen }} · Meetings tracked: {{ data.summary.meetings }}</div>
+                <h2 class="profile-title"></h2>
+                <div class="profile-sub">Last seen:  · Meetings tracked: </div>
                 <div class="profile-actions">
-                    <a class="btn secondary" href="{{ url_for('members') }}">← Back to Members</a>
-                    <a class="btn secondary" href="{{ url_for('analytics', member_ids=data.member.id) }}">Open in Analytics</a>
+                    <a class="btn secondary" href="">← Back to Members</a>
+                    <a class="btn secondary" href="">Open in Analytics</a>
                 </div>
             </div>
             <div class="card">
                 <h3>Current Risk & Trend</h3>
-                <div class="risk-pill">{{ data.summary.risk.emoji }} {{ data.summary.risk.label }}</div>
+                <div class="risk-pill"> </div>
                 <div style="height:12px"></div>
-                <div class="risk-pill">{{ data.summary.trend.emoji }} {{ data.summary.trend.label }} {% if data.summary.trend.delta %}({{ data.summary.trend.delta }}){% endif %}</div>
+                <div class="risk-pill">  {% if data.summary.trend.delta %}(){% endif %}</div>
                 <p class="muted">Score combines attendance, consistency, duration participation, rejoins, and recent activity. Existing attendance logic is not changed.</p>
             </div>
         </div>
 
         <div class="profile-kpis">
-            <div class="profile-kpi"><small>Attendance %</small><strong>{{ data.summary.attendance_percent }}%</strong></div>
-            <div class="profile-kpi"><small>Overall Score</small><strong>{{ data.summary.overall_score }}</strong></div>
-            <div class="profile-kpi"><small>Attendance Score</small><strong>{{ data.summary.attendance_score }}</strong></div>
-            <div class="profile-kpi"><small>Engagement Score</small><strong>{{ data.summary.engagement_score }}</strong></div>
-            <div class="profile-kpi"><small>Total Duration</small><strong>{{ data.summary.total_minutes }}m</strong></div>
-            <div class="profile-kpi"><small>Average Duration</small><strong>{{ data.summary.avg_minutes }}m</strong></div>
-            <div class="profile-kpi"><small>Late Count</small><strong>{{ data.summary.late }}</strong></div>
-            <div class="profile-kpi"><small>Rejoins</small><strong>{{ data.summary.rejoins }}</strong></div>
+            <div class="profile-kpi"><small>Attendance %</small><strong>%</strong></div>
+            <div class="profile-kpi"><small>Overall Score</small><strong></strong></div>
+            <div class="profile-kpi"><small>Attendance Score</small><strong></strong></div>
+            <div class="profile-kpi"><small>Engagement Score</small><strong></strong></div>
+            <div class="profile-kpi"><small>Total Duration</small><strong>m</strong></div>
+            <div class="profile-kpi"><small>Average Duration</small><strong>m</strong></div>
+            <div class="profile-kpi"><small>Late Count</small><strong></strong></div>
+            <div class="profile-kpi"><small>Rejoins</small><strong></strong></div>
         </div>
 
         <div class="profile-chart-grid">
@@ -5858,7 +5858,7 @@ def member_profile(member_id):
                 <h3>Risk History</h3>
                 <div class="timeline-list">
                     {% for label in data.charts.risk_labels|reverse %}
-                    <div class="timeline-item"><b>{{ label }}</b> · Risk score {{ data.charts.risk_values[loop.revindex0] }}</div>
+                    <div class="timeline-item"><b></b> · Risk score </div>
                     {% else %}<div class="muted">No risk history yet.</div>{% endfor %}
                 </div>
             </div>
@@ -5866,7 +5866,7 @@ def member_profile(member_id):
                 <h3>Alert History</h3>
                 <div class="timeline-list">
                     {% for alert in data.alerts %}
-                    <div class="timeline-item"><b>{{ alert.title }}</b><br><span class="muted">{{ fmt_dt(alert.created_at) }} · {{ alert.current_state }}</span><br>{{ alert.message }}</div>
+                    <div class="timeline-item"><b></b><br><span class="muted"> · </span><br></div>
                     {% else %}<div class="muted">No smart alerts recorded for this member yet.</div>{% endfor %}
                 </div>
             </div>
@@ -5879,14 +5879,14 @@ def member_profile(member_id):
                 <table>
                     <tr><th>Meeting</th><th>Date</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr>
                     {% for r in data.rows %}
-                    <tr><td>{{ r.topic }}</td><td>{{ r.date }}</td><td>{{ r.join }}</td><td>{{ r.leave }}</td><td>{{ r.duration }} min</td><td>{{ r.rejoins }}</td><td><span class="badge {% if r.status == 'PRESENT' %}ok{% elif r.status == 'LATE' %}warn{% elif r.status == 'ABSENT' %}danger{% else %}info{% endif %}">{{ r.status }}</span></td></tr>
+                    <tr><td></td><td></td><td></td><td></td><td> min</td><td></td><td><span class="badge {% if r.status == 'PRESENT' %}ok{% elif r.status == 'LATE' %}warn{% elif r.status == 'ABSENT' %}danger{% else %}info{% endif %}"></span></td></tr>
                     {% else %}<tr><td colspan="7">No attendance records found for this member.</td></tr>{% endfor %}
                 </table>
             </div>
         </div>
 
         <script>
-        const memberProfileData = {{ data.charts|tojson }};
+        const memberProfileData = ;
         function memberProfilePalette(){return (window.getThemePalette?window.getThemePalette():{ok:'#22c55e',warn:'#f59e0b',danger:'#ef4444',a:'#6366f1',b:'#22d3ee',c:'#a855f7',text:'#cbd5e1',grid:'rgba(148,163,184,.18)'});}
         function makeMemberProfileCharts(){
             if(!window.Chart) return;
@@ -6004,12 +6004,12 @@ def users():
 
         <div class='grid'>
             <div class='card'>
-                <h3>{{ 'Edit User' if edit_user else 'Create User' }}</h3>
+                <h3></h3>
                 <form method='post'>
-                    <input type='hidden' name='action' value='{{ "edit" if edit_user else "add" }}'>
-                    {% if edit_user %}<input type='hidden' name='user_id' value='{{ edit_user.id }}'>{% endif %}
+                    <input type='hidden' name='action' value=''>
+                    {% if edit_user %}<input type='hidden' name='user_id' value=''>{% endif %}
                     <label>Username</label>
-                    <input name='username' required value='{{ edit_user.username if edit_user else "" }}'>
+                    <input name='username' required value=''>
                     {% if not edit_user %}
                     <label>Password</label>
                     <input name='password' required>
@@ -6019,9 +6019,9 @@ def users():
                         <option value='viewer' {% if edit_user and edit_user.role == 'viewer' %}selected{% endif %}>viewer</option>
                         <option value='admin' {% if edit_user and edit_user.role == 'admin' %}selected{% endif %}>admin</option>
                     </select>
-                    <button type='submit'>{{ 'Update User' if edit_user else 'Create' }}</button>
+                    <button type='submit'></button>
                     {% if edit_user %}
-                        <a class='btn secondary' href='{{ url_for("users") }}'>Cancel</a>
+                        <a class='btn secondary' href=''>Cancel</a>
                     {% endif %}
                 </form>
             </div>
@@ -6043,8 +6043,8 @@ def users():
                     <tr><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr>
                     {% for u in rows %}
                     <tr>
-                        <td>{{ u.username }}</td>
-                        <td>{{ u.role }}</td>
+                        <td></td>
+                        <td></td>
                         <td>
                             {% if u.is_active|string in ['1', 'True', 'true', 't'] %}
                                 <span class='badge ok'>Active</span>
@@ -6052,24 +6052,24 @@ def users():
                                 <span class='badge danger'>Disabled</span>
                             {% endif %}
                         </td>
-                        <td>{{ fmt_dt(u.created_at) }}</td>
+                        <td></td>
                         <td>
                             <div class='row'>
-                                <a class='btn secondary small' href='{{ url_for("users", edit_id=u.id) }}'>Edit</a>
+                                <a class='btn secondary small' href=''>Edit</a>
                                 <form method='post'>
                                     <input type='hidden' name='action' value='toggle'>
-                                    <input type='hidden' name='user_id' value='{{ u.id }}'>
+                                    <input type='hidden' name='user_id' value=''>
                                     <button class='btn warn small' type='submit'>Toggle</button>
                                 </form>
                                 <form method='post'>
                                     <input type='hidden' name='action' value='password'>
-                                    <input type='hidden' name='user_id' value='{{ u.id }}'>
+                                    <input type='hidden' name='user_id' value=''>
                                     <input name='new_password' placeholder='new password' required>
                                     <button class='btn secondary small' type='submit'>Reset Password</button>
                                 </form>
                                 <form method='post' onsubmit='return confirm("Delete this user?")'>
                                     <input type='hidden' name='action' value='delete'>
-                                    <input type='hidden' name='user_id' value='{{ u.id }}'>
+                                    <input type='hidden' name='user_id' value=''>
                                     <button class='btn danger small' type='submit'>Delete</button>
                                 </form>
                             </div>
@@ -6128,15 +6128,15 @@ def analytics():
                 <div class="hero-stats">
                     <div class="hero-chip">
                         <div class="small">Rows</div>
-                        <div class="big">{{ data.summary.total_rows }}</div>
+                        <div class="big"></div>
                     </div>
                     <div class="hero-chip">
                         <div class="small">Health</div>
-                        <div class="big">{{ data.summary.current_meeting_health }} / 100</div>
+                        <div class="big"> / 100</div>
                     </div>
                     <div class="hero-chip">
                         <div class="small">Predicted Next</div>
-                        <div class="big">{{ data.summary.current_meeting_health }}</div>
+                        <div class="big"></div>
                     </div>
                 </div>
             </div>
@@ -6163,19 +6163,19 @@ def analytics():
                     </div>
                     <div>
                         <label>From Date</label>
-                        <input type="date" name="from_date" value="{{ filters.from_date }}">
+                        <input type="date" name="from_date" value="">
                     </div>
                     <div>
                         <label>To Date</label>
-                        <input type="date" name="to_date" value="{{ filters.to_date }}">
+                        <input type="date" name="to_date" value="">
                     </div>
                     <div>
                         <label>Meeting</label>
                         <select name="meeting_uuid">
                             <option value="">All meetings</option>
                             {% for m in data.meetings %}
-                            <option value="{{ m.meeting_uuid }}" {% if filters.meeting_uuid == m.meeting_uuid %}selected{% endif %}>
-                                {{ m.topic or 'Untitled Meeting' }} - {{ fmt_dt(m.start_time) }}
+                            <option value="" {% if filters.meeting_uuid == m.meeting_uuid %}selected{% endif %}>
+                                 - 
                             </option>
                             {% endfor %}
                         </select>
@@ -6184,20 +6184,20 @@ def analytics():
                         <label>Members</label>
                         <select name="member_ids" multiple style="min-height:132px">
                             {% for m in data.members %}
-                            <option value="{{ m.id }}" {% if m.id|string in filters.member_ids %}selected{% endif %}>{{ m.display_name or member_display_name(m) }}</option>
+                            <option value="" {% if m.id|string in filters.member_ids %}selected{% endif %}></option>
                             {% endfor %}
                         </select>
                     </div>
                     <div>
                         <label>Person Search</label>
-                        <input type="text" name="person_name" value="{{ filters.person_name }}" placeholder="type participant name">
+                        <input type="text" name="person_name" value="" placeholder="type participant name">
                     </div>
                     <div>
                         <label>Participant Type</label>
                         <select name="participant_type">
                             <option value="all" {% if filters.participant_type == 'all' %}selected{% endif %}>All</option>
                             <option value="member" {% if filters.participant_type == 'member' %}selected{% endif %}>Member</option>
-                            <option value="unknown" {% if filters.participant_type == 'unknown' %}selected{% endif %}>Unknown {{ participants | rejectattr('is_member') | list | length }}px minmax(0,1fr) 310px;gap:14px;margin-top:16px;align-items:start}
+                            <option value="unknown" {% if filters.participant_type == 'unknown' %}selected{% endif %}>Unknown px minmax(0,1fr) 310px;gap:14px;margin-top:16px;align-items:start}
         .dash-mini-sidebar{background:#0f172a;color:#e5e7eb;border-radius:16px;padding:14px;box-shadow:0 14px 35px rgba(15,23,42,.18);position:sticky;top:92px}
         .dash-mini-brand{font-weight:950;font-size:15px;line-height:1.25;margin-bottom:14px;display:flex;gap:8px;align-items:center}
         .dash-mini-nav{display:grid;gap:8px}.dash-mini-nav a,.dash-note{border-radius:12px;padding:10px 11px;text-decoration:none;color:#e5e7eb;font-weight:800;font-size:13px;background:rgba(255,255,255,.04)}
@@ -6247,7 +6247,7 @@ def analytics():
             <nav class="analytics-tab-nav" aria-label="Analytics sections">
                 <a class="active" href="#analyticsOverview">Overview</a>
                 <a href="#graphAnalyticsSection">Graph Analytics</a>
-                <a href="{{ url_for('attendance_register') }}">Register</a>
+                <a href="">Register</a>
                 <a href="#analyticsMembers">Members</a>
                 <a href="#analyticsRisk">Risk</a>
                 <a href="#analyticsTrends">Trends</a>
@@ -6260,11 +6260,11 @@ def analytics():
                 <nav class="dash-mini-nav">
                     <a class="active" href="#graphAnalyticsSection">Overview</a>
                     <a href="#gaTrendChart">Attendance Graphs</a>
-                    <a href="{{ url_for('attendance_register') }}">Register View</a>
+                    <a href="">Register View</a>
                     <a href="#analyticsRows">Participants</a>
-                    <a href="{{ export_pdf_url }}">Reports</a>
+                    <a href="">Reports</a>
                 </nav>
-                <div class="dash-note"><b>GRAPH 1: PARTICIPATION OVER TIME</b><br>Line graph with 4 lines: Present, Late, Absent and Unknown {{ participants | rejectattr('is_member') | list | length }},1fr) 230px">
+                <div class="dash-note"><b>GRAPH 1: PARTICIPATION OVER TIME</b><br>Line graph with 4 lines: Present, Late, Absent and Unknown ,1fr) 230px">
                             <div>
                                 <div class="chart-title">Participants Over Time</div>
                                 <div class="chart-big"><canvas id="gaTrendChart"></canvas></div>
@@ -6295,7 +6295,7 @@ def analytics():
                                     <button type="button" class="checkbox-select-btn">All months</button>
                                     <div class="checkbox-select-menu">
                                         <label><input type="checkbox" value="__all__" checked> All Months</label>
-                                        {% for month in graph_options.months %}<label><input type="checkbox" value="{{ month.value }}"> {{ month.label }}</label>{% endfor %}
+                                        {% for month in graph_options.months %}<label><input type="checkbox" value=""> </label>{% endfor %}
                                     </div>
                                 </div>
                             </div>
@@ -6305,7 +6305,7 @@ def analytics():
                                     <button type="button" class="checkbox-select-btn">All years</button>
                                     <div class="checkbox-select-menu">
                                         <label><input type="checkbox" value="__all__" checked> All Years</label>
-                                        {% for year in graph_options.years %}<label><input type="checkbox" value="{{ year }}"> {{ year }}</label>{% endfor %}
+                                        {% for year in graph_options.years %}<label><input type="checkbox" value=""> </label>{% endfor %}
                                     </div>
                                 </div>
                             </div>
@@ -6328,7 +6328,7 @@ def analytics():
                                     <button type="button" class="checkbox-select-btn">All members</button>
                                     <div class="checkbox-select-menu">
                                         <label><input type="checkbox" value="__all__" checked> All Members</label>
-                                        {% for member in graph_options.members %}<label><input type="checkbox" value="{{ member.id }}"> {{ member.name }}</label>{% endfor %}
+                                        {% for member in graph_options.members %}<label><input type="checkbox" value=""> </label>{% endfor %}
                                     </div>
                                 </div>
                                 <div style="margin-top:10px"><label>From Date</label><input type="date" id="gaDurationFromDate"></div>
@@ -6350,30 +6350,30 @@ def analytics():
             <div class="card kpi-card">
                 <div class="kpi-icon">🧾</div>
                 <h4>Total Rows</h4>
-                <div class="metric">{{ data.summary.total_rows }}</div>
+                <div class="metric"></div>
                 <div class="metric-sub">Attendance records matching the current filter state.</div>
             </div>
             <div class="card kpi-card">
                 <div class="kpi-icon">✅</div>
                 <h4>Present</h4>
-                <div class="metric">{{ data.summary.present_rows }}</div>
+                <div class="metric"></div>
                 <div class="metric-sub">Participants who met the present threshold.</div>
             </div>
             <div class="card kpi-card">
                 <div class="kpi-icon">⏳</div>
                 <h4>Late</h4>
-                <div class="metric">{{ data.summary.late_rows }}</div>
+                <div class="metric"></div>
                 <div class="metric-sub">Attended but below the required present duration.</div>
             </div>
             <div class="card kpi-card">
                 <div class="kpi-icon">🚫</div>
                 <h4>Absent</h4>
-                <div class="metric">{{ data.summary.absent_rows }}</div>
+                <div class="metric"></div>
                 <div class="metric-sub">Rows classified as absent in the filtered dataset.</div>
             </div>
             <div class="card kpi-card">
                 <div class="kpi-icon">❓</div>
-                <h4>Unknown {{ participants | rejectattr('is_member') | list | length }}">Attendance Trend</h3>
+                <h4>Unknown ">Attendance Trend</h3>
                         <p>Present, late and absent distribution over the selected period.</p>
                     </div>
                 </div>
@@ -6395,7 +6395,7 @@ def analytics():
                 <div class="section-title">
                     <div>
                         <h3 style="margin:0">Member Duration</h3>
-                        <p>{{ member_chart.subtitle }}</p>
+                        <p></p>
                     </div>
                 </div>
                 {% if member_chart.empty %}
@@ -6419,13 +6419,13 @@ def analytics():
                     <div class="grid-2">
                         <div class="mini-kpi">
                             <div class="label">Attendance Health</div>
-                            <div class="value">{{ data.summary.attendance_health }}%</div>
+                            <div class="value">%</div>
                         </div>
                         <div class="mini-kpi">
                             <div class="label">Health Delta</div>
                             <div class="value">
                                 {% if comparison_delta is not none %}
-                                    {{ '+' if comparison_delta >= 0 else '' }}{{ comparison_delta }}
+                                    
                                 {% else %}
                                     -
                                 {% endif %}
@@ -6435,16 +6435,16 @@ def analytics():
                     <div class="mini-list">
                         <div class="mini-item">
                             <div class="muted">Latest meeting</div>
-                            <div style="font-weight:900;margin-top:4px">{{ latest_meeting.topic if latest_meeting else 'No meeting yet' }}</div>
-                            <div class="muted" style="margin-top:4px">{{ fmt_dt(latest_meeting.start_time) if latest_meeting else '-' }}</div>
+                            <div style="font-weight:900;margin-top:4px"></div>
+                            <div class="muted" style="margin-top:4px"></div>
                         </div>
                         <div class="mini-item">
                             <div class="muted">Average attendance score</div>
-                            <div style="font-weight:900;margin-top:4px">{{ data.summary.avg_attendance_score }}</div>
+                            <div style="font-weight:900;margin-top:4px"></div>
                         </div>
                         <div class="mini-item">
                             <div class="muted">Average engagement score</div>
-                            <div style="font-weight:900;margin-top:4px">{{ data.summary.avg_engagement_score }}</div>
+                            <div style="font-weight:900;margin-top:4px"></div>
                         </div>
                     </div>
                 </div>
@@ -6463,10 +6463,10 @@ def analytics():
                     {% for item in data.top_people %}
                     <div class="list-row">
                         <div>
-                            <div style="font-weight:900">{{ item.name }}</div>
-                            <div class="muted">Attendance {{ item.attendance_score }} · Engagement {{ item.engagement_score }}</div>
+                            <div style="font-weight:900"></div>
+                            <div class="muted">Attendance  · Engagement </div>
                         </div>
-                        <span class="badge ok">{{ item.overall_score }}</span>
+                        <span class="badge ok"></span>
                     </div>
                     {% else %}
                     <div class="muted">No ranked members available.</div>
@@ -6485,10 +6485,10 @@ def analytics():
                     {% for item in data.risk_table[:8] %}
                     <div class="list-row">
                         <div>
-                            <div style="font-weight:900">{{ item.name }}</div>
-                            <div class="muted">{{ item.risk.label }} · Overall {{ item.overall_score }}</div>
+                            <div style="font-weight:900"></div>
+                            <div class="muted"> · Overall </div>
                         </div>
-                        <span class="badge {{ 'danger' if item.risk.short == 'CRITICAL' else 'warn' }}">{{ item.risk.short }}</span>
+                        <span class="badge "></span>
                     </div>
                     {% else %}
                     <div class="muted">No members are currently in warning or critical state.</div>
@@ -6505,12 +6505,12 @@ def analytics():
                 </div>
                 <div class="insight-list">
                     {% for line in data.summary.insight_lines %}
-                    <div class="insight-item">{{ line }}</div>
+                    <div class="insight-item"></div>
                     {% else %}
                     <div class="insight-item">Not enough data yet to generate analytics insights.</div>
                     {% endfor %}
                     {% if data.reminder_suggestion.count %}
-                    <div class="insight-item">Reminder suggestion: {{ data.reminder_suggestion.message }}</div>
+                    <div class="insight-item">Reminder suggestion: </div>
                     {% endif %}
                 </div>
             </div>
@@ -6523,13 +6523,13 @@ def analytics():
                         <h3 id="analyticsReports" class="analytics-anchor-section" style="margin:0">Operational Alerts</h3>
                         <p>Auto-detected reminders, unknown spikes, and meeting health warnings.</p>
                     </div>
-                    <a class="btn warn small" href="{{ url_for('analytics_reminder', **request.args) }}">Trigger Reminder Suggestion</a>
+                    <a class="btn warn small" href="">Trigger Reminder Suggestion</a>
                 </div>
                 <div class="insight-list">
                     {% for alert in data.alerts %}
                     <div class="insight-item" style="border-left:4px solid {% if alert.level == 'danger' %}#ef4444{% elif alert.level == 'warn' %}#f59e0b{% elif alert.level == 'ok' %}#22c55e{% else %}#3b82f6{% endif %}">
-                        <div style="font-weight:900">{{ alert.title }}</div>
-                        <div class="muted" style="margin-top:4px">{{ alert.text }}</div>
+                        <div style="font-weight:900"></div>
+                        <div class="muted" style="margin-top:4px"></div>
                     </div>
                     {% endfor %}
                 </div>
@@ -6544,8 +6544,8 @@ def analytics():
                 <div class="mini-list">
                     {% for bucket, count in data.summary.duration_distribution.items() %}
                     <div class="mini-item">
-                        <div class="muted">{{ bucket }} minutes</div>
-                        <div style="font-weight:900;margin-top:4px">{{ count }} record(s)</div>
+                        <div class="muted"> minutes</div>
+                        <div style="font-weight:900;margin-top:4px"> record(s)</div>
                     </div>
                     {% endfor %}
                 </div>
@@ -6562,7 +6562,7 @@ def analytics():
                 </div>
                 <div class="insight-list">
                     {% for action in data.auto_actions %}
-                    <div class="insight-item">{{ action }}</div>
+                    <div class="insight-item"></div>
                     {% endfor %}
                 </div>
             </div>
@@ -6575,10 +6575,10 @@ def analytics():
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:6px">
                     {% for cell in data.heatmap %}
-                    <div title="{{ cell.title }}" style="height:24px;border-radius:7px;display:grid;place-items:center;font-size:10px;
+                    <div title="" style="height:24px;border-radius:7px;display:grid;place-items:center;font-size:10px;
                         background:{% if cell.css == 'heat-good' %}rgba(34,197,94,.35){% elif cell.css == 'heat-warn' %}rgba(245,158,11,.35){% elif cell.css == 'heat-bad' %}rgba(239,68,68,.35){% else %}rgba(148,163,184,.16){% endif %};
                         border:1px solid rgba(255,255,255,.06)">
-                        {{ cell.day }}
+                        
                     </div>
                     {% endfor %}
                 </div>
@@ -6586,10 +6586,10 @@ def analytics():
             <div class="card">
                 <div class="section-title">
                     <div>
-                        <h3 style="margin:0">Unknown {{ participants | rejectattr('is_member') | list | length }}0">{{ suggestion.unknown }}</div>
-                            <div class="muted">Possible match: {{ suggestion.member }}</div>
+                        <h3 style="margin:0">Unknown 0"></div>
+                            <div class="muted">Possible match: </div>
                         </div>
-                        <span class="badge info">{{ suggestion.score }}%</span>
+                        <span class="badge info">%</span>
                     </div>
                     {% else %}
                     <div class="muted">No likely unknown-to-member match suggestions right now.</div>
@@ -6736,7 +6736,7 @@ def analytics():
                 if (!graphSection) return;
                 graphSection.classList.add('loading');
                 try {
-                    const response = await fetch(`{{ url_for('analytics_graph_data') }}?${buildGraphQuery()}`, {
+                    const response = await fetch(`?${buildGraphQuery()}`, {
                         headers: {'X-Requested-With': 'XMLHttpRequest'}
                     });
                     if (!response.ok) throw new Error('Graph request failed');
@@ -6766,7 +6766,7 @@ def analytics():
                             {label: 'Present', data: trend.present, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.10)', fill: false},
                             {label: 'Late', data: trend.late, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.10)', fill: false},
                             {label: 'Absent', data: trend.absent, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.10)', fill: false},
-                            {label: 'Unknown {{ participants | rejectattr('is_member') | list | length }})', fill: false}
+                            {label: 'Unknown )', fill: false}
                         ]
                     },
                     options: {
@@ -6843,25 +6843,25 @@ def analytics():
                 new Chart(trendCanvas, {
                     type: 'line',
                     data: {
-                        labels: {{ trend.labels|tojson }},
+                        labels: ,
                         datasets: [
                             {
                                 label: 'Present',
-                                data: {{ trend.present|tojson }},
+                                data: ,
                                 borderColor: '#22c55e',
                                 backgroundColor: 'rgba(34,197,94,.12)',
                                 fill: true
                             },
                             {
                                 label: 'Late',
-                                data: {{ trend.late|tojson }},
+                                data: ,
                                 borderColor: '#f59e0b',
                                 backgroundColor: 'rgba(245,158,11,.10)',
                                 fill: true
                             },
                             {
                                 label: 'Absent',
-                                data: {{ trend.absent|tojson }},
+                                data: ,
                                 borderColor: '#ef4444',
                                 backgroundColor: 'rgba(239,68,68,.08)',
                                 fill: true
@@ -6882,7 +6882,7 @@ def analytics():
                     data: {
                         labels: ['Present', 'Late', 'Absent'],
                         datasets: [{
-                            data: [{{ data.summary.present_rows }}, {{ data.summary.late_rows }}, {{ data.summary.absent_rows }}],
+                            data: [, , ],
                             backgroundColor: ['#22c55e','#f59e0b','#ef4444'],
                             borderWidth: 0,
                             hoverOffset: 8
@@ -6900,10 +6900,10 @@ def analytics():
                 new Chart(memberCanvas, {
                     type: 'bar',
                     data: {
-                        labels: {{ member_chart.labels|tojson }},
+                        labels: ,
                         datasets: [{
                             label: 'Minutes',
-                            data: {{ member_chart.chart_values|tojson }},
+                            data: ,
                             borderRadius: 10,
                             backgroundColor: ['rgba(37,99,235,.78)','rgba(79,70,229,.78)','rgba(124,58,237,.78)','rgba(34,197,94,.72)','rgba(8,145,178,.72)','rgba(245,158,11,.72)','rgba(239,68,68,.72)']
                         }]
@@ -7243,7 +7243,7 @@ def attendance_register():
                 <span style="color:#15803d;font-weight:900">P</span> Present - Green<br>
                 <span style="color:#ea580c;font-weight:900">L</span> Late - Orange<br>
                 <span style="color:#dc2626;font-weight:900">A</span> Absent - Red<br>
-                <span style="color:#64748b;font-weight:900">U</span> Unknown {{ participants | rejectattr('is_member') | list | length }} 8px"><button type="button" id="registerThemeToggle" class="btn secondary small">🌙 Dark Register</button></div>
+                <span style="color:#64748b;font-weight:900">U</span> Unknown  8px"><button type="button" id="registerThemeToggle" class="btn secondary small">🌙 Dark Register</button></div>
                 <div class="register-paper">
                     <form method="get" class="reg-topbar">
                         <div class="reg-month-nav">
@@ -7251,18 +7251,18 @@ def attendance_register():
                             {% set prev_year = data.year - 1 if data.month == 1 else data.year %}
                             {% set next_month = 1 if data.month == 12 else data.month + 1 %}
                             {% set next_year = data.year + 1 if data.month == 12 else data.year %}
-                            <a class="btn secondary small" href="{{ url_for('attendance_register', month=prev_month, year=prev_year, search=request.args.get('search','')) }}">‹</a>
-                            <span class="reg-month-pill">{{ data.month_name }} {{ data.year }}</span>
-                            <a class="btn secondary small" href="{{ url_for('attendance_register', month=next_month, year=next_year, search=request.args.get('search','')) }}">›</a>
+                            <a class="btn secondary small" href="">‹</a>
+                            <span class="reg-month-pill"> </span>
+                            <a class="btn secondary small" href="">›</a>
                         </div>
                         <div class="reg-controls">
-                            <div><label>Month</label><select name="month" id="regMonth">{% for i in range(1, 13) %}<option value="{{ i }}" {% if i == data.month %}selected{% endif %}>{{ month_names[i-1] }}</option>{% endfor %}</select></div>
-                            <div><label>Year</label><select name="year" id="regYear">{% for y in data.years %}<option value="{{ y }}" {% if y|string == data.year|string %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></div>
-                            <div><label>Search member</label><input type="text" name="search" id="regSearch" value="{{ request.args.get('search','') }}" placeholder="member name"></div>
+                            <div><label>Month</label><select name="month" id="regMonth">{% for i in range(1, 13) %}<option value="" {% if i == data.month %}selected{% endif %}></option>{% endfor %}</select></div>
+                            <div><label>Year</label><select name="year" id="regYear">{% for y in data.years %}<option value="" {% if y|string == data.year|string %}selected{% endif %}></option>{% endfor %}</select></div>
+                            <div><label>Search member</label><input type="text" name="search" id="regSearch" value="" placeholder="member name"></div>
                             <button type="submit">Apply</button>
                             <button type="button" onclick="window.print()">Print</button>
-                            <a class="btn secondary" href="{{ url_for('attendance_register_export_pdf', month=data.month, year=data.year, search=request.args.get('search','')) }}">PDF</a>
-                            <a class="btn success" href="{{ url_for('attendance_register_export_excel', month=data.month, year=data.year, search=request.args.get('search','')) }}">Excel</a>
+                            <a class="btn secondary" href="">PDF</a>
+                            <a class="btn success" href="">Excel</a>
                         </div>
                     </form>
 
@@ -7272,17 +7272,17 @@ def attendance_register():
                                 <tr>
                                     <th class="sticky-member">Name</th>
                                     <th class="reg-total-head">Total</th>
-                                    {% for d in data.days %}<th>{{ d }}</th>{% endfor %}
+                                    {% for d in data.days %}<th></th>{% endfor %}
                                     <th>P</th><th>L</th><th>A</th><th>U</th><th>%</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for row in data.rows %}
                                 <tr>
-                                    <td class="sticky-member reg-member" data-name="{{ row.name }}" data-present="{{ row.totals.P }}" data-late="{{ row.totals.L }}" data-absent="{{ row.totals.A }}" data-unknown="{{ row.totals.U }}" data-total="{{ row.total_meetings }}" data-percent="{{ row.attendance_pct }}">{{ row.name }}</td>
-                                    <td class="reg-total-cell">{{ row.total_meetings }}</td>
-                                    {% for cell in row.cells %}<td class="reg-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}">{{ cell or '' }}</td>{% endfor %}
-                                    <td>{{ row.totals.P }}</td><td>{{ row.totals.L }}</td><td>{{ row.totals.A }}</td><td>{{ row.totals.U }}</td><td>{{ row.attendance_pct }}%</td>
+                                    <td class="sticky-member reg-member" data-name="" data-present="" data-late="" data-absent="" data-unknown="" data-total="" data-percent=""></td>
+                                    <td class="reg-total-cell"></td>
+                                    {% for cell in row.cells %}<td class="reg-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}"></td>{% endfor %}
+                                    <td></td><td></td><td></td><td></td><td>%</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -7291,13 +7291,13 @@ def attendance_register():
                     <div class="reg-pagination">
                         {% set pg = data.pagination %}
                         {% if pg.has_prev %}
-                            <a href="{{ url_for('attendance_register', month=data.month, year=data.year, search=request.args.get('search',''), page=pg.page-1, per_page=pg.per_page) }}">‹ Previous</a>
+                            <a href="">‹ Previous</a>
                         {% else %}
                             <span class="disabled">‹ Previous</span>
                         {% endif %}
-                        <span>Page {{ pg.page }} / {{ pg.pages }} · {{ pg.total }} members</span>
+                        <span>Page  /  ·  members</span>
                         {% if pg.has_next %}
-                            <a href="{{ url_for('attendance_register', month=data.month, year=data.year, search=request.args.get('search',''), page=pg.page+1, per_page=pg.per_page) }}">Next ›</a>
+                            <a href="">Next ›</a>
                         {% else %}
                             <span class="disabled">Next ›</span>
                         {% endif %}
@@ -7566,8 +7566,8 @@ def auto_send_smart_meeting_report(meeting_uuid, force=False):
             f"Health Score: {summary.get('meeting_health_score')} / 100 ({summary.get('health_grade')})\n"
             f"Present Members: {summary.get('total_present_members')}/{summary.get('total_members')}\n"
             f"Absent Members: {summary.get('total_absent_members')}\n"
-            f"Unknown {{ participants | rejectattr('is_member') | list | length }}0 ({xml_escape(str(summary.get('health_grade') or '-'))})</p>
-          <p><b>Present:</b> {summary.get('total_present_members')}/{summary.get('total_members')} &nbsp; <b>Absent:</b> {summary.get('total_absent_members')} &nbsp; <b>Unknown {{ participants | rejectattr('is_member') | list | length }}
+            f"Unknown 0 ({xml_escape(str(summary.get('health_grade') or '-'))})</p>
+          <p><b>Present:</b> {summary.get('total_present_members')}/{summary.get('total_members')} &nbsp; <b>Absent:</b> {summary.get('total_absent_members')} &nbsp; <b>Unknown 
     offset = (page_no - 1) * per_page
 
     with db() as conn:
@@ -7593,25 +7593,25 @@ def auto_send_smart_meeting_report(meeting_uuid, force=False):
                         <th>Status</th>
                         <th>Participants</th>
                         <th>Members</th>
-                        <th>Unknown {{ participants | rejectattr('is_member') | list | length }} }}</td>
-                        <td>{{ m.member_participants or 0 }}</td>
-                        <td>{{ m.unknown_participants or 0 }}</td>
+                        <th>Unknown  }}</td>
+                        <td></td>
+                        <td></td>
                         <td>
                             {% if m.meeting_uuid %}
                                 <div class="row">
-                                    <a class='btn success small' href='{{ url_for("meeting_csv", meeting_uuid=m.meeting_uuid) }}'>CSV</a>
-                                    <a class='btn purple small' href='{{ url_for("meeting_excel", meeting_uuid=m.meeting_uuid) }}'>Excel</a>
-                                    <a class='btn secondary small' href='{{ url_for("meeting_pdf", meeting_uuid=m.meeting_uuid) }}'>PDF</a>
+                                    <a class='btn success small' href=''>CSV</a>
+                                    <a class='btn purple small' href=''>Excel</a>
+                                    <a class='btn secondary small' href=''>PDF</a>
                                     {% if session.get('role') == 'admin' %}
-                                        <a class='btn warning small' href='{{ url_for("send_meeting_smart_report", meeting_uuid=m.meeting_uuid) }}'>Send</a>
+                                        <a class='btn warning small' href=''>Send</a>
                                     {% endif %}
                                     {% if session.get('role') == 'admin' %}
-                                        <form method='post' action='{{ url_for("delete_meeting", meeting_uuid=m.meeting_uuid) }}' onsubmit='return confirm("Delete this meeting and its attendance records?")'>
+                                        <form method='post' action='' onsubmit='return confirm("Delete this meeting and its attendance records?")'>
                                             <button type='submit' class='btn danger small'>Delete</button>
                                         </form>
                                     {% endif %}
                                     {% if session.get('role') == 'admin' and m.status == 'live' %}
-                                        <a class='btn danger small' href='{{ url_for("manual_finalize_meeting", meeting_uuid=m.meeting_uuid) }}'>Finalize</a>
+                                        <a class='btn danger small' href=''>Finalize</a>
                                     {% endif %}
                                 </div>
                             {% else %}
@@ -7728,14 +7728,14 @@ def settings():
                     <div class="hero-copy">Tune thresholds, stale-meeting finalization, and attendance rules with a clearer production-safe settings experience.</div>
                 </div>
                 <div class="hero-stats">
-                    <div class="hero-chip"><div class="small">Present %</div><div class="big">{{ s.present_percentage }}</div></div>
-                    <div class="hero-chip"><div class="small">Late %</div><div class="big">{{ s.late_count_as_present_percentage }}</div></div>
+                    <div class="hero-chip"><div class="small">Present %</div><div class="big"></div></div>
+                    <div class="hero-chip"><div class="small">Late %</div><div class="big"></div></div>
                 </div>
             </div>
         </div>
         <div class="stat-strip">
-            <div class="compact-kpi"><div class="k">Finalize seconds</div><div class="v">{{ s.meeting_finalize_seconds }}</div></div>
-            <div class="compact-kpi"><div class="k">Late threshold</div><div class="v">{{ s.late_threshold_minutes }}m</div></div>
+            <div class="compact-kpi"><div class="k">Finalize seconds</div><div class="v"></div></div>
+            <div class="compact-kpi"><div class="k">Late threshold</div><div class="v">m</div></div>
             <div class="compact-kpi"><div class="k">Fallback cache</div><div class="v">Enabled</div></div>
         </div>
         <div class="two-col" style="margin-top:16px">
@@ -7743,10 +7743,10 @@ def settings():
                 <div class="section-title"><div><h3 style="margin:0">Rule Configuration</h3><p>All values continue to use your existing settings table and logic.</p></div></div>
                 <form method='post'>
                     <div class="setting-grid">
-                        <div class="setting-tile"><label>Present Percentage</label><input name='present_percentage' value='{{ s.present_percentage }}'></div>
-                        <div class="setting-tile"><label>Late Count As Present Percentage</label><input name='late_count_as_present_percentage' value='{{ s.late_count_as_present_percentage }}'></div>
-                        <div class="setting-tile"><label>Late Threshold Minutes</label><input name='late_threshold_minutes' value='{{ s.late_threshold_minutes }}'></div>
-                        <div class="setting-tile"><label>Meeting Finalize Seconds</label><input name='meeting_finalize_seconds' value='{{ s.meeting_finalize_seconds }}'></div>
+                        <div class="setting-tile"><label>Present Percentage</label><input name='present_percentage' value=''></div>
+                        <div class="setting-tile"><label>Late Count As Present Percentage</label><input name='late_count_as_present_percentage' value=''></div>
+                        <div class="setting-tile"><label>Late Threshold Minutes</label><input name='late_threshold_minutes' value=''></div>
+                        <div class="setting-tile"><label>Meeting Finalize Seconds</label><input name='meeting_finalize_seconds' value=''></div>
                     </div>
                     <div class="mobile-actions" style="margin-top:14px"><button type='submit'>Save Settings</button></div>
                 </form>
@@ -7914,10 +7914,10 @@ def activity():
                     <div class="hero-copy">Fast searchable logs with pagination, badges, cached summaries and production-safe database indexing.</div>
                 </div>
                 <div class="hero-stats">
-                    <div class="hero-chip"><div class="small">Total Logs</div><div class="big">{{ summary.total or 0 }}</div></div>
-                    <div class="hero-chip"><div class="small">Last 24h</div><div class="big">{{ summary.last_24h or 0 }}</div></div>
-                    <div class="hero-chip"><div class="small">Users</div><div class="big">{{ summary.unique_users or 0 }}</div></div>
-                    <div class="hero-chip"><div class="small">Warnings</div><div class="big">{{ summary.error_like or 0 }}</div></div>
+                    <div class="hero-chip"><div class="small">Total Logs</div><div class="big"></div></div>
+                    <div class="hero-chip"><div class="small">Last 24h</div><div class="big"></div></div>
+                    <div class="hero-chip"><div class="small">Users</div><div class="big"></div></div>
+                    <div class="hero-chip"><div class="small">Warnings</div><div class="big"></div></div>
                 </div>
             </div>
         </div>
@@ -7925,13 +7925,13 @@ def activity():
         <div class="card glass-panel" style="margin-bottom:16px">
             <div class="section-title"><div><h3 style="margin:0">Audit Search & Filters</h3><p>Use filters to quickly inspect user actions, report events, settings changes, and system logs.</p></div></div>
             <form method="get" class="audit-filter-grid">
-                <div class="wide"><label>Search</label><input name="q" value="{{ q }}" placeholder="Search action, user, details..."></div>
-                <div><label>Action</label><select name="action"><option value="">All actions</option>{% for act in actions %}<option value="{{ act }}" {% if act==action_filter %}selected{% endif %}>{{ act }}</option>{% endfor %}</select></div>
-                <div><label>User</label><select name="username"><option value="">All users</option>{% for u in users %}<option value="{{ u }}" {% if u==username_filter %}selected{% endif %}>{{ u }}</option>{% endfor %}</select></div>
-                <div><label>From</label><input type="date" name="from_date" value="{{ request.args.get('from_date','') }}"></div>
-                <div><label>To</label><input type="date" name="to_date" value="{{ request.args.get('to_date','') }}"></div>
+                <div class="wide"><label>Search</label><input name="q" value="" placeholder="Search action, user, details..."></div>
+                <div><label>Action</label><select name="action"><option value="">All actions</option>{% for act in actions %}<option value="" {% if act==action_filter %}selected{% endif %}></option>{% endfor %}</select></div>
+                <div><label>User</label><select name="username"><option value="">All users</option>{% for u in users %}<option value="" {% if u==username_filter %}selected{% endif %}></option>{% endfor %}</select></div>
+                <div><label>From</label><input type="date" name="from_date" value=""></div>
+                <div><label>To</label><input type="date" name="to_date" value=""></div>
                 <div><label>Rows</label><select name="per_page"><option value="25" {% if per_page==25 %}selected{% endif %}>25</option><option value="50" {% if per_page==50 %}selected{% endif %}>50</option><option value="100" {% if per_page==100 %}selected{% endif %}>100</option></select></div>
-                <div class="mobile-actions" style="grid-column:1/-1"><button type="submit">Apply Filters</button><a class="ghost-link" href="{{ url_for('activity') }}">Reset</a></div>
+                <div class="mobile-actions" style="grid-column:1/-1"><button type="submit">Apply Filters</button><a class="ghost-link" href="">Reset</a></div>
             </form>
         </div>
 
@@ -7941,14 +7941,14 @@ def activity():
                 <div class="activity-timeline">
                     {% for a in rows[:12] %}
                     <div class="activity-item">
-                        <div class="activity-dot">{{ (a.action or '•')[:1]|upper }}</div>
+                        <div class="activity-dot"></div>
                         <div>
                             <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                                <div><span class="audit-badge {{ action_badge(a.action) }}">{{ a.action or 'system' }}</span></div>
-                                <div class="muted">{{ fmt_dt(a.created_at) }}</div>
+                                <div><span class="audit-badge "></span></div>
+                                <div class="muted"></div>
                             </div>
-                            <div class="muted" style="margin-top:6px">{{ a.username or 'system' }}</div>
-                            <div style="margin-top:6px;font-size:13px">{{ a.details or '-' }}</div>
+                            <div class="muted" style="margin-top:6px"></div>
+                            <div style="margin-top:6px;font-size:13px"></div>
                         </div>
                     </div>
                     {% else %}
@@ -7959,16 +7959,16 @@ def activity():
             <div class="stack">
                 <div class="card">
                     <h3 style="margin-top:0">Activity Table</h3>
-                    <div class="muted" style="margin-bottom:10px">Showing {{ rows|length }} of {{ total_rows }} matching records.</div>
+                    <div class="muted" style="margin-bottom:10px">Showing  of  matching records.</div>
                     <div class="table-wrap">
                         <table>
                             <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
                             {% for a in rows %}
                             <tr class="audit-row">
-                                <td>{{ fmt_dt(a.created_at) }}</td>
-                                <td>{{ a.username or 'system' }}</td>
-                                <td><span class="audit-badge {{ action_badge(a.action) }}">{{ a.action or '-' }}</span></td>
-                                <td class="log-details">{{ a.details or '-' }}</td>
+                                <td></td>
+                                <td></td>
+                                <td><span class="audit-badge "></span></td>
+                                <td class="log-details"></td>
                             </tr>
                             {% else %}
                             <tr><td colspan="4"><div class="empty-state">No logs found for selected filters.</div></td></tr>
@@ -7976,10 +7976,10 @@ def activity():
                         </table>
                     </div>
                     <div class="pagination-bar">
-                        <div class="muted">Page {{ page_no }} of {{ total_pages }}</div>
+                        <div class="muted">Page  of </div>
                         <div style="display:flex;gap:8px;flex-wrap:wrap">
-                            <a class="page-btn {% if page_no <= 1 %}disabled{% endif %}" href="{{ page_url(page_no-1) }}">← Previous</a>
-                            <a class="page-btn {% if page_no >= total_pages %}disabled{% endif %}" href="{{ page_url(page_no+1) }}">Next →</a>
+                            <a class="page-btn {% if page_no <= 1 %}disabled{% endif %}" href="">← Previous</a>
+                            <a class="page-btn {% if page_no >= total_pages %}disabled{% endif %}" href="">Next →</a>
                         </div>
                     </div>
                 </div>
@@ -8087,7 +8087,7 @@ def zoom_webhook():
                 or participant.get("name")
                 or participant.get("participant_name")
                 or participant.get("screen_name")
-                or "Unknown {{ participants | rejectattr('is_member') | list | length }}0
+                or "Unknown 0
 
             finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local(), run_post_actions=False)
             print("✅ FINALIZED:", finalized)
@@ -8179,13 +8179,13 @@ def push_setup():
         <title>Web Push Setup</title>
         {DARK_THEME_CSS}
         <style>
-            .push-wrap {{ max-width: 760px; margin: 40px auto; padding: 24px; }}
-            .push-card {{ background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 24px; box-shadow: 0 8px 30px rgba(0,0,0,0.35); }}
-            .push-muted {{ color: #9ca3af; }}
-            .push-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }}
-            .push-btn {{ cursor: pointer; }}
-            .push-status {{ margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.04); white-space: pre-wrap; }}
-            a.push-link {{ color: #c4b5fd; text-decoration: none; }}
+            .push-wrap 
+            .push-card 
+            .push-muted 
+            .push-row 
+            .push-btn 
+            .push-status 
+            a.push-link 
         </style>
     </head>
     <body>
@@ -8233,7 +8233,7 @@ def push_setup():
                 const vapidResp = await fetch('{url_for('push_vapid_key')}');
                 const vapidData = await vapidResp.json();
                 if (!vapidData.ok) {{
-                    setStatus('Unable to load VAPID key: ' + (vapidData.error || 'Unknown {{ participants | rejectattr('is_member') | list | length }}) > 0:
+                    setStatus('Unable to load VAPID key: ' + (vapidData.error || 'Unknown ) > 0:
         log_activity("test_push_sent", session.get("username") or "unknown")
     return jsonify({"ok": results.get("sent", 0) > 0, **results})
 
@@ -8294,9 +8294,9 @@ def notification_control():
         <style>
         .notif-shell{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:18px;align-items:start}.notif-card{background:linear-gradient(145deg,rgba(15,23,42,.96),rgba(2,6,23,.98));border:1px solid rgba(99,102,241,.28);border-radius:24px;padding:22px;box-shadow:0 24px 70px rgba(0,0,0,.42)}.notif-title{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:18px}.notif-title h2{margin:0;font-size:24px}.notif-title p{margin:5px 0 0;color:#94a3b8}.notif-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.notif-box{background:rgba(15,23,42,.9);border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:16px}.notif-box h3{margin:0 0 12px;font-size:16px}.toggle-row,.check-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.10)}.toggle-row:last-child,.check-row:last-child{border-bottom:0}.notif-input,.notif-textarea{width:100%;border-radius:12px;border:1px solid rgba(96,165,250,.28);background:#08111f;color:#e5e7eb;padding:11px 12px}.notif-textarea{min-height:120px;resize:vertical}.switch{position:relative;width:52px;height:28px}.switch input{display:none}.slider{position:absolute;inset:0;background:#334155;border-radius:999px;cursor:pointer;transition:.2s}.slider:before{content:"";position:absolute;width:22px;height:22px;left:3px;top:3px;background:white;border-radius:50%;transition:.2s}.switch input:checked + .slider{background:linear-gradient(90deg,#2563eb,#7c3aed)}.switch input:checked + .slider:before{transform:translateX(24px)}.notif-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.notif-actions button{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed)}.notif-actions .secondary{background:#1e293b}.notif-actions .success{background:#16a34a}.notif-log{max-height:620px;overflow:auto}.log-item{border-bottom:1px solid rgba(148,163,184,.12);padding:12px 0}.log-title{font-weight:950;color:#f8fafc}.log-meta{font-size:12px;color:#94a3b8;margin-top:4px}.log-msg{font-size:13px;color:#cbd5e1;margin-top:6px;line-height:1.45}.pill-ok{background:rgba(34,197,94,.14);color:#86efac;border:1px solid rgba(34,197,94,.28);padding:5px 8px;border-radius:999px;font-size:12px;font-weight:900}@media(max-width:1100px){.notif-shell{grid-template-columns:1fr}.notif-grid{grid-template-columns:1fr}}
         </style>
-        <div class="hero"><div class="hero-grid"><div><div class="badge">Notification Control Center</div><h1 class="hero-title">Smart alert delivery controls</h1><div class="hero-copy">Enable or disable Email/Push, select alert types, customize messages, test delivery, and review alert logs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Email</div><div class="big">{{ 'ON' if settings.email_enabled else 'OFF' }}</div></div><div class="hero-chip"><div class="small">Push</div><div class="big">{{ 'ON' if settings.push_enabled else 'OFF' }}</div></div></div></div></div>
-        {% if result_message %}<div class="card" style="margin-bottom:16px">{{ result_message }}</div>{% endif %}
-        <div class="notif-shell"><form method="post" class="notif-card"><div class="notif-title"><div><h2>Controls</h2><p>Connected with your existing smart alert system.</p></div><span class="pill-ok">No spam: state-change only</span></div><div class="notif-grid"><div class="notif-box"><h3>Delivery Channels</h3><label class="toggle-row"><span>Email alerts</span><span class="switch"><input type="checkbox" name="email_enabled" {% if settings.email_enabled %}checked{% endif %}><span class="slider"></span></span></label><label class="toggle-row"><span>Push alerts</span><span class="switch"><input type="checkbox" name="push_enabled" {% if settings.push_enabled %}checked{% endif %}><span class="slider"></span></span></label><div style="margin-top:12px"><label class="small">Test email receiver</label><input class="notif-input" name="test_email_to" value="{{ settings.test_email_to }}" placeholder="your@email.com"></div></div><div class="notif-box"><h3>Alert Types</h3>{% for key,label in alert_labels.items() %}<label class="check-row"><span>{{ label }}</span><input type="checkbox" name="alert_types" value="{{ key }}" {% if key in settings.alert_types %}checked{% endif %}></label>{% endfor %}</div><div class="notif-box"><h3>Timing Control</h3>{% for key,label in [('before','Before meeting'),('during','During meeting'),('after','After meeting')] %}<label class="check-row"><span>{{ label }}</span><input type="checkbox" name="timings" value="{{ key }}" {% if key in settings.timings %}checked{% endif %}></label>{% endfor %}</div><div class="notif-box"><h3>Message Template</h3><textarea class="notif-textarea" name="message_template">{{ settings.message_template }}</textarea><div class="muted" style="font-size:12px;margin-top:8px">Available: {title}, {message}, {state}, {alert_type}, {member_name}, {meeting_topic}</div></div></div><div class="notif-actions"><button type="submit" name="action" value="save">Save Controls</button><button type="submit" class="success" name="action" value="test_email">Test Email</button><button type="submit" class="secondary" name="action" value="test_push">Test Push</button></div></form><div class="notif-card notif-log"><div class="notif-title"><div><h2>Alert Logs</h2><p>Latest smart alert state-change records.</p></div></div>{% if logs %}{% for log in logs %}<div class="log-item"><div class="log-title">{{ log.title }}</div><div class="log-meta">{{ fmt_dt(log.created_at) }} · {{ log.alert_type }} · {{ log.previous_state or '-' }} → {{ log.current_state }} · Email {{ '✓' if log.email_sent else '×' }} · Push {{ log.push_sent }}</div><div class="log-msg">{{ log.message }}</div></div>{% endfor %}{% else %}<div class="muted">No alert logs yet.</div>{% endif %}</div></div>
+        <div class="hero"><div class="hero-grid"><div><div class="badge">Notification Control Center</div><h1 class="hero-title">Smart alert delivery controls</h1><div class="hero-copy">Enable or disable Email/Push, select alert types, customize messages, test delivery, and review alert logs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Email</div><div class="big"></div></div><div class="hero-chip"><div class="small">Push</div><div class="big"></div></div></div></div></div>
+        {% if result_message %}<div class="card" style="margin-bottom:16px"></div>{% endif %}
+        <div class="notif-shell"><form method="post" class="notif-card"><div class="notif-title"><div><h2>Controls</h2><p>Connected with your existing smart alert system.</p></div><span class="pill-ok">No spam: state-change only</span></div><div class="notif-grid"><div class="notif-box"><h3>Delivery Channels</h3><label class="toggle-row"><span>Email alerts</span><span class="switch"><input type="checkbox" name="email_enabled" {% if settings.email_enabled %}checked{% endif %}><span class="slider"></span></span></label><label class="toggle-row"><span>Push alerts</span><span class="switch"><input type="checkbox" name="push_enabled" {% if settings.push_enabled %}checked{% endif %}><span class="slider"></span></span></label><div style="margin-top:12px"><label class="small">Test email receiver</label><input class="notif-input" name="test_email_to" value="" placeholder="your@email.com"></div></div><div class="notif-box"><h3>Alert Types</h3>{% for key,label in alert_labels.items() %}<label class="check-row"><span></span><input type="checkbox" name="alert_types" value="" {% if key in settings.alert_types %}checked{% endif %}></label>{% endfor %}</div><div class="notif-box"><h3>Timing Control</h3>{% for key,label in [('before','Before meeting'),('during','During meeting'),('after','After meeting')] %}<label class="check-row"><span></span><input type="checkbox" name="timings" value="" {% if key in settings.timings %}checked{% endif %}></label>{% endfor %}</div><div class="notif-box"><h3>Message Template</h3><textarea class="notif-textarea" name="message_template"></textarea><div class="muted" style="font-size:12px;margin-top:8px">Available: {title}, {message}, {state}, {alert_type}, {member_name}, {meeting_topic}</div></div></div><div class="notif-actions"><button type="submit" name="action" value="save">Save Controls</button><button type="submit" class="success" name="action" value="test_email">Test Email</button><button type="submit" class="secondary" name="action" value="test_push">Test Push</button></div></form><div class="notif-card notif-log"><div class="notif-title"><div><h2>Alert Logs</h2><p>Latest smart alert state-change records.</p></div></div>{% if logs %}{% for log in logs %}<div class="log-item"><div class="log-title"></div><div class="log-meta"> ·  ·  →  · Email  · Push </div><div class="log-msg"></div></div>{% endfor %}{% else %}<div class="muted">No alert logs yet.</div>{% endif %}</div></div>
     """, settings=settings_data, alert_labels=NOTIFICATION_ALERT_TYPE_LABELS, logs=logs, result_message=result_message, result_type=result_type, fmt_dt=fmt_dt)
     return page("Notification Control", body, "notification_control")
 
@@ -8307,7 +8307,7 @@ def appearance():
     body = render_template_string("""
         <div class="hero"><div class="hero-grid"><div><div class="badge info" style="margin-bottom:12px">Appearance Engine</div><h1 class="hero-title">🎨 Appearance Studio</h1><div class="hero-copy">One-click full system theme switching with premium skeleton loading, animation control, glow effects, and Chart.js theme sync.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Themes</div><div class="big">8</div></div><div class="hero-chip"><div class="small">Storage</div><div class="big">Local</div></div></div></div></div>
         <div class="appearance-controls"><div class="appearance-control"><label>Animation Level</label><select id="animationLevelSelect"><option value="off">Off</option><option value="minimal">Minimal</option><option value="smooth">Smooth</option><option value="full">Full</option></select><div class="muted" style="margin-top:8px">Saved in browser using localStorage. Affects transitions, hover motion, and loading polish.</div></div><div class="appearance-control"><label>Premium Skeleton Preview</label><div class="premium-skeleton-grid" style="margin-top:10px"><div class="premium-skeleton premium-skeleton-card"></div><div><div class="premium-skeleton premium-skeleton-line long"></div><div class="premium-skeleton premium-skeleton-line medium"></div><div class="premium-skeleton premium-skeleton-line short"></div></div></div></div></div>
-        <div class="appearance-studio-grid">{% for key, name, desc, p1, p2, p3 in themes %}<div class="appearance-card" data-theme-apply="{{ key }}" style="--p1:{{ p1 }};--p2:{{ p2 }};--p3:{{ p3 }}"><div class="preview-band"></div><h3>{{ name }}</h3><p>{{ desc }}</p><div class="row" style="margin-top:14px"><span class="badge info">Click to Apply</span></div></div>{% endfor %}</div>
+        <div class="appearance-studio-grid">{% for key, name, desc, p1, p2, p3 in themes %}<div class="appearance-card" data-theme-apply="" style="--p1:;--p2:;--p3:"><div class="preview-band"></div><h3></h3><p></p><div class="row" style="margin-top:14px"><span class="badge info">Click to Apply</span></div></div>{% endfor %}</div>
         <script>document.addEventListener('DOMContentLoaded',function(){if(window.setupAppearanceEngineV8){window.setupAppearanceEngineV8();}});</script>
     """, themes=themes)
     return page("Appearance Studio", body, "appearance")
@@ -8454,7 +8454,7 @@ def generate_ai_level3_insights():
     if warning: insights.append({'title':'Warning-risk members detected','severity':'warning','category':'Risk','message':f'{len(warning)} member(s) are between 50–75% attendance.','recommendation':'Monitor and send early reminders.'})
     if meetings:
         latest=meetings[0]
-        if (latest.get('unknown_participants') or 0)>=5: insights.append({'title':'Unknown {{ participants | rejectattr('is_member') | list | length }})>=3: insights.append({'title':'Late trend increased','severity':'warning','category':'Punctuality','message':f"Latest meeting had {latest.get('late_count')} late participant(s).",'recommendation':'Send pre-meeting reminder 10 minutes earlier.'})
+        if (latest.get('unknown_participants') or 0)>=5: insights.append({'title':'Unknown )>=3: insights.append({'title':'Late trend increased','severity':'warning','category':'Punctuality','message':f"Latest meeting had {latest.get('late_count')} late participant(s).",'recommendation':'Send pre-meeting reminder 10 minutes earlier.'})
     if top: insights.append({'title':'Top performer','severity':'info','category':'Performance','message':f"{top[0]['name']} is leading with {top[0]['attendance_pct']}% attendance.",'recommendation':'Appreciate consistent attendance to improve motivation.'})
     if worst: insights.append({'title':'Worst performer','severity':'critical' if worst[0]['attendance_pct']<50 else 'warning','category':'Performance','message':f"{worst[0]['name']} has {worst[0]['attendance_pct']}% attendance.",'recommendation':'Follow up personally and send attendance reminder.'})
     return insights[:12]
@@ -8508,12 +8508,12 @@ def _ai_bot_answer(query):
         lines=['Late trend from recent meetings:']+[f"• {fmt_date(m.get('start_time'))} — {m.get('late_count') or 0} late participant(s)" for m in _ai_recent_meetings(5)]
         return {'response':'\n'.join(lines),'targets':[]}
     if 'unknown' in q:
-        lines=['Unknown {{ participants | rejectattr('is_member') | list | length }}} unknown participant(s)" for m in _ai_recent_meetings(5)]
+        lines=['Unknown } unknown participant(s)" for m in _ai_recent_meetings(5)]
         return {'response':'\n'.join(lines),'targets':[]}
     if 'last meeting' in q or 'summarize' in q or 'summary' in q:
         meetings=_ai_recent_meetings(1)
         if not meetings: return {'response':'No meeting found yet.','targets':[]}
-        m=meetings[0]; return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown {{ participants | rejectattr('is_member') | list | length }}}. Health score: {_ai_meeting_health_score(m)}/100.",'targets':[]}
+        m=meetings[0]; return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown }. Health score: {_ai_meeting_health_score(m)}/100.",'targets':[]}
     member=_ai_find_member_by_query(q)
     if member: return {'response':f"{member['name']} insight: Attendance {member['attendance_pct']}%, Risk {member['risk']}, Trend {member['trend']}, Tag {member['tag']}. Suggestion: {member['suggestion']}",'targets':[member['id']]}
     if 'why' in q and ('drop' in q or 'decrease' in q or 'down' in q):
@@ -8590,13 +8590,13 @@ def ai_intelligence():
     high=len([p for p in preds if p.get('absence_probability',0)>=70]); med=len([p for p in preds if 45<=p.get('absence_probability',0)<70]); consistent=len([p for p in preds if p.get('behavior_tag')=='Consistent']); risky=len([p for p in preds if p.get('behavior_tag')=='Risky'])
     body=render_template_string("""
     <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}.l4-pill{display:inline-flex;border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px}.l4-high{background:rgba(239,68,68,.18);color:#fecaca;border:1px solid rgba(239,68,68,.35)}.l4-med{background:rgba(245,158,11,.18);color:#fde68a;border:1px solid rgba(245,158,11,.35)}.l4-low{background:rgba(34,197,94,.14);color:#bbf7d0;border:1px solid rgba(34,197,94,.28)}.l4-actions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.l4-actions button,.l4-actions a{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed);text-decoration:none}.l4-actions .danger{background:linear-gradient(90deg,#dc2626,#f97316)}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}</style>
-    <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Intelligence Center</div><h1 class="hero-title">🧠 AI Intelligence + Level 4</h1><div class="hero-copy">Smart assistant, current-month member intelligence, risk heatmap, prediction engine, behavioral tags, auto-actions, and smart reports — merged into one dashboard.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Basis</div><div class="big" style="font-size:18px">{{ basis }}</div></div></div></div></div>
-    <div class="ai-grid"><div class="ai-card"><div class="small">Critical Members</div><div class="ai-big risk-critical">{{ critical }}</div></div><div class="ai-card"><div class="small">Warning Members</div><div class="ai-big risk-warning">{{ warning }}</div></div><div class="ai-card"><div class="small">High Absence Risk</div><div class="ai-big risk-critical">{{ high }}</div></div><div class="ai-card"><div class="small">Latest Meeting Health</div><div class="ai-big">{{ latest_score }}/100</div></div></div>
-    <div class="ai-chat" style="margin-top:18px"><div class="ai-card"><h2>🤖 Smart Assistant</h2><div id="aiGreeting" class="ai-msg">Analyzing your latest attendance data...</div><div class="ai-suggest"><button type="button" onclick="aiAsk('Who is at risk?')">At-risk members</button><button type="button" onclick="aiAsk('List all members below 50% attendance')">Below 50%</button><button type="button" onclick="aiAsk('Show top performers')">Top performers</button><button type="button" onclick="aiAsk('Why attendance dropped?')">Why dropped?</button><button type="button" onclick="aiAsk('Summarize last meeting')">Last meeting</button><button type="button" onclick="aiAsk('Show predictions')">Predictions</button><button type="button" onclick="aiAsk('Show behavioral tags')">Behavior tags</button><button type="button" onclick="aiAsk('Send reminder to them')">Remind them</button><button type="button" onclick="location.href='/ai-level4/report.pdf'">Smart PDF</button><button type="button" onclick="location.href='/ai-level4/report.csv'">Smart CSV</button></div><input id="aiLevel3Input" class="ai-input" placeholder="Ask attendance question..." onkeydown="if(event.key==='Enter'){aiAsk(this.value)}"><div style="margin-top:10px"><button type="button" onclick="aiAsk(document.getElementById('aiLevel3Input').value)">Ask AI</button></div><div id="aiLevel3Answer" class="ai-msg">Ready.</div></div><div class="ai-card"><h2>💡 Insights</h2>{% for i in insights %}<div class="ai-msg"><b>{{ i.title }}</b><br><span class="small">{{ i.category }} · {{ i.severity }}</span><br>{{ i.message }}<br><b>Recommendation:</b> {{ i.recommendation }}</div>{% endfor %}</div></div>
-    <div class="ai-card" style="margin-top:18px"><h2>👤 Member Intelligence <span class="small">({{ basis }}, same formula as Attendance Register)</span></h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Total</th><th>P</th><th>L</th><th>A</th><th>U</th><th>Attendance %</th><th>Trend</th><th>Risk</th><th>Tag</th><th>Suggestion</th></tr></thead><tbody>{% for m in members %}<tr><td>{{ m.name }}</td><td>{{ m.total }}</td><td>{{ m.present }}</td><td>{{ m.late }}</td><td>{{ m.absent }}</td><td>{{ m.unknown or 0 }}</td><td>{{ m.attendance_pct }}%</td><td>{{ m.trend }}</td><td class="risk-{{ m.risk|lower }}">{{ m.risk }}</td><td>{{ m.tag }}</td><td>{{ m.suggestion }}</td></tr>{% endfor %}</tbody></table></div></div>
-    <div class="ai-card" style="margin-top:18px"><h2>🔮 Prediction + Behavioral Intelligence</h2><div class="l4-actions"><button type="button" onclick="l4Run(false)">Preview Auto Actions</button><button type="button" class="danger" onclick="if(confirm('Send reminders to high-risk members?'))l4Run(true)">Execute Reminders</button><a href="/ai-level4/report.pdf">Smart PDF</a><a href="/ai-level4/report.csv">Smart CSV</a></div><div id="l4ActionResult" class="ai-msg">Ready.</div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Attendance %</th><th>Absence Risk</th><th>Prediction</th><th>Behavior Tag</th><th>Recommendation</th></tr></thead><tbody>{% for p in preds %}<tr><td>{{ p.name }}</td><td>{{ p.attendance_pct }}%</td><td><span class="l4-pill {{ 'l4-high' if p.absence_probability >= 70 else 'l4-med' if p.absence_probability >= 45 else 'l4-low' }}">{{ p.absence_probability }}%</span></td><td>{{ p.prediction }}</td><td>{{ p.behavior_tag }}</td><td>{{ p.recommendation }}</td></tr>{% endfor %}</tbody></table></div></div>
-    <div class="ai-card heat" style="margin-top:18px"><h2>🧠 Risk Heatmap</h2><table><thead><tr><th>Member</th>{% for mt in heat_meetings %}<th>{{ fmt_date(mt.start_time) }}</th>{% endfor %}</tr></thead><tbody>{% for row in heat %}<tr><th>{{ row.name }}</th>{% for c in row.cells %}<td class="h-{{ c }}">{{ 'P' if c in ['PRESENT','HOST'] else 'L' if c=='LATE' else 'A' if c=='ABSENT' else '-' }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
-    <div class="ai-card" style="margin-top:18px"><h2>🔥 Smart Alert Panel</h2>{% if logs %}{% for l in logs %}<div class="ai-msg"><b>{{ l.title }}</b><br>{{ l.message }}<br><span class="small">{{ fmt_dt(l.created_at) }} · {{ l.current_state }}</span></div>{% endfor %}{% else %}<div class="muted">No smart alert logs yet.</div>{% endif %}</div>
+    <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Intelligence Center</div><h1 class="hero-title">🧠 AI Intelligence + Level 4</h1><div class="hero-copy">Smart assistant, current-month member intelligence, risk heatmap, prediction engine, behavioral tags, auto-actions, and smart reports — merged into one dashboard.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">/100</div></div><div class="hero-chip"><div class="small">Basis</div><div class="big" style="font-size:18px"></div></div></div></div></div>
+    <div class="ai-grid"><div class="ai-card"><div class="small">Critical Members</div><div class="ai-big risk-critical"></div></div><div class="ai-card"><div class="small">Warning Members</div><div class="ai-big risk-warning"></div></div><div class="ai-card"><div class="small">High Absence Risk</div><div class="ai-big risk-critical"></div></div><div class="ai-card"><div class="small">Latest Meeting Health</div><div class="ai-big">/100</div></div></div>
+    <div class="ai-chat" style="margin-top:18px"><div class="ai-card"><h2>🤖 Smart Assistant</h2><div id="aiGreeting" class="ai-msg">Analyzing your latest attendance data...</div><div class="ai-suggest"><button type="button" onclick="aiAsk('Who is at risk?')">At-risk members</button><button type="button" onclick="aiAsk('List all members below 50% attendance')">Below 50%</button><button type="button" onclick="aiAsk('Show top performers')">Top performers</button><button type="button" onclick="aiAsk('Why attendance dropped?')">Why dropped?</button><button type="button" onclick="aiAsk('Summarize last meeting')">Last meeting</button><button type="button" onclick="aiAsk('Show predictions')">Predictions</button><button type="button" onclick="aiAsk('Show behavioral tags')">Behavior tags</button><button type="button" onclick="aiAsk('Send reminder to them')">Remind them</button><button type="button" onclick="location.href='/ai-level4/report.pdf'">Smart PDF</button><button type="button" onclick="location.href='/ai-level4/report.csv'">Smart CSV</button></div><input id="aiLevel3Input" class="ai-input" placeholder="Ask attendance question..." onkeydown="if(event.key==='Enter'){aiAsk(this.value)}"><div style="margin-top:10px"><button type="button" onclick="aiAsk(document.getElementById('aiLevel3Input').value)">Ask AI</button></div><div id="aiLevel3Answer" class="ai-msg">Ready.</div></div><div class="ai-card"><h2>💡 Insights</h2>{% for i in insights %}<div class="ai-msg"><b></b><br><span class="small"> · </span><br><br><b>Recommendation:</b> </div>{% endfor %}</div></div>
+    <div class="ai-card" style="margin-top:18px"><h2>👤 Member Intelligence <span class="small">(, same formula as Attendance Register)</span></h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Total</th><th>P</th><th>L</th><th>A</th><th>U</th><th>Attendance %</th><th>Trend</th><th>Risk</th><th>Tag</th><th>Suggestion</th></tr></thead><tbody>{% for m in members %}<tr><td></td><td></td><td></td><td></td><td></td><td></td><td>%</td><td></td><td class="risk-"></td><td></td><td></td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="ai-card" style="margin-top:18px"><h2>🔮 Prediction + Behavioral Intelligence</h2><div class="l4-actions"><button type="button" onclick="l4Run(false)">Preview Auto Actions</button><button type="button" class="danger" onclick="if(confirm('Send reminders to high-risk members?'))l4Run(true)">Execute Reminders</button><a href="/ai-level4/report.pdf">Smart PDF</a><a href="/ai-level4/report.csv">Smart CSV</a></div><div id="l4ActionResult" class="ai-msg">Ready.</div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Attendance %</th><th>Absence Risk</th><th>Prediction</th><th>Behavior Tag</th><th>Recommendation</th></tr></thead><tbody>{% for p in preds %}<tr><td></td><td>%</td><td><span class="l4-pill ">%</span></td><td></td><td></td><td></td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="ai-card heat" style="margin-top:18px"><h2>🧠 Risk Heatmap</h2><table><thead><tr><th>Member</th>{% for mt in heat_meetings %}<th></th>{% endfor %}</tr></thead><tbody>{% for row in heat %}<tr><th></th>{% for c in row.cells %}<td class="h-"></td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+    <div class="ai-card" style="margin-top:18px"><h2>🔥 Smart Alert Panel</h2>{% if logs %}{% for l in logs %}<div class="ai-msg"><b></b><br><br><span class="small"> · </span></div>{% endfor %}{% else %}<div class="muted">No smart alert logs yet.</div>{% endif %}</div>
     <script>function aiAsk(q){if(!q||!q.trim())return;const box=document.getElementById('aiLevel3Answer');box.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(async r=>{let d=await r.json().catch(()=>({response:'AI response parse failed.'}));if(!r.ok){throw new Error(d.response||('HTTP '+r.status));}return d;}).then(d=>{box.innerText=d.response||'No answer found.';}).catch(err=>{box.innerText='AI assistant error: '+(err.message||err)+'. Please check Render logs if this repeats.';});}function l4Run(execute){const box=document.getElementById('l4ActionResult');box.innerText=execute?'Executing safe reminders...':'Checking preview...';fetch('/api/ai-level4/auto-actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execute:execute,max_members:20})}).then(r=>r.json()).then(d=>{box.innerText=`Mode: ${d.mode}\nTargets: ${d.target_count}\nSent: ${d.sent||0}\nSkipped: ${d.skipped||0}\nFailed: ${(d.failed||[]).join(', ')||'None'}`;}).catch(()=>{box.innerText='Auto action failed. Check logs.';});}fetch('/api/ai-insights-level3').then(r=>r.json()).then(d=>{let ins=(d.insights||[]).slice(0,2).map(x=>'• '+x.message).join('\n');document.getElementById('aiGreeting').innerText=ins||'No critical insight right now.';}).catch(()=>{});</script>
     """, insights=insights, members=members, critical=critical, warning=warning, latest_score=latest_score, avg_duration=avg_duration, logs=logs, heat=heat, heat_meetings=heat_meetings, fmt_date=fmt_date, fmt_dt=fmt_dt, basis=basis, preds=preds, recs=recs, high=high, med=med, consistent=consistent, risky=risky)
     return page('AI Intelligence', body, 'ai_intelligence')
@@ -8794,7 +8794,7 @@ def _ai_answer_member_attendance(q):
         f"{member.get('name')} attendance intelligence:\n"
         f"• Attendance: {member.get('attendance_pct')}%\n"
         f"• Total meetings counted: {member.get('total')}\n"
-        f"• Present: {member.get('present')} | Late: {member.get('late')} | Absent: {member.get('absent')} | Unknown {{ participants | rejectattr('is_member') | list | length }}% attendance\n"
+        f"• Present: {member.get('present')} | Late: {member.get('late')} | Absent: {member.get('absent')} | Unknown % attendance\n"
                 "• show all members\n"
                 "• who is at risk?\n"
                 "• show top performers\n"
@@ -8825,8 +8825,8 @@ def _ai_answer_compare_last_meetings():
     delta=round(latest_pct-prev_pct,2)
     return (
         f"Last 2 meetings comparison:\n"
-        f"Latest: {latest.get('topic') or 'Meeting'} ({fmt_dt(latest.get('start_time'))}) — attendance {latest_pct}% | Present {latest.get('present_count') or 0}, Late {latest.get('late_count') or 0}, Absent {latest.get('absent_count') or 0}, Unknown {{ participants | rejectattr('is_member') | list | length }}}\n"
-        f"Previous: {prev.get('topic') or 'Meeting'} ({fmt_dt(prev.get('start_time'))}) — attendance {prev_pct}% | Present {prev.get('present_count') or 0}, Late {prev.get('late_count') or 0}, Absent {prev.get('absent_count') or 0}, Unknown {{ participants | rejectattr('is_member') | list | length }}}\n"
+        f"Latest: {latest.get('topic') or 'Meeting'} ({fmt_dt(latest.get('start_time'))}) — attendance {latest_pct}% | Present {latest.get('present_count') or 0}, Late {latest.get('late_count') or 0}, Absent {latest.get('absent_count') or 0}, Unknown }\n"
+        f"Previous: {prev.get('topic') or 'Meeting'} ({fmt_dt(prev.get('start_time'))}) — attendance {prev_pct}% | Present {prev.get('present_count') or 0}, Late {prev.get('late_count') or 0}, Absent {prev.get('absent_count') or 0}, Unknown }\n"
         f"Change: {delta}%"
     )
 
@@ -8969,14 +8969,14 @@ def _ai_command_answer_v112(query):
         return {'response':'\n'.join(lines), 'targets': []}
 
     if 'unknown' in ql:
-        lines=['Unknown {{ participants | rejectattr('is_member') | list | length }}} unknown participant(s)" for m in _ai_recent_meetings(8)]
+        lines=['Unknown } unknown participant(s)" for m in _ai_recent_meetings(8)]
         return {'response':'\n'.join(lines), 'targets': []}
 
     if any(x in ql for x in ['last meeting','summarize','summary']):
         meetings=_ai_recent_meetings(1)
         if not meetings: return {'response':'No meeting found yet.', 'targets': []}
         m=meetings[0]
-        return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown {{ participants | rejectattr('is_member') | list | length }}}. Health score: {_ai_meeting_health_score(m)}/100.", 'targets': []}
+        return {'response':f"Last meeting summary: {m.get('topic') or 'Meeting'} on {fmt_dt(m.get('start_time'))}. Present: {m.get('present_count') or 0}, Late: {m.get('late_count') or 0}, Absent: {m.get('absent_count') or 0}, Unknown }. Health score: {_ai_meeting_health_score(m)}/100.", 'targets': []}
 
     if any(x in ql for x in ['why','drop','decrease','down']):
         related=[i for i in generate_ai_level3_insights() if i.get('category') in ('Trend','Risk','Punctuality','Duration')]
@@ -9073,7 +9073,7 @@ try:
         "warning_risk": "Warning Risk",
         "declining_trend": "Declining Trend",
         "host_absent": "Host Absent",
-        "unknown_participant_spike": "Unknown {{ participants | rejectattr('is_member') | list | length }}
+        "unknown_participant_spike": "Unknown 
 ALERT_AUTOMATION_TABLES_READY = False
 ALERT_AUTOMATION_BG_RUNNING = False
 try:
@@ -9288,7 +9288,7 @@ def evaluate_meeting_alerts():
         if not latest.get("host_present"):
             results.append(trigger_intelligent_alert("host_absent", "absent", "🚨 Host absent detected", f"Host was not detected in meeting '{latest.get('topic') or latest.get('meeting_uuid')}'. Recommendation: verify host name hint and meeting ownership.", "critical", meeting=meeting_ref, phase="during"))
         if latest_unknown >= UNKNOWN_SPIKE_COUNT or unknown_pct >= UNKNOWN_SPIKE_PERCENT:
-            results.append(trigger_intelligent_alert("unknown_participant_spike", "spike", "⚠️ Unknown {{ participants | rejectattr('is_member') | list | length }}]); h2 = _meeting_health_score_from_row(meetings[1])
+            results.append(trigger_intelligent_alert("unknown_participant_spike", "spike", "⚠️ Unknown ]); h2 = _meeting_health_score_from_row(meetings[1])
             if h1 + 15 < h2:
                 results.append(trigger_intelligent_alert("meeting_health_drop", "dropped", "⚠️ Meeting health dropped", f"Meeting health dropped from {h2}/100 to {h1}/100. Recommendation: review absentees, unknown users and meeting duration.", "warning", meeting=meeting_ref, phase="after"))
     except Exception as exc:
