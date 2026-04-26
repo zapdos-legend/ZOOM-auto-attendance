@@ -1,6 +1,5 @@
 # LIVE_DASHBOARD_FINAL_REAL_FIX_2026_04_26 = True
 # LIVE_ROUTE_SERVER_RENDER_PATCH_2026_04_26 = True
-# LIVE_STRICT_UUID_PATCH_2026_04_26 = True
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
@@ -1698,9 +1697,9 @@ def read_live_snapshot():
                 """
                 SELECT *
                 FROM meetings
-                WHERE lower(COALESCE(status, '')) = 'live'
-                  AND COALESCE(meeting_uuid, '') <> ''
-                ORDER BY created_at DESC, id DESC
+                WHERE status IN ('live','ended')
+                AND start_time >= NOW() - INTERVAL '10 minutes'
+                ORDER BY start_time DESC
                 LIMIT 1
                 """
             )
@@ -1715,18 +1714,14 @@ def read_live_snapshot():
                     """
                     SELECT *
                     FROM attendance
-                    WHERE meeting_uuid=%s OR meeting_uuid IS NULL
+                    WHERE meeting_uuid=%s
                     ORDER BY updated_at DESC NULLS LAST, id DESC
                     """,
                     (meeting_uuid,),
                 )
                 participants = cur.fetchall()
-                print("🔥 LIVE FETCH UUID:", meeting_uuid)
-                print("🔥 PARTICIPANTS FOUND:", len(participants))
             else:
                 participants = []
-                print("🔥 LIVE FETCH UUID: EMPTY")
-                print("🔥 PARTICIPANTS FOUND: 0")
 
             member_name_expr = member_name_sql(conn)
             cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
