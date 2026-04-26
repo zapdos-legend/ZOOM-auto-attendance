@@ -1,3 +1,4 @@
+# LIVE_DASHBOARD_FINAL_REAL_FIX_2026_04_26 = True
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
@@ -1636,13 +1637,15 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_actions=True):
     # Keep Zoom webhook responses fast and reliable by allowing callers to skip them.
     if run_post_actions:
         try:
-            evaluate_smart_alerts_for_meeting(meeting_uuid)
+            with app.app_context():
+                evaluate_smart_alerts_for_meeting(meeting_uuid)
         except BaseException as e:
-            print(f"⚠️ Smart alert evaluation skipped: {e}")
+            print(f"⚠️ Smart alert evaluation skipped safely: {e}")
         try:
-            auto_send_smart_meeting_report(meeting_uuid, force=False)
+            with app.app_context():
+                auto_send_smart_meeting_report(meeting_uuid, force=False)
         except BaseException as e:
-            print(f"⚠️ Smart report auto-send skipped: {e}")
+            print(f"⚠️ Smart report auto-send skipped safely: {e}")
     return updated
 
 
@@ -1678,14 +1681,30 @@ def get_live_status_for_row(row, meeting_start):
 
 
 def read_live_snapshot():
+    """Return the newest active meeting and enriched live rows.
+
+    Final real fix:
+    - Live page must show the current meeting as soon as Zoom sends meeting.started.
+    - Participant rows must use the same meeting_uuid used by the webhook.
+    - Durations must be calculated at request time, not only when leave event arrives.
+    - Rows are sorted by highest live duration first.
+    """
+    server_now = now_local()
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT *
                 FROM meetings
-                WHERE lower(COALESCE(status, ''))='live'
-                ORDER BY id DESC
+                WHERE COALESCE(meeting_uuid, '') <> ''
+                  AND (
+                        lower(COALESCE(status, '')) = 'live'
+                        OR (end_time IS NULL AND start_time IS NOT NULL AND start_time >= NOW() - INTERVAL '12 hours')
+                      )
+                ORDER BY
+                    CASE WHEN lower(COALESCE(status, '')) = 'live' THEN 0 ELSE 1 END,
+                    COALESCE(start_time, created_at) DESC,
+                    id DESC
                 LIMIT 1
                 """
             )
@@ -1694,9 +1713,17 @@ def read_live_snapshot():
             if not meeting:
                 return None
 
-            meeting_uuid = meeting.get("meeting_uuid") or meeting.get("meeting_id") or str(meeting.get("id") or "")
+            meeting_uuid = (meeting.get("meeting_uuid") or "").strip()
             if meeting_uuid:
-                cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s", (meeting_uuid,))
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM attendance
+                    WHERE meeting_uuid=%s
+                    ORDER BY updated_at DESC NULLS LAST, id DESC
+                    """,
+                    (meeting_uuid,),
+                )
                 participants = cur.fetchall()
             else:
                 participants = []
@@ -1705,13 +1732,31 @@ def read_live_snapshot():
             cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({member_name_expr}, '')")
             members = cur.fetchall()
 
-    joined_member_ids = {p["member_id"] for p in participants if p.get("member_id") and p.get("first_join")}
+    # Enrich live rows now so UI/API do not depend on stale total_seconds.
+    enriched_participants = []
+    for row in participants:
+        row = dict(row)
+        current_join = parse_dt(row.get("current_join"))
+        total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
+        if current_join:
+            total_seconds += max(int((server_now - current_join).total_seconds()), 0)
+        row["live_total_seconds"] = max(total_seconds, 0)
+        row["live_status"] = "LIVE" if current_join else "LEFT"
+        row["category"] = "HOST" if row.get("is_host") else ("MEMBER" if row.get("is_member") else "UNKNOWN")
+        enriched_participants.append(row)
+
+    enriched_participants.sort(
+        key=lambda r: (int(r.get("live_total_seconds") or 0), 1 if r.get("current_join") else 0),
+        reverse=True,
+    )
+
+    joined_member_ids = {p["member_id"] for p in enriched_participants if p.get("member_id") and p.get("first_join")}
     not_joined_members = [m for m in members if m["id"] not in joined_member_ids]
-    active_now = [p for p in participants if p.get("current_join") is not None]
+    active_now = [p for p in enriched_participants if p.get("current_join") is not None]
 
     return {
         "meeting": meeting,
-        "participants": participants,
+        "participants": enriched_participants,
         "active_now": active_now,
         "not_joined_members": not_joined_members,
     }
@@ -5288,6 +5333,7 @@ def build_live_snapshot_payload(include_feed=True):
         is_known = bool(p.get("is_member"))
         is_host = bool(p.get("is_host"))
         live_status, live_total = get_live_status_for_row(p, start_dt)
+        live_total = int(p.get("live_total_seconds") if p.get("live_total_seconds") is not None else (live_total or 0))
         if is_active_now:
             active_now += 1
             if is_known:
@@ -5307,8 +5353,8 @@ def build_live_snapshot_payload(include_feed=True):
             "id": row_id,
             "name": p.get("participant_name") or "-",
             "email": p.get("participant_email") or "",
-            "type": "Host" if is_host else ("Member" if is_known else "Unknown"),
-            "category": "Host" if is_host else ("Member" if is_known else "Unknown"),
+            "type": "HOST" if is_host else ("MEMBER" if is_known else "UNKNOWN"),
+            "category": p.get("category") or ("HOST" if is_host else ("MEMBER" if is_known else "UNKNOWN")),
             "is_known": is_known,
             "is_host": is_host,
             "is_active": is_active_now,
@@ -5539,7 +5585,7 @@ def live():
             function animateCounter(key,next){const el=document.querySelector(`[data-counter="${key}"]`); if(!el) return; const from=counters[key] ?? parseInt(el.textContent||'0',10) || 0; const to=parseInt(next||0,10); counters[key]=to; const start=performance.now(); const dur=450; function step(t){const p=Math.min(1,(t-start)/dur); const val=Math.round(from+(to-from)*(1-Math.pow(1-p,3))); el.textContent=val; if(p<1) requestAnimationFrame(step);} requestAnimationFrame(step);}
             function startDurationClock(baseSeconds){ if(state.durationTimer) clearInterval(state.durationTimer); let startTick=Date.now(); state.durationTimer=setInterval(()=>{const elapsed=Math.floor((Date.now()-startTick)/1000); $('rtMeetingDuration').textContent='Duration '+fmtSeconds((baseSeconds||0)+elapsed); updateActiveDurations(elapsed);},1000); }
             function updateActiveDurations(extra){ document.querySelectorAll('[data-base-duration]').forEach(el=>{const active=el.getAttribute('data-active')==='1'; const base=parseInt(el.getAttribute('data-base-duration')||'0',10); el.textContent=fmtSeconds(base+(active?extra:0));}); }
-            function renderParticipants(rows){ const body=$('rtParticipantsBody'); const incoming=new Set(); let html=''; (rows||[]).forEach(p=>{const id=String(p.id||p.name); incoming.add(id); const isNew=!state.knownRows.has(id) && !state.firstLoad; const active=p.is_active; state.knownRows.set(id,p); html+=`<tr class="rt-row ${isNew?'new':''} ${active?'':'left'}" data-row-id="${esc(id)}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${p.category==='Host'?'info':(p.category==='Member'?'ok':'warn')}">${esc(p.category||p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="rt-duration" data-base-duration="${parseInt(p.duration_seconds||0,10)}" data-active="${active?'1':'0'}">${fmtSeconds(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td>${active?`<span class="status-pill status-live"><span class="status-pulse"></span>LIVE</span>`:`<span class="badge gray">LEFT</span>`}</td><td><span class="badge ${badgeClass(p.attendance_status)}">${esc(p.attendance_status||'-')}</span></td></tr>`; });
+            function renderParticipants(rows){ const body=$('rtParticipantsBody'); const incoming=new Set(); let html=''; (rows||[]).forEach(p=>{const id=String(p.id||p.name); incoming.add(id); const isNew=!state.knownRows.has(id) && !state.firstLoad; const active=p.is_active; state.knownRows.set(id,p); html+=`<tr class="rt-row ${isNew?'new':''} ${active?'':'left'}" data-row-id="${esc(id)}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${String(p.category||p.type).toUpperCase()==='HOST'?'info':(String(p.category||p.type).toUpperCase()==='MEMBER'?'ok':'warn')}">${esc(p.category||p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="rt-duration" data-base-duration="${parseInt(p.duration_seconds||0,10)}" data-active="${active?'1':'0'}">${fmtSeconds(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td>${active?`<span class="status-pill status-live"><span class="status-pulse"></span>LIVE</span>`:`<span class="badge gray">LEFT</span>`}</td><td><span class="badge ${badgeClass(p.attendance_status)}">${esc(p.attendance_status||'-')}</span></td></tr>`; });
                 for (const id of Array.from(state.knownRows.keys())) { if(!incoming.has(id)) state.knownRows.delete(id); }
                 body.innerHTML=html || '<tr><td colspan="8" class="muted">No participant data yet.</td></tr>'; }
             function renderFeed(feed){ const box=$('rtFeed'); if(!feed || !feed.length){box.innerHTML='<div class="muted">No join/leave events yet.</div>';return;} box.innerHTML=feed.map(item=>`<div class="list-row rt-feed-item"><div><div style="font-weight:900">${esc(item.name)}</div><div class="muted">${esc(item.label)} · ${esc(item.time)}</div></div><span class="badge ${item.kind==='join'?'ok':'gray'}">${esc(item.tag)}</span></div>`).join(''); }
@@ -9571,9 +9617,13 @@ def run_smart_scheduler(force=False):
 def _smart_alert_scheduler_worker():
     global ALERT_AUTOMATION_BG_RUNNING
     try:
-        run_smart_scheduler(force=False)
-    except Exception as exc:
-        print(f"⚠️ smart alert background scheduler skipped: {exc}")
+        # Background thread has no Flask request/app context by default.
+        # Without this, url_for() inside push/email alerts can throw:
+        # "Working outside of application context".
+        with app.app_context():
+            run_smart_scheduler(force=False)
+    except BaseException as exc:
+        print(f"⚠️ smart alert background scheduler skipped safely: {exc}")
     finally:
         ALERT_AUTOMATION_BG_RUNNING = False
 
@@ -9591,7 +9641,7 @@ def smart_alert_automation_after_request(response):
             return response
         if path in ("/", "/login", "/favicon.ico") or path.startswith("/static"):
             return response
-        if path.startswith("/api/live") or path.startswith("/api/ai-assistant"):
+        if path == "/live" or path.startswith("/api/live") or path.startswith("/api/ai-assistant"):
             return response
         if ALERT_AUTOMATION_BG_RUNNING:
             return response
