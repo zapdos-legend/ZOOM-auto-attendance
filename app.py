@@ -1,3 +1,4 @@
+# UUID_NORMALIZATION_FINAL_PATCH_2026_04_26 = True
 # LIVE_DASHBOARD_FINAL_REAL_FIX_2026_04_26 = True
 # LIVE_ROUTE_SERVER_RENDER_PATCH_2026_04_26 = True
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
@@ -18,6 +19,7 @@ th { position: sticky; top:0; background:#111827;}
 '''
 # ===== END THEME =====
 
+import base64
 import csv
 import hashlib
 import hmac
@@ -835,8 +837,8 @@ def finalize_stale_live_meetings():
                     continue
 
                 cur.execute(
-                    "SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY updated_at DESC NULLS LAST, id DESC",
-                    (meeting_uuid,),
+                    "SELECT * FROM attendance WHERE meeting_uuid = ANY(%s) ORDER BY updated_at DESC NULLS LAST, id DESC",
+                    (zoom_uuid_candidates(meeting_uuid),),
                 )
                 rows = cur.fetchall()
                 if not rows:
@@ -1142,8 +1144,69 @@ def participant_key(name, email=None):
     return f"name::{(name or '').strip().lower()}"
 
 
+
+def normalize_zoom_uuid(value):
+    """Normalize Zoom meeting UUIDs so all webhook events map to the same DB key.
+
+    Zoom can send UUIDs in different escaped/base64-looking forms across started,
+    participant_joined, participant_left and ended events. This helper keeps a stable
+    canonical form without breaking old rows.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    candidates = [raw]
+
+    # URL-safe/unescaped variants sometimes appear through callbacks/logging.
+    try:
+        from urllib.parse import unquote_plus
+        decoded_url = unquote_plus(raw)
+        if decoded_url and decoded_url not in candidates:
+            candidates.append(decoded_url)
+    except Exception:
+        pass
+
+    # Try canonical base64 round-trip. If it is valid base64, this removes formatting
+    # differences while preserving the same underlying UUID bytes.
+    for item in list(candidates):
+        try:
+            padded = item + ("=" * ((4 - len(item) % 4) % 4))
+            decoded = base64.b64decode(padded, validate=False)
+            if decoded:
+                canonical = base64.b64encode(decoded).decode("utf-8")
+                if canonical and canonical not in candidates:
+                    candidates.insert(0, canonical)
+        except Exception:
+            pass
+
+    return candidates[0] if candidates else raw
+
+
+def zoom_uuid_candidates(value):
+    """Return possible UUID forms for backward-compatible lookup of old DB rows."""
+    raw = str(value or "").strip()
+    normalized = normalize_zoom_uuid(raw)
+    values = []
+    for item in (normalized, raw):
+        if item and item not in values:
+            values.append(item)
+    try:
+        from urllib.parse import quote_plus, unquote_plus
+        for item in list(values):
+            q = quote_plus(item)
+            u = unquote_plus(item)
+            for candidate in (q, u):
+                if candidate and candidate not in values:
+                    values.append(candidate)
+    except Exception:
+        pass
+    return values or [raw]
+
+
 def ensure_meeting(payload_object):
-    meeting_uuid = str(payload_object.get("uuid") or "").strip()
+    meeting_uuid_raw = str(payload_object.get("uuid") or "").strip()
+    meeting_uuid = normalize_zoom_uuid(meeting_uuid_raw)
     meeting_id = str(payload_object.get("id") or payload_object.get("meeting_id") or "").strip()
     topic = (payload_object.get("topic") or payload_object.get("meeting_topic") or "Zoom Meeting").strip()
     host_name = (payload_object.get("host_name") or payload_object.get("host_email") or "").strip()
@@ -1156,7 +1219,7 @@ def ensure_meeting(payload_object):
     with db() as conn:
         with conn.cursor() as cur:
             if lookup_uuid:
-                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (lookup_uuid,))
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid = ANY(%s)", (zoom_uuid_candidates(lookup_uuid),))
                 row = cur.fetchone()
                 if row:
                     cur.execute(
@@ -1177,21 +1240,22 @@ def ensure_meeting(payload_object):
 
             if meeting_id:
                 cur.execute(
-                    "SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY id DESC LIMIT 1",
-                    (meeting_id,),
+                    "SELECT * FROM meetings WHERE meeting_id=%s AND status='live' AND (start_time IS NULL OR ABS(EXTRACT(EPOCH FROM (start_time - %s))) <= 300) ORDER BY id DESC LIMIT 1",
+                    (meeting_id, start_time),
                 )
                 row = cur.fetchone()
                 if row:
                     cur.execute(
                         """
                         UPDATE meetings
-                        SET topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
+                        SET meeting_uuid=COALESCE(NULLIF(%s, ''), meeting_uuid),
+                            topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
                             host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
                             start_time=COALESCE(start_time, %s)
                         WHERE id=%s
                         RETURNING *
                         """,
-                        (topic, topic, host_name, host_name, start_time, row["id"]),
+                        (lookup_uuid or meeting_uuid, topic, topic, host_name, host_name, start_time, row["id"]),
                     )
                     row = cur.fetchone()
                     conn.commit()
@@ -1249,6 +1313,7 @@ def get_meeting_rows_last_activity(attendance_rows):
 
 
 def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type):
+    meeting_uuid = normalize_zoom_uuid(meeting_uuid)
     # Host detection must work even when Zoom sends host email instead of a name.
     participant_name_l = (participant_name or "").strip().lower()
     participant_email_l = (participant_email or "").strip().lower()
@@ -1256,7 +1321,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
     try:
         with db() as _host_conn:
             with _host_conn.cursor() as _host_cur:
-                _host_cur.execute("SELECT host_name FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                _host_cur.execute("SELECT host_name FROM meetings WHERE meeting_uuid = ANY(%s) ORDER BY id DESC LIMIT 1", (zoom_uuid_candidates(meeting_uuid),))
                 _host_row = _host_cur.fetchone()
                 meeting_host_l = ((_host_row or {}).get("host_name") or "").strip().lower()
     except Exception as _host_err:
@@ -1277,7 +1342,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
             meeting_pk = None
 
             if has_meeting_pk:
-                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid = ANY(%s) ORDER BY id DESC LIMIT 1", (zoom_uuid_candidates(meeting_uuid),))
                 meeting = cur.fetchone()
                 if not meeting:
                     print("❌ Meeting not found, skipping participant")
@@ -1288,8 +1353,8 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                     return
 
             cur.execute(
-                "SELECT * FROM attendance WHERE meeting_uuid=%s AND participant_key=%s",
-                (meeting_uuid, key),
+                "SELECT * FROM attendance WHERE meeting_uuid = ANY(%s) AND participant_key=%s",
+                (zoom_uuid_candidates(meeting_uuid), key),
             )
             row = cur.fetchone()
 
@@ -1544,14 +1609,14 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_actions=True):
 
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+            cur.execute("SELECT * FROM meetings WHERE meeting_uuid = ANY(%s)", (zoom_uuid_candidates(meeting_uuid),))
             meeting = cur.fetchone()
             if not meeting:
                 return None
 
             start_time = parse_dt(meeting["start_time"]) or ended_at
 
-            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
+            cur.execute("SELECT * FROM attendance WHERE meeting_uuid = ANY(%s) ORDER BY participant_name", (zoom_uuid_candidates(meeting_uuid),))
             rows = cur.fetchall()
 
             derived_last_activity = get_meeting_rows_last_activity(rows)
@@ -1653,7 +1718,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_actions=True):
 def refresh_live_meeting_summary(meeting_uuid):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s", (meeting_uuid,))
+            cur.execute("SELECT * FROM attendance WHERE meeting_uuid = ANY(%s)", (zoom_uuid_candidates(meeting_uuid),))
             rows = cur.fetchall()
 
             member_participants = sum(1 for r in rows if r["is_member"])
@@ -1714,10 +1779,10 @@ def read_live_snapshot():
                     """
                     SELECT *
                     FROM attendance
-                    WHERE meeting_uuid=%s
+                    WHERE meeting_uuid = ANY(%s)
                     ORDER BY updated_at DESC NULLS LAST, id DESC
                     """,
-                    (meeting_uuid,),
+                    (zoom_uuid_candidates(meeting_uuid),),
                 )
                 participants = cur.fetchall()
             else:
@@ -2220,7 +2285,7 @@ def evaluate_smart_alerts_for_meeting(meeting_uuid):
     try:
         with db() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid = ANY(%s)", (zoom_uuid_candidates(meeting_uuid),))
                 meeting = cur.fetchone()
                 if not meeting:
                     return
@@ -3369,12 +3434,12 @@ def _analytics_data_uncached(filters):
 def build_meeting_report_data(meeting_uuid):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+            cur.execute("SELECT * FROM meetings WHERE meeting_uuid = ANY(%s)", (zoom_uuid_candidates(meeting_uuid),))
             meeting = cur.fetchone()
             if not meeting:
                 return None
 
-            cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
+            cur.execute("SELECT * FROM attendance WHERE meeting_uuid = ANY(%s) ORDER BY participant_name", (zoom_uuid_candidates(meeting_uuid),))
             attendance_rows = cur.fetchall()
 
             cur.execute(f"SELECT * FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY id")
