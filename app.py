@@ -12,6 +12,38 @@ button { background: linear-gradient(90deg,#6366f1,#8b5cf6); color:white; border
 button:hover { opacity:0.9; }
 table { background: rgba(255,255,255,0.03); border-radius:10px;}
 th { position: sticky; top:0; background:#111827;}
+
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
 </style>
 '''
 # ===== END THEME =====
@@ -4489,7 +4521,39 @@ BASE_HTML = """
         .sidebar a.live-status-live .nav-icon{background:rgba(255,255,255,.22)!important;}
         .sidebar a.live-status-idle .nav-icon{background:rgba(255,255,255,.22)!important;}
 
-    </style>
+    
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
 
@@ -4767,7 +4831,39 @@ BASE_HTML = """
 
 {% if session.get('user_id') and active %}
 <!-- AI Level 3 Floating Bot -->
-<style>.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}</style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
+<style>.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
 
 </body>
@@ -5582,7 +5678,39 @@ def live():
             .live-fix-badge{display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:8px 13px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.34);color:#fecaca;font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
             .live-fix-dot{width:10px;height:10px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 rgba(239,68,68,.7);animation:liveFixPulse 1.2s infinite}@keyframes liveFixPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.7)}70%{box-shadow:0 0 0 12px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
             .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)} .live-fix-badge.is-live{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.42);color:#bbf7d0}.live-fix-badge.is-live .live-fix-dot{background:#22c55e;animation:none}.live-nav-live{background:linear-gradient(135deg,#16a34a,#22c55e)!important;box-shadow:0 12px 30px rgba(34,197,94,.35)!important}.live-nav-idle{background:linear-gradient(135deg,#dc2626,#ef4444)!important;box-shadow:0 12px 30px rgba(239,68,68,.35)!important}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
 
         <div class="live-fix-hero">
             <div class="live-fix-top">
@@ -5964,7 +6092,39 @@ def member_profile(member_id):
         <style>
             .member-profile-hero{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,.6fr);gap:16px;align-items:stretch}
             .profile-title{font-size:30px;font-weight:950;margin:0 0 8px}.profile-sub{color:#cbd5e1;font-weight:700}.profile-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}.profile-kpi{border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:14px;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.025));box-shadow:0 16px 38px rgba(2,6,23,.18)}.profile-kpi small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.profile-kpi strong{display:block;font-size:28px;margin-top:6px}.profile-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.profile-chart{height:320px;position:relative}.profile-chart.small{height:280px}.risk-pill{display:inline-flex;gap:8px;align-items:center;border-radius:999px;padding:8px 12px;font-weight:950;background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.20)}.timeline-list{display:grid;gap:8px;max-height:360px;overflow:auto}.timeline-item{border:1px solid rgba(148,163,184,.16);border-radius:14px;padding:10px;background:rgba(255,255,255,.04)}.profile-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}@media(max-width:1050px){.member-profile-hero,.profile-chart-grid{grid-template-columns:1fr}}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
         <div class="member-profile-hero">
             <div class="hero">
                 <div class="profile-sub">Member Profile / Deep Insights</div>
@@ -6385,7 +6545,39 @@ def analytics():
         .checkbox-select{position:relative}.checkbox-select-btn{width:100%;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:8px 10px;border-radius:8px;font-size:13px;min-height:34px}.checkbox-select-menu{display:none;position:absolute;z-index:80;top:calc(100% + 6px);left:0;right:0;max-height:230px;overflow:auto;background:rgba(255,255,255,.98);color:#172033;border:1px solid rgba(148,163,184,.35);border-radius:12px;box-shadow:0 20px 45px rgba(0,0,0,.22);padding:8px}.checkbox-select.open .checkbox-select-menu{display:block}.checkbox-select-menu label{display:flex;gap:8px;align-items:center;padding:7px;border-radius:9px;cursor:pointer;font-size:13px}.checkbox-select-menu label:hover{background:rgba(99,102,241,.12)}.checkbox-select-menu input{width:auto;height:auto}body.dark .checkbox-select-menu{background:#0f172a;color:#e5e7eb}
         .month-year-box{background:#fff8df;border:1px solid #e4c779;border-radius:10px;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}.month-year-box h4{margin:0 0 6px;font-size:12px}.month-year-box label{display:flex;gap:7px;align-items:center;font-size:12px;margin:4px 0}.month-year-box input{height:auto}.register-table-wrap{max-height:72vh;overflow:auto;border-radius:18px;border:1px solid rgba(148,163,184,.22)}.register-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}.register-table th,.register-table td{min-width:44px;text-align:center;padding:9px 10px;border-bottom:1px solid rgba(148,163,184,.16);border-right:1px solid rgba(148,163,184,.12)}.register-table th{position:sticky;top:0;z-index:4;background:#111827}.register-table .sticky-member{position:sticky;left:0;z-index:5;min-width:230px;text-align:left;background:#111827}.register-table td.sticky-member{z-index:3;background:rgba(15,23,42,.98);font-weight:800;cursor:pointer}.reg-cell{font-weight:900;border-radius:9px;color:#08111f}.reg-p{background:#22c55e}.reg-l{background:#facc15}.reg-a{background:#ef4444;color:#fff}.reg-u{background:#94a3b8}.reg-empty{color:#94a3b8}.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(2,6,23,.68);z-index:999;align-items:center;justify-content:center;padding:18px}.modal-backdrop.show{display:flex}.modal-card{max-width:460px;width:100%;background:#0f172a;border:1px solid rgba(148,163,184,.3);border-radius:22px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
         @media(max-width:1180px){.dash-showcase{grid-template-columns:1fr}.dash-mini-sidebar,.side-help{position:static}.analytics-layout,.bottom-grid,.participant-chart-grid{grid-template-columns:1fr}.dash-main-title{flex-direction:column}.dash-title-pill{width:100%;font-size:18px}.control-stack{border-left:0;padding-left:0}}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
 
 
         <style>
@@ -6406,7 +6598,39 @@ def analytics():
         .analytics-anchor-section{scroll-margin-top:154px;animation:analyticsFadeIn .24s ease both}
         @keyframes analyticsFadeIn{from{opacity:.72;transform:translateY(6px)}to{opacity:1;transform:none}}
         html{scroll-behavior:smooth}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
         <div class="analytics-tab-shell" id="analyticsTabsV3">
             <nav class="analytics-tab-nav" aria-label="Analytics sections">
                 <a class="active" href="#analyticsOverview">Overview</a>
@@ -7383,7 +7607,39 @@ def attendance_register():
         .register-table-wrap{max-height:72vh;overflow:auto;border-radius:10px;border:1px solid #cfc2a4;background:#fffdf4}.register-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:13px}.register-table th,.register-table td{min-width:38px;text-align:center;padding:8px;border-bottom:1px solid #d8cdb5;border-right:1px solid #d8cdb5}.register-table th{position:sticky;top:0;z-index:4;background:#f3ebd8;color:#111827}.register-table .sticky-member{position:sticky;left:0;z-index:5;min-width:180px;text-align:left;background:#f3ebd8}.register-table td.sticky-member{z-index:3;background:#fff8df;font-weight:900;cursor:pointer}.register-table td.sticky-member:hover{outline:2px solid #22c55e;border-radius:8px}.reg-cell{font-weight:950;border-radius:6px}.reg-p{color:#15803d}.reg-l{color:#ea580c}.reg-a{color:#dc2626}.reg-u{color:#64748b}.reg-empty{color:#cbd5e1}.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(2,6,23,.68);z-index:999;align-items:center;justify-content:center;padding:18px}.modal-backdrop.show{display:flex}.modal-card{max-width:460px;width:100%;background:#0f172a;color:#e5e7eb;border:1px solid rgba(148,163,184,.3);border-radius:22px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
         @media print{.sidebar,.topbar,.reg-side-note,.reg-feature-box,.reg-controls,.reg-month-nav{display:none!important}.main{margin:0!important}.register-book{box-shadow:none;background:#fff;padding:0}.register-heading span{color:#000;background:#fff;border:1px solid #000}.register-table-wrap{max-height:none;overflow:visible}.register-table th{position:static}.register-table .sticky-member{position:static}}
         @media(max-width:1180px){.reg-dashboard-shell{grid-template-columns:1fr}.reg-side-note,.reg-feature-box{position:static}.register-heading span{font-size:17px;padding:8px 14px}}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
 
 
         <style>
@@ -7434,7 +7690,39 @@ def attendance_register():
         .reg-pagination{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;color:#cbd5e1;font-weight:800}
         .reg-pagination a,.reg-pagination span{padding:7px 10px;border-radius:8px;background:#0f172a;border:1px solid rgba(96,165,250,.35);color:#dbeafe;text-decoration:none}
         .reg-pagination .disabled{opacity:.45}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
         <div class="reg-dashboard-shell">
             <aside class="reg-side-note">
                 <b>MONTHLY REGISTER VIEW</b>
@@ -8120,7 +8408,7 @@ def activity():
                     """
                     SELECT
                         COUNT(*) AS total,
-                        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') AS last_24h,
+                        COUNT(*) FILTER (WHERE CAST(created_at AS TIMESTAMP) >= NOW() - INTERVAL '24 hours') AS last_24h,
                         COUNT(DISTINCT COALESCE(username, 'system')) AS unique_users,
                         COUNT(*) FILTER (WHERE lower(COALESCE(action,'')) LIKE '%error%' OR lower(COALESCE(details,'')) LIKE '%error%') AS error_like
                     FROM activity_log
@@ -8159,7 +8447,39 @@ def activity():
         .audit-badge.info{background:rgba(59,130,246,.14);color:#93c5fd}.audit-badge.success{background:rgba(34,197,94,.14);color:#86efac}.audit-badge.warning{background:rgba(245,158,11,.14);color:#fcd34d}.audit-badge.danger{background:rgba(239,68,68,.14);color:#fca5a5}
         .pagination-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.page-btn{padding:9px 12px;border-radius:12px;text-decoration:none;border:1px solid rgba(148,163,184,.25);color:#e5e7eb;background:rgba(15,23,42,.65);font-weight:900}.page-btn.disabled{opacity:.35;pointer-events:none}.log-details{max-width:520px;white-space:normal;word-break:break-word;color:#cbd5e1}.audit-row:hover{background:rgba(99,102,241,.08)}
         @media(max-width:1000px){.audit-filter-grid{grid-template-columns:1fr 1fr}.audit-filter-grid .wide{grid-column:1/-1}}@media(max-width:640px){.audit-filter-grid{grid-template-columns:1fr}}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
         <div class="hero">
             <div class="hero-grid">
                 <div>
@@ -8485,7 +8805,39 @@ def push_setup():
             .push-btn {{ cursor: pointer; }}
             .push-status {{ margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.04); white-space: pre-wrap; }}
             a.push-link {{ color: #c4b5fd; text-decoration: none; }}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
     </head>
     <body>
         <div class="push-wrap">
@@ -8646,7 +8998,39 @@ def notification_control():
     body = render_template_string("""
         <style>
         .notif-shell{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:18px;align-items:start}.notif-card{background:linear-gradient(145deg,rgba(15,23,42,.96),rgba(2,6,23,.98));border:1px solid rgba(99,102,241,.28);border-radius:24px;padding:22px;box-shadow:0 24px 70px rgba(0,0,0,.42)}.notif-title{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:18px}.notif-title h2{margin:0;font-size:24px}.notif-title p{margin:5px 0 0;color:#94a3b8}.notif-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.notif-box{background:rgba(15,23,42,.9);border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:16px}.notif-box h3{margin:0 0 12px;font-size:16px}.toggle-row,.check-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.10)}.toggle-row:last-child,.check-row:last-child{border-bottom:0}.notif-input,.notif-textarea{width:100%;border-radius:12px;border:1px solid rgba(96,165,250,.28);background:#08111f;color:#e5e7eb;padding:11px 12px}.notif-textarea{min-height:120px;resize:vertical}.switch{position:relative;width:52px;height:28px}.switch input{display:none}.slider{position:absolute;inset:0;background:#334155;border-radius:999px;cursor:pointer;transition:.2s}.slider:before{content:"";position:absolute;width:22px;height:22px;left:3px;top:3px;background:white;border-radius:50%;transition:.2s}.switch input:checked + .slider{background:linear-gradient(90deg,#2563eb,#7c3aed)}.switch input:checked + .slider:before{transform:translateX(24px)}.notif-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.notif-actions button{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed)}.notif-actions .secondary{background:#1e293b}.notif-actions .success{background:#16a34a}.notif-log{max-height:620px;overflow:auto}.log-item{border-bottom:1px solid rgba(148,163,184,.12);padding:12px 0}.log-title{font-weight:950;color:#f8fafc}.log-meta{font-size:12px;color:#94a3b8;margin-top:4px}.log-msg{font-size:13px;color:#cbd5e1;margin-top:6px;line-height:1.45}.pill-ok{background:rgba(34,197,94,.14);color:#86efac;border:1px solid rgba(34,197,94,.28);padding:5px 8px;border-radius:999px;font-size:12px;font-weight:900}@media(max-width:1100px){.notif-shell{grid-template-columns:1fr}.notif-grid{grid-template-columns:1fr}}
-        </style>
+        
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
         <div class="hero"><div class="hero-grid"><div><div class="badge">Notification Control Center</div><h1 class="hero-title">Smart alert delivery controls</h1><div class="hero-copy">Enable or disable Email/Push, select alert types, customize messages, test delivery, and review alert logs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Email</div><div class="big">{{ 'ON' if settings.email_enabled else 'OFF' }}</div></div><div class="hero-chip"><div class="small">Push</div><div class="big">{{ 'ON' if settings.push_enabled else 'OFF' }}</div></div></div></div></div>
         {% if result_message %}<div class="card" style="margin-bottom:16px">{{ result_message }}</div>{% endif %}
         <div class="notif-shell"><form method="post" class="notif-card"><div class="notif-title"><div><h2>Controls</h2><p>Connected with your existing smart alert system.</p></div><span class="pill-ok">No spam: state-change only</span></div><div class="notif-grid"><div class="notif-box"><h3>Delivery Channels</h3><label class="toggle-row"><span>Email alerts</span><span class="switch"><input type="checkbox" name="email_enabled" {% if settings.email_enabled %}checked{% endif %}><span class="slider"></span></span></label><label class="toggle-row"><span>Push alerts</span><span class="switch"><input type="checkbox" name="push_enabled" {% if settings.push_enabled %}checked{% endif %}><span class="slider"></span></span></label><div style="margin-top:12px"><label class="small">Test email receiver</label><input class="notif-input" name="test_email_to" value="{{ settings.test_email_to }}" placeholder="your@email.com"></div></div><div class="notif-box"><h3>Alert Types</h3>{% for key,label in alert_labels.items() %}<label class="check-row"><span>{{ label }}</span><input type="checkbox" name="alert_types" value="{{ key }}" {% if key in settings.alert_types %}checked{% endif %}></label>{% endfor %}</div><div class="notif-box"><h3>Timing Control</h3>{% for key,label in [('before','Before meeting'),('during','During meeting'),('after','After meeting')] %}<label class="check-row"><span>{{ label }}</span><input type="checkbox" name="timings" value="{{ key }}" {% if key in settings.timings %}checked{% endif %}></label>{% endfor %}</div><div class="notif-box"><h3>Message Template</h3><textarea class="notif-textarea" name="message_template">{{ settings.message_template }}</textarea><div class="muted" style="font-size:12px;margin-top:8px">Available: {title}, {message}, {state}, {alert_type}, {member_name}, {meeting_topic}</div></div></div><div class="notif-actions"><button type="submit" name="action" value="save">Save Controls</button><button type="submit" class="success" name="action" value="test_email">Test Email</button><button type="submit" class="secondary" name="action" value="test_push">Test Push</button></div></form><div class="notif-card notif-log"><div class="notif-title"><div><h2>Alert Logs</h2><p>Latest smart alert state-change records.</p></div></div>{% if logs %}{% for log in logs %}<div class="log-item"><div class="log-title">{{ log.title }}</div><div class="log-meta">{{ fmt_dt(log.created_at) }} · {{ log.alert_type }} · {{ log.previous_state or '-' }} → {{ log.current_state }} · Email {{ '✓' if log.email_sent else '×' }} · Push {{ log.push_sent }}</div><div class="log-msg">{{ log.message }}</div></div>{% endfor %}{% else %}<div class="muted">No alert logs yet.</div>{% endif %}</div></div>
@@ -8943,7 +9327,39 @@ def ai_intelligence():
         print(f"AI Level 4 section skipped safely: {exc}"); preds=[]; recs=[]
     high=len([p for p in preds if p.get('absence_probability',0)>=70]); med=len([p for p in preds if 45<=p.get('absence_probability',0)<70]); consistent=len([p for p in preds if p.get('behavior_tag')=='Consistent']); risky=len([p for p in preds if p.get('behavior_tag')=='Risky'])
     body=render_template_string("""
-    <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}.l4-pill{display:inline-flex;border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px}.l4-high{background:rgba(239,68,68,.18);color:#fecaca;border:1px solid rgba(239,68,68,.35)}.l4-med{background:rgba(245,158,11,.18);color:#fde68a;border:1px solid rgba(245,158,11,.35)}.l4-low{background:rgba(34,197,94,.14);color:#bbf7d0;border:1px solid rgba(34,197,94,.28)}.l4-actions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.l4-actions button,.l4-actions a{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed);text-decoration:none}.l4-actions .danger{background:linear-gradient(90deg,#dc2626,#f97316)}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}</style>
+    <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}.l4-pill{display:inline-flex;border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px}.l4-high{background:rgba(239,68,68,.18);color:#fecaca;border:1px solid rgba(239,68,68,.35)}.l4-med{background:rgba(245,158,11,.18);color:#fde68a;border:1px solid rgba(245,158,11,.35)}.l4-low{background:rgba(34,197,94,.14);color:#bbf7d0;border:1px solid rgba(34,197,94,.28)}.l4-actions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.l4-actions button,.l4-actions a{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed);text-decoration:none}.l4-actions .danger{background:linear-gradient(90deg,#dc2626,#f97316)}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}
+/* TOGGLE SWITCH */
+.toggle-switch {
+    position: relative;
+    width: 120px;
+    height: 36px;
+    background: linear-gradient(90deg,#9333ea,#6366f1);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 4px;
+}
+.toggle-circle {
+    width: 50%;
+    height: 100%;
+    background: white;
+    border-radius: 999px;
+    transition: all 0.3s ease;
+}
+.toggle-active .toggle-circle {
+    transform: translateX(100%);
+}
+.toggle-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+</style>
     <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Intelligence Center</div><h1 class="hero-title">🧠 AI Intelligence + Level 4</h1><div class="hero-copy">Smart assistant, current-month member intelligence, risk heatmap, prediction engine, behavioral tags, auto-actions, and smart reports — merged into one dashboard.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Basis</div><div class="big" style="font-size:18px">{{ basis }}</div></div></div></div></div>
     <div class="ai-grid"><div class="ai-card"><div class="small">Critical Members</div><div class="ai-big risk-critical">{{ critical }}</div></div><div class="ai-card"><div class="small">Warning Members</div><div class="ai-big risk-warning">{{ warning }}</div></div><div class="ai-card"><div class="small">High Absence Risk</div><div class="ai-big risk-critical">{{ high }}</div></div><div class="ai-card"><div class="small">Latest Meeting Health</div><div class="ai-big">{{ latest_score }}/100</div></div></div>
     <div class="ai-chat" style="margin-top:18px"><div class="ai-card"><h2>🤖 Smart Assistant</h2><div id="aiGreeting" class="ai-msg">Analyzing your latest attendance data...</div><div class="ai-suggest"><button type="button" onclick="aiAsk('Who is at risk?')">At-risk members</button><button type="button" onclick="aiAsk('List all members below 50% attendance')">Below 50%</button><button type="button" onclick="aiAsk('Show top performers')">Top performers</button><button type="button" onclick="aiAsk('Why attendance dropped?')">Why dropped?</button><button type="button" onclick="aiAsk('Summarize last meeting')">Last meeting</button><button type="button" onclick="aiAsk('Show predictions')">Predictions</button><button type="button" onclick="aiAsk('Show behavioral tags')">Behavior tags</button><button type="button" onclick="aiAsk('Send reminder to them')">Remind them</button><button type="button" onclick="location.href='/ai-level4/report.pdf'">Smart PDF</button><button type="button" onclick="location.href='/ai-level4/report.csv'">Smart CSV</button></div><input id="aiLevel3Input" class="ai-input" placeholder="Ask attendance question..." onkeydown="if(event.key==='Enter'){aiAsk(this.value)}"><div style="margin-top:10px"><button type="button" onclick="aiAsk(document.getElementById('aiLevel3Input').value)">Ask AI</button></div><div id="aiLevel3Answer" class="ai-msg">Ready.</div></div><div class="ai-card"><h2>💡 Insights</h2>{% for i in insights %}<div class="ai-msg"><b>{{ i.title }}</b><br><span class="small">{{ i.category }} · {{ i.severity }}</span><br>{{ i.message }}<br><b>Recommendation:</b> {{ i.recommendation }}</div>{% endfor %}</div></div>
