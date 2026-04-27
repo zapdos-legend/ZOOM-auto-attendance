@@ -6512,10 +6512,23 @@ def smart_alert_automation_after_request(response):
     return response
 
 
-# ===== MODULAR STRUCTURE NOTE =====
-# Modular folders exist, but imports are disabled until each route is migrated.
-# Original app.py routes remain active to avoid duplicate Flask endpoint crashes.
-# ===== END MODULAR STRUCTURE NOTE =====
+# ===== MODULAR ROUTE REGISTRATION (REAL SPLIT) =====
+# Route/service modules import this app module and register the same URLs.
+import routes.auth
+import routes.home
+import routes.live
+import routes.meetings
+import routes.members
+import routes.users
+import routes.analytics
+import routes.settings
+import routes.activity
+import routes.system
+import services.zoom_webhook
+import services.notifications
+import routes.misc
+import routes.alerts
+# ===== END MODULAR ROUTE REGISTRATION =====
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
