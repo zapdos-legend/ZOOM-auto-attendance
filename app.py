@@ -195,6 +195,10 @@ DB_INITIALIZED = False
 LAST_STALE_CHECK_TS = 0
 SETTINGS_CACHE = {}
 
+# AI Level 3 defaults must exist before helper functions are defined.
+# In the modular split, routes/settings.py is imported after app.py loads.
+AI_LEVEL3_LOW_ATTENDANCE_DEFAULT = 50.0
+
 # Lightweight in-process cache for heavy dashboards. Safe on Render: short TTL, no behavior change.
 PERF_CACHE = {}
 try:
