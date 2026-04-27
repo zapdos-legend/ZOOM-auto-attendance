@@ -4483,6 +4483,12 @@ BASE_HTML = """
         .premium-skeleton,.rt-skeleton{position:relative;overflow:hidden;border-radius:18px;background:linear-gradient(90deg,rgba(148,163,184,.10),rgba(148,163,184,.18),rgba(148,163,184,.10));background-size:220% 100%;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),0 18px 44px rgba(0,0,0,.12);animation:premiumSkeletonShimmer 1.28s ease-in-out infinite}.premium-skeleton::after,.rt-skeleton::after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.16) 42%,transparent 58%);transform:translateX(-120%);animation:premiumSkeletonSweep 1.65s infinite}.premium-skeleton-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.premium-skeleton-card{min-height:135px;border-radius:22px}.premium-skeleton-line{height:14px;border-radius:999px;margin:10px 0}.premium-skeleton-line.short{width:42%}.premium-skeleton-line.medium{width:68%}.premium-skeleton-line.long{width:92%}@keyframes premiumSkeletonShimmer{0%{background-position:0% 0}100%{background-position:220% 0}}@keyframes premiumSkeletonSweep{100%{transform:translateX(120%)}}
         body.anim-off *{animation:none!important;transition:none!important}body.anim-minimal *{transition-duration:.12s!important}body.anim-smooth *{transition-duration:.28s!important}body.anim-full .card,body.anim-full .hero,body.anim-full .appearance-card{transition:transform .35s ease, box-shadow .35s ease, border-color .35s ease}body.anim-full .card:hover,body.anim-full .hero:hover{transform:translateY(-3px)}
 
+        /* GLOBAL LIVE NAV STATUS: visible on every dashboard */
+        .sidebar a.live-status-live{background:linear-gradient(135deg,#16a34a,#22c55e)!important;color:#fff!important;box-shadow:0 14px 34px rgba(34,197,94,.38)!important;}
+        .sidebar a.live-status-idle{background:linear-gradient(135deg,#dc2626,#ef4444)!important;color:#fff!important;box-shadow:0 14px 34px rgba(239,68,68,.34)!important;}
+        .sidebar a.live-status-live .nav-icon{background:rgba(255,255,255,.22)!important;}
+        .sidebar a.live-status-idle .nav-icon{background:rgba(255,255,255,.22)!important;}
+
     </style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
@@ -4541,7 +4547,7 @@ BASE_HTML = """
             <div class="nav-group">
                 {% for item in nav %}
                     {% set parts = item.label.split(' ', 1) %}
-                    <a href="{{ item.href }}" class="{% if active == item.key %}active{% endif %}">
+                    <a href="{{ item.href }}" id="{{ item.id if item.id else '' }}" class="{% if active == item.key %}active{% endif %} {{ item.class if item.class else '' }}">
                         <span class="nav-icon">{{ parts[0] }}</span>
                         <span>{{ parts[1] if parts|length > 1 else item.label }}</span>
                     </a>
@@ -4721,6 +4727,29 @@ BASE_HTML = """
     function setupAppearanceEngineV8(){const allowedThemes=['default-saas-dark','notion-clean','stripe-glow','vercel-minimal','netflix-dark','college-formal','purple-neon','light-professional'];const savedTheme=localStorage.getItem('zoomAttendanceGlobalTheme')||'default-saas-dark';const currentTheme=allowedThemes.includes(savedTheme)?savedTheme:'default-saas-dark';document.body.setAttribute('data-app-theme',currentTheme);document.querySelectorAll('[data-theme-apply]').forEach((el)=>{const theme=el.getAttribute('data-theme-apply');el.classList.toggle('active',theme===currentTheme);el.addEventListener('click',function(){localStorage.setItem('zoomAttendanceGlobalTheme',theme);document.body.setAttribute('data-app-theme',theme);const topSelect=document.getElementById('globalThemeSelect');if(topSelect)topSelect.value=theme;document.querySelectorAll('[data-theme-apply]').forEach(c=>c.classList.toggle('active',c.getAttribute('data-theme-apply')===theme));setupChartDefaults();updateChartsForTheme();window.dispatchEvent(new CustomEvent('zoom-theme-changed',{detail:{theme}}));});});const topSelect=document.getElementById('globalThemeSelect');if(topSelect){topSelect.value=currentTheme;topSelect.addEventListener('change',function(){localStorage.setItem('zoomAttendanceGlobalTheme',this.value);document.body.setAttribute('data-app-theme',this.value);document.querySelectorAll('[data-theme-apply]').forEach(c=>c.classList.toggle('active',c.getAttribute('data-theme-apply')===this.value));setupChartDefaults();updateChartsForTheme();});}const animSelect=document.getElementById('animationLevelSelect');if(animSelect){animSelect.addEventListener('change',function(){localStorage.setItem('zoomAttendanceAnimationLevel',this.value);applyAnimationLevel();});}applyAnimationLevel();setTimeout(updateChartsForTheme,250);}
     window.setupAppearanceEngineV8=setupAppearanceEngineV8;
 
+
+    function updateGlobalLiveNavState(){
+        const liveNav = document.getElementById('globalLiveNavLink');
+        if(!liveNav) return;
+        fetch('/api/live-summary?t=' + Date.now(), {cache:'no-store'})
+            .then(r => r.json())
+            .then(data => {
+                const isLive = !!(data && data.has_live);
+                liveNav.classList.toggle('live-status-live', isLive);
+                liveNav.classList.toggle('live-status-idle', !isLive);
+                const icon = liveNav.querySelector('.nav-icon');
+                if(icon) icon.textContent = isLive ? '🟢' : '🔴';
+                liveNav.title = isLive ? 'Live meeting is running' : 'No live meeting running';
+            })
+            .catch(() => {
+                liveNav.classList.remove('live-status-live');
+                liveNav.classList.add('live-status-idle');
+                const icon = liveNav.querySelector('.nav-icon');
+                if(icon) icon.textContent = '🔴';
+                liveNav.title = 'Live status unavailable';
+            });
+    }
+
     document.addEventListener('DOMContentLoaded', function(){
         setupAppearanceEngineV8();
         setupGlobalThemeSystem();
@@ -4730,6 +4759,8 @@ BASE_HTML = """
         setupChartDefaults();
         polishLayoutSpacing();
         enhanceWowEffects();
+        updateGlobalLiveNavState();
+        setInterval(updateGlobalLiveNavState, 6000);
     });
 })();
 </script>
@@ -4742,10 +4773,49 @@ BASE_HTML = """
 </body>
 </html>
 """
+
+
+def quick_live_nav_active() -> bool:
+    """Fast global sidebar live indicator.
+    Green only when a real live meeting is active/recent; red otherwise.
+    Safe fallback: on DB error it returns False so UI never shows false green.
+    """
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT m.id,
+                           COALESCE(m.start_time, m.created_at) AS started_at,
+                           COUNT(a.id) FILTER (WHERE a.current_join IS NOT NULL) AS active_rows
+                    FROM meetings m
+                    LEFT JOIN attendance a ON a.meeting_uuid = m.meeting_uuid
+                    WHERE COALESCE(m.status, 'live')='live'
+                      AND COALESCE(m.meeting_uuid, '') <> ''
+                    GROUP BY m.id
+                    ORDER BY active_rows DESC, COALESCE(m.start_time, m.created_at) DESC, m.id DESC
+                    LIMIT 1
+                    """
+                )
+                row = cur.fetchone()
+                if not row:
+                    return False
+                if int(row.get('active_rows') or 0) > 0:
+                    return True
+                started = parse_dt(row.get('started_at'))
+                if started and (now_local() - started).total_seconds() <= 300:
+                    return True
+    except Exception as e:
+        print(f"⚠️ quick_live_nav_active fallback: {e}")
+    return False
+
 def page(title, body, active="home"):
+    live_nav_active = quick_live_nav_active()
+    live_nav_icon = "🟢" if live_nav_active else "🔴"
+    live_nav_class = "live-status-live" if live_nav_active else "live-status-idle"
     nav = [
         {"key": "home", "label": "🏠 Home", "href": url_for("home")},
-        {"key": "live", "label": "🟢 Live", "href": url_for("live")},
+        {"key": "live", "label": f"{live_nav_icon} Live", "href": url_for("live"), "id": "globalLiveNavLink", "class": live_nav_class},
         {"key": "members", "label": "👥 Members", "href": url_for("members")},
         {"key": "users", "label": "🔐 Users", "href": url_for("users")},
         {"key": "analytics", "label": "📊 Analytics", "href": url_for("analytics")},
