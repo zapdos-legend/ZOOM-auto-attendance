@@ -1766,6 +1766,19 @@ def read_live_snapshot():
                 )
             participants = cur.fetchall()
 
+            # Do not show stale old live rows as an active live meeting.
+            # Keep a small grace period so meeting.started can appear before participant_joined.
+            active_now_rows = [r for r in participants if r.get("current_join") is not None]
+            now_dt = now_local()
+            activity_dt = parse_dt(meeting.get("activity_sort")) or parse_dt(meeting.get("start_time")) or parse_dt(meeting.get("created_at"))
+            started_dt = parse_dt(meeting.get("start_time")) or parse_dt(meeting.get("created_at"))
+            if not active_now_rows:
+                age_seconds = (now_dt - (activity_dt or now_dt)).total_seconds()
+                start_age_seconds = (now_dt - (started_dt or now_dt)).total_seconds()
+                # If there are no people inside and the row is older than 5 minutes, this is not a live meeting.
+                if age_seconds > 300 and start_age_seconds > 300:
+                    return None
+
             name_sql = member_name_sql(conn)
             cur.execute(
                 f"SELECT *, {name_sql} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({name_sql}, '')"
@@ -4721,7 +4734,7 @@ BASE_HTML = """
 })();
 </script>
 
-{% if session.get('user_id') %}
+{% if session.get('user_id') and active %}
 <!-- AI Level 3 Floating Bot -->
 <style>.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}</style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
@@ -5386,6 +5399,8 @@ def build_live_snapshot_payload(include_feed=True):
             "first_join": fmt_time_ampm(p.get("first_join")) if p.get("first_join") else "-",
             "last_leave": fmt_time_ampm(p.get("last_leave")) if p.get("last_leave") else ("Live now" if is_active_now else "-"),
             "duration_seconds": int(live_total or 0),
+            "stored_seconds": int(p.get("total_seconds") or 0),
+            "current_join_epoch_ms": int(current_join.timestamp() * 1000) if current_join else 0,
             "duration_min": mins_from_seconds(live_total),
             "rejoins": p.get("rejoin_count") or 0,
             "status": live_status,
@@ -5446,7 +5461,7 @@ def build_live_snapshot_payload(include_feed=True):
             {
                 "id": m.get("id"),
                 "name": member_display_name(m),
-                "contact": m.get("email") or m.get("phone") or "No contact info",
+                "contact": m.get("phone") or "No phone number",
             }
             for m in not_joined_members[:40]
         ],
@@ -5496,16 +5511,16 @@ def live():
             .live-fix-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
             .live-fix-badge{display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:8px 13px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.34);color:#fecaca;font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
             .live-fix-dot{width:10px;height:10px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 rgba(239,68,68,.7);animation:liveFixPulse 1.2s infinite}@keyframes liveFixPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.7)}70%{box-shadow:0 0 0 12px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
-            .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)}
+            .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)} .live-fix-badge.is-live{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.42);color:#bbf7d0}.live-fix-badge.is-live .live-fix-dot{background:#22c55e;animation:none}.live-nav-live{background:linear-gradient(135deg,#16a34a,#22c55e)!important;box-shadow:0 12px 30px rgba(34,197,94,.35)!important}.live-nav-idle{background:linear-gradient(135deg,#dc2626,#ef4444)!important;box-shadow:0 12px 30px rgba(239,68,68,.35)!important}
         </style>
 
         <div class="live-fix-hero">
             <div class="live-fix-top">
                 <div>
-                    <div class="live-fix-badge"><span class="live-fix-dot"></span><span id="lfBadge">{{ 'LIVE MEETING RUNNING' if data.has_live else 'LIVE DASHBOARD IDLE' }}</span></div>
+                    <div class="live-fix-badge {{ 'is-live' if data.has_live else '' }}" id="lfBadgeWrap"><span class="live-fix-dot"></span><span id="lfBadge">{{ 'LIVE MEETING RUNNING' if data.has_live else 'LIVE DASHBOARD IDLE' }}</span></div>
                     <h1 class="hero-title" id="lfTopic" style="margin-top:14px">{{ data.meeting.topic if data.has_live else 'Waiting for Zoom meeting' }}</h1>
                     <div class="hero-copy" id="lfCopy">This page now renders live attendance from server immediately and then refreshes every 2 seconds.</div>
-                    <div class="row" style="margin-top:14px;gap:10px;flex-wrap:wrap">
+                    <div class="row" id="lfMetaRow" style="margin-top:14px;gap:10px;flex-wrap:wrap;display:{{ 'flex' if data.has_live else 'none' }}">
                         <span class="badge info" id="lfMeetingId">Meeting ID {{ data.meeting.id if data.has_live else '-' }}</span>
                         <span class="badge gray" id="lfStarted">Started {{ data.meeting.start_time if data.has_live else '-' }}</span>
                         <span class="badge gray" id="lfDuration">Duration {{ fmt_seconds(data.summary.meeting_duration_seconds) }}</span>
@@ -5538,7 +5553,7 @@ def live():
                                 <td><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
                                 <td>{{ p.first_join }}</td>
                                 <td>{{ p.last_leave }}</td>
-                                <td><span class="live-fix-duration" data-base="{{ p.duration_seconds }}" data-active="{{ 1 if p.is_active else 0 }}">{{ fmt_seconds(p.duration_seconds) }}</span></td>
+                                <td><span class="live-fix-duration" data-base="{{ p.stored_seconds if p.is_active else p.duration_seconds }}" data-active="{{ 1 if p.is_active else 0 }}" data-current-join-ms="{{ p.current_join_epoch_ms if p.is_active else 0 }}">{{ fmt_seconds(p.duration_seconds) }}</span></td>
                                 <td>{{ p.rejoins }}</td>
                                 <td><span class="badge {{ 'ok' if p.status == 'LIVE' else 'gray' }}">{{ p.status }}</span></td>
                             </tr>
@@ -5562,7 +5577,11 @@ def live():
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
             function render(data){
                 lastPayload=data; tickBase=Date.now();
-                document.getElementById('lfBadge').textContent=data.has_live?'LIVE MEETING RUNNING':'LIVE DASHBOARD IDLE';
+                document.getElementById('lfBadge').textContent=data.has_live?'LIVE MEETING RUNNING':'NO LIVE MEETING';
+                document.getElementById('lfBadgeWrap').classList.toggle('is-live', !!data.has_live);
+                document.getElementById('lfMetaRow').style.display=data.has_live?'flex':'none';
+                const liveNav=[...document.querySelectorAll('.sidebar a')].find(a=>a.getAttribute('href')&&a.getAttribute('href').includes('/live'));
+                if(liveNav){liveNav.classList.toggle('live-nav-live',!!data.has_live); liveNav.classList.toggle('live-nav-idle',!data.has_live);}
                 document.getElementById('lfTopic').textContent=data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting';
                 document.getElementById('lfMeetingId').textContent='Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-');
                 document.getElementById('lfStarted').textContent='Started '+(data.has_live?(data.meeting.start_time||'-'):'-');
@@ -5575,7 +5594,7 @@ def live():
                 const rows=data.participants||[];
                 document.getElementById('lfEmpty').style.display=rows.length?'none':'block';
                 document.getElementById('lfTableWrap').style.display=rows.length?'block':'none';
-                document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt(p.duration_seconds||0,10)}" data-active="${p.is_active?1:0}">${fmt(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
+                document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt((p.is_active?p.stored_seconds:p.duration_seconds)||0,10)}" data-active="${p.is_active?1:0}" data-current-join-ms="${p.is_active?parseInt(p.current_join_epoch_ms||0,10):0}">${fmt(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
                 document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
                 document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
             }
@@ -5583,7 +5602,21 @@ def live():
                 try{let r=await fetch('{{ url_for("api_live_snapshot") }}?t='+Date.now(),{cache:'no-store',credentials:'same-origin'});let d=await r.json();document.getElementById('lfConn').className='live-fix-conn ok';document.getElementById('lfConn').textContent='● Updated '+new Date().toLocaleTimeString();render(d);}catch(e){document.getElementById('lfConn').className='live-fix-conn bad';document.getElementById('lfConn').textContent='● Poll retrying';}
                 setTimeout(poll,2000);
             }
-            setInterval(function(){let extra=Math.floor((Date.now()-tickBase)/1000);document.querySelectorAll('.live-fix-duration').forEach(function(el){let base=parseInt(el.getAttribute('data-base')||'0',10);let active=el.getAttribute('data-active')==='1';el.textContent=fmt(base+(active?extra:0));}); if(lastPayload && lastPayload.summary){document.getElementById('lfDuration').textContent='Duration '+fmt((lastPayload.summary.meeting_duration_seconds||0)+extra);}},1000);
+            setInterval(function(){
+                const nowMs=Date.now();
+                document.querySelectorAll('.live-fix-duration').forEach(function(el){
+                    let base=parseInt(el.getAttribute('data-base')||'0',10);
+                    let active=el.getAttribute('data-active')==='1';
+                    let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
+                    let extra=(active&&joinMs>0)?Math.max(0,Math.floor((nowMs-joinMs)/1000)):0;
+                    el.textContent=fmt(base+extra);
+                });
+                if(lastPayload && lastPayload.meeting && lastPayload.meeting.start_iso){
+                    let startMs=Date.parse(lastPayload.meeting.start_iso);
+                    let sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((nowMs-startMs)/1000));
+                    document.getElementById('lfDuration').textContent='Duration '+fmt(sec);
+                }
+            },1000);
             render(lastPayload); poll();
         })();
         </script>
