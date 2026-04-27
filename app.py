@@ -1689,26 +1689,51 @@ def get_live_status_for_row(row, meeting_start):
 
 
 def read_live_snapshot():
+    """Return the best current live meeting snapshot.
+
+    Production fix:
+    - Do not depend on the browser JS to discover live data.
+    - Prefer the newest live meeting that has active participant rows.
+    - Fallback to the newest live meeting even before participants join.
+    - Also fallback to a very recent meeting row because Render/Zoom retries can leave
+      status inconsistencies while the meeting is still visible on Home.
+    """
     with db() as conn:
         with conn.cursor() as cur:
-            # Prefer a meeting that currently has someone inside. This makes the Live
-            # dashboard show the correct session instantly even if older live rows exist.
             cur.execute(
                 """
                 SELECT m.*,
                        COALESCE(MAX(a.updated_at), m.start_time, m.created_at) AS activity_sort,
-                       COUNT(a.id) FILTER (WHERE a.current_join IS NOT NULL) AS active_rows
+                       COUNT(a.id) FILTER (WHERE a.current_join IS NOT NULL) AS active_rows,
+                       COUNT(a.id) AS total_rows
                 FROM meetings m
                 LEFT JOIN attendance a ON a.meeting_uuid = m.meeting_uuid
-                WHERE COALESCE(m.status, 'live')='live'
-                  AND m.meeting_uuid IS NOT NULL
-                  AND m.meeting_uuid <> ''
+                WHERE COALESCE(m.status, 'live') = 'live'
+                  AND COALESCE(m.meeting_uuid, '') <> ''
                 GROUP BY m.id
-                ORDER BY active_rows DESC, activity_sort DESC, m.id DESC
+                ORDER BY active_rows DESC, total_rows DESC, activity_sort DESC, m.id DESC
                 LIMIT 1
                 """
             )
             meeting = cur.fetchone()
+
+            if not meeting:
+                cur.execute(
+                    """
+                    SELECT m.*,
+                           COALESCE(MAX(a.updated_at), m.start_time, m.created_at) AS activity_sort,
+                           COUNT(a.id) FILTER (WHERE a.current_join IS NOT NULL) AS active_rows,
+                           COUNT(a.id) AS total_rows
+                    FROM meetings m
+                    LEFT JOIN attendance a ON a.meeting_uuid = m.meeting_uuid
+                    WHERE COALESCE(m.meeting_uuid, '') <> ''
+                      AND COALESCE(m.start_time, m.created_at) >= NOW() - INTERVAL '12 hours'
+                    GROUP BY m.id
+                    ORDER BY active_rows DESC, total_rows DESC, activity_sort DESC, m.id DESC
+                    LIMIT 1
+                    """
+                )
+                meeting = cur.fetchone()
 
             if not meeting:
                 return None
@@ -1720,7 +1745,10 @@ def read_live_snapshot():
                     """
                     SELECT * FROM attendance
                     WHERE meeting_uuid=%s OR meeting_pk=%s
-                    ORDER BY current_join DESC NULLS LAST, total_seconds DESC, participant_name
+                    ORDER BY current_join DESC NULLS LAST,
+                             total_seconds DESC,
+                             first_join ASC NULLS LAST,
+                             participant_name ASC
                     """,
                     (meeting_uuid, meeting.get("id")),
                 )
@@ -1729,14 +1757,19 @@ def read_live_snapshot():
                     """
                     SELECT * FROM attendance
                     WHERE meeting_uuid=%s
-                    ORDER BY current_join DESC NULLS LAST, total_seconds DESC, participant_name
+                    ORDER BY current_join DESC NULLS LAST,
+                             total_seconds DESC,
+                             first_join ASC NULLS LAST,
+                             participant_name ASC
                     """,
                     (meeting_uuid,),
                 )
             participants = cur.fetchall()
 
             name_sql = member_name_sql(conn)
-            cur.execute(f"SELECT *, {name_sql} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({name_sql}, '')")
+            cur.execute(
+                f"SELECT *, {name_sql} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({name_sql}, '')"
+            )
             members = cur.fetchall()
 
     joined_member_ids = {p["member_id"] for p in participants if p.get("member_id") and p.get("first_join")}
@@ -5454,130 +5487,109 @@ def api_live_feed():
 
 @app.route("/live")
 @login_required
-
 def live():
+    initial_payload = build_live_snapshot_payload(include_feed=True)
     body = render_template_string(
         """
         <style>
-            .rt-live-shell{position:relative;overflow:hidden;border:1px solid rgba(99,102,241,.22)}
-            .rt-live-shell:before{content:"";position:absolute;inset:-80px;background:radial-gradient(circle at 15% 15%,rgba(239,68,68,.20),transparent 30%),radial-gradient(circle at 90% 10%,rgba(59,130,246,.16),transparent 34%),radial-gradient(circle at 70% 90%,rgba(34,197,94,.14),transparent 30%);pointer-events:none;filter:blur(2px)}
-            .rt-live-inner{position:relative;z-index:1}
-            .rt-live-badge{display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:8px 13px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.34);color:#fecaca;font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
-            .rt-pulse-dot{width:10px;height:10px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 rgba(239,68,68,.7);animation:rtPulse 1.25s infinite}
-            @keyframes rtPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.7);transform:scale(.92)}70%{box-shadow:0 0 0 13px rgba(239,68,68,0);transform:scale(1)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0);transform:scale(.92)}}
-            .rt-connection{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:900;border:1px solid rgba(148,163,184,.22);background:rgba(15,23,42,.55)}
-            .rt-connection.ok{color:#86efac;border-color:rgba(34,197,94,.26)}
-            .rt-connection.bad{color:#fecaca;border-color:rgba(239,68,68,.34)}
-            .rt-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-top:16px}
-            .rt-stat{border-radius:22px;border:1px solid rgba(148,163,184,.18);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.025));padding:18px;transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease}
-            .rt-stat:hover{transform:translateY(-2px);border-color:rgba(99,102,241,.35);box-shadow:0 16px 40px rgba(0,0,0,.28)}
-            .rt-stat-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.rt-stat-value{font-size:32px;font-weight:950;margin-top:8px}.rt-stat-sub{font-size:12px;color:#94a3b8;margin-top:3px}
-            .rt-host.present{color:#86efac}.rt-host.absent{color:#fca5a5}
-            .rt-skeleton{position:relative;overflow:hidden;background:rgba(148,163,184,.10);border-radius:14px;min-height:18px}.rt-skeleton:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);transform:translateX(-100%);animation:rtShimmer 1.35s infinite}@keyframes rtShimmer{100%{transform:translateX(100%)}}
-            .rt-row{transition:background .35s ease,opacity .35s ease,transform .35s ease}.rt-row.new{background:rgba(34,197,94,.13)!important;animation:rtNewRow 1.8s ease}.rt-row.left{opacity:.48}.rt-row.fade-out{opacity:0;transform:translateX(15px)}@keyframes rtNewRow{0%{box-shadow:inset 4px 0 #22c55e;background:rgba(34,197,94,.28)}100%{box-shadow:inset 0 0 transparent}}
-            .rt-feed-item{animation:rtFeedIn .45s ease;border-left:3px solid rgba(99,102,241,.55)}@keyframes rtFeedIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-            .rt-duration{font-variant-numeric:tabular-nums;font-weight:900}.rt-empty-live{padding:38px 18px;text-align:center}.rt-hidden{display:none!important}
-            .rt-live-table td,.rt-live-table th{transition:background .25s ease,color .25s ease}
+            .live-fix-hero{border:1px solid rgba(99,102,241,.25);background:linear-gradient(135deg,rgba(15,23,42,.92),rgba(30,41,59,.78));border-radius:26px;padding:22px;box-shadow:0 24px 70px rgba(0,0,0,.35)}
+            .live-fix-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+            .live-fix-badge{display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:8px 13px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.34);color:#fecaca;font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
+            .live-fix-dot{width:10px;height:10px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 rgba(239,68,68,.7);animation:liveFixPulse 1.2s infinite}@keyframes liveFixPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.7)}70%{box-shadow:0 0 0 12px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
+            .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)}
         </style>
 
-        <div class="hero rt-live-shell">
-            <div class="rt-live-inner">
-                <div class="row" style="justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
-                    <div>
-                        <div class="rt-live-badge"><span class="rt-pulse-dot"></span><span id="rtLiveBadgeText">LIVE OPERATIONS BOARD</span></div>
-                        <h1 class="hero-title" id="rtMeetingTopic" style="margin-top:14px">Live Dashboard</h1>
-                        <div class="hero-copy" id="rtMeetingCopy">Real-time animated dashboard powered by lightweight AJAX polling. No full page reload, no webhook logic change.</div>
-                        <div class="row" style="margin-top:16px;gap:10px;flex-wrap:wrap">
-                            <span class="badge info" id="rtMeetingId">Meeting ID -</span>
-                            <span class="badge gray" id="rtMeetingStarted">Started -</span>
-                            <span class="badge gray" id="rtMeetingDuration">Duration 00:00:00</span>
-                            <span class="badge gray" id="rtRiskBadge">Risk Idle</span>
-                        </div>
-                    </div>
-                    <div class="stack" style="align-items:flex-end">
-                        <div id="rtConnection" class="rt-connection bad">● Connecting...</div>
-                        <div class="muted" style="font-size:12px">Polling every 2.5 seconds</div>
+        <div class="live-fix-hero">
+            <div class="live-fix-top">
+                <div>
+                    <div class="live-fix-badge"><span class="live-fix-dot"></span><span id="lfBadge">{{ 'LIVE MEETING RUNNING' if data.has_live else 'LIVE DASHBOARD IDLE' }}</span></div>
+                    <h1 class="hero-title" id="lfTopic" style="margin-top:14px">{{ data.meeting.topic if data.has_live else 'Waiting for Zoom meeting' }}</h1>
+                    <div class="hero-copy" id="lfCopy">This page now renders live attendance from server immediately and then refreshes every 2 seconds.</div>
+                    <div class="row" style="margin-top:14px;gap:10px;flex-wrap:wrap">
+                        <span class="badge info" id="lfMeetingId">Meeting ID {{ data.meeting.id if data.has_live else '-' }}</span>
+                        <span class="badge gray" id="lfStarted">Started {{ data.meeting.start_time if data.has_live else '-' }}</span>
+                        <span class="badge gray" id="lfDuration">Duration {{ fmt_seconds(data.summary.meeting_duration_seconds) }}</span>
                     </div>
                 </div>
-
-                <div class="rt-stat-grid">
-                    <div class="rt-stat"><div class="rt-stat-label">Live Participants</div><div class="rt-stat-value" data-counter="active_now">0</div><div class="rt-stat-sub">Currently inside meeting</div></div>
-                    <div class="rt-stat"><div class="rt-stat-label">Known Members</div><div class="rt-stat-value" data-counter="known_count">0</div><div class="rt-stat-sub">Registered and active now</div></div>
-                    <div class="rt-stat"><div class="rt-stat-label">Unknown</div><div class="rt-stat-value" data-counter="unknown_count">0</div><div class="rt-stat-sub">Unmatched live participants</div></div>
-                    <div class="rt-stat"><div class="rt-stat-label">Host Status</div><div class="rt-stat-value rt-host absent" id="rtHostStatus">Absent</div><div class="rt-stat-sub">Present / absent indicator</div></div>
-                    <div class="rt-stat"><div class="rt-stat-label">Not Joined</div><div class="rt-stat-value" data-counter="not_joined_count">0</div><div class="rt-stat-sub">Active members pending</div></div>
-                </div>
+                <div class="live-fix-conn ok" id="lfConn">● Server rendered</div>
+            </div>
+            <div class="live-fix-grid">
+                <div class="live-fix-stat"><div class="live-fix-label">Live Participants</div><div class="live-fix-value" id="lfActive">{{ data.summary.active_now }}</div></div>
+                <div class="live-fix-stat"><div class="live-fix-label">Members Live</div><div class="live-fix-value" id="lfKnown">{{ data.summary.known_count }}</div></div>
+                <div class="live-fix-stat"><div class="live-fix-label">Unknown Live</div><div class="live-fix-value" id="lfUnknown">{{ data.summary.unknown_count }}</div></div>
+                <div class="live-fix-stat"><div class="live-fix-label">Host</div><div class="live-fix-value" id="lfHost">{{ 'Present' if data.summary.host_present else 'Absent' }}</div></div>
+                <div class="live-fix-stat"><div class="live-fix-label">Not Joined</div><div class="live-fix-value" id="lfNotJoined">{{ data.summary.not_joined_count }}</div></div>
             </div>
         </div>
 
-        <div id="rtLoadingSkeleton" class="grid-2" style="margin-top:16px;grid-template-columns:minmax(0,1.45fr) minmax(320px,.55fr)">
-            <div class="card"><div class="rt-skeleton" style="height:26px;width:260px;margin-bottom:18px"></div><div class="rt-skeleton" style="height:320px"></div></div>
-            <div class="card"><div class="rt-skeleton" style="height:26px;width:160px;margin-bottom:18px"></div><div class="rt-skeleton" style="height:320px"></div></div>
-        </div>
-
-        <div id="rtLiveContent" class="grid-2 rt-hidden" style="margin-top:16px;grid-template-columns:minmax(0,1.45fr) minmax(320px,.55fr)">
+        <div class="grid-2" style="margin-top:16px;grid-template-columns:minmax(0,1.45fr) minmax(320px,.55fr)">
             <div class="card">
-                <div class="section-title">
-                    <div><h3 style="margin:0">Live Participants Board</h3><p>Animated participant status, duration, join/leave movement and known/unknown split.</p></div>
-                    <span class="badge ok"><span class="rt-pulse-dot" style="width:8px;height:8px"></span> AJAX Live</span>
+                <div class="section-title"><div><h3 style="margin:0">Live Attendance</h3><p>Sorted by duration. Status changes to LIVE while inside meeting and LEFT after leaving.</p></div><span class="badge ok">Realtime</span></div>
+                <div id="lfEmpty" class="live-fix-empty" style="display:{{ 'none' if data.has_live and data.participants else 'block' }}">
+                    <div class="empty-icon">📡</div><h3 style="margin:0 0 8px 0">No live participant rows yet</h3><div class="muted">Webhook meeting start may be received before participant join. This will auto-update.</div>
                 </div>
-                <div id="rtNoLive" class="rt-empty-live">
-                    <div class="empty-icon">📡</div>
-                    <h3 style="margin:0 0 8px 0">Waiting for active Zoom meeting</h3>
-                    <div class="muted">Start a meeting and send Zoom webhook events. This dashboard will update automatically without reload.</div>
-                </div>
-                <div class="table-wrap" id="rtTableWrap">
-                    <table class="rt-live-table">
+                <div class="table-wrap" id="lfTableWrap" style="display:{{ 'block' if data.has_live and data.participants else 'none' }}">
+                    <table class="live-fix-table">
                         <thead><tr><th>Name</th><th>Category</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr></thead>
-                        <tbody id="rtParticipantsBody"></tbody>
+                        <tbody id="lfRows">
+                            {% for p in data.participants %}
+                            <tr class="{{ '' if p.is_active else 'live-fix-left' }}">
+                                <td><b>{{ p.name }}</b>{% if p.is_host %} <span class="badge info">HOST</span>{% endif %}</td>
+                                <td><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
+                                <td>{{ p.first_join }}</td>
+                                <td>{{ p.last_leave }}</td>
+                                <td><span class="live-fix-duration" data-base="{{ p.duration_seconds }}" data-active="{{ 1 if p.is_active else 0 }}">{{ fmt_seconds(p.duration_seconds) }}</span></td>
+                                <td>{{ p.rejoins }}</td>
+                                <td><span class="badge {{ 'ok' if p.status == 'LIVE' else 'gray' }}">{{ p.status }}</span></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
                     </table>
                 </div>
             </div>
-
             <div class="stack">
-                <div class="card">
-                    <div class="section-title"><div><h3 style="margin:0">Join / Leave Feed</h3><p>New entries animate in automatically.</p></div></div>
-                    <div class="list-card" id="rtFeed" style="max-height:340px;overflow:auto"></div>
-                </div>
-                <div class="card">
-                    <div class="section-title"><div><h3 style="margin:0">Members Not Yet Joined</h3><p>Active members absent from the current session.</p></div></div>
-                    <div class="list-card" id="rtNotJoined" style="max-height:300px;overflow:auto"></div>
-                </div>
+                <div class="card"><div class="section-title"><div><h3 style="margin:0">Join / Leave Feed</h3><p>Latest activity from current session.</p></div></div><div class="list-card" id="lfFeed"></div></div>
+                <div class="card"><div class="section-title"><div><h3 style="margin:0">Members Not Yet Joined</h3><p>Active registered members missing from live session.</p></div></div><div class="list-card" id="lfMissing"></div></div>
             </div>
         </div>
 
         <script>
-        window.__INITIAL_LIVE_SNAPSHOT__ = {{ initial_live_payload|tojson }};
         (function(){
-            const pollMs = 2500;
-            const state = { knownRows:new Map(), lastSnapshot:null, failed:0, firstLoad:true, meetingStart:null, durationTimer:null };
-            const $ = (id) => document.getElementById(id);
-            const counters = {};
-
-            function esc(v){return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-            function fmtSeconds(sec){sec=Math.max(0,parseInt(sec||0,10)); const h=String(Math.floor(sec/3600)).padStart(2,'0'); const m=String(Math.floor((sec%3600)/60)).padStart(2,'0'); const s=String(sec%60).padStart(2,'0'); return `${h}:${m}:${s}`;}
-            function badgeClass(status){status=String(status||'').toUpperCase(); if(status==='LIVE'||status==='PRESENT'||status==='HOST') return 'ok'; if(status==='LEFT') return 'gray'; if(status==='LATE') return 'warn'; if(status==='JOINED') return 'info'; if(status==='ABSENT') return 'danger'; return 'gray';}
-            function setConnection(ok,msg){const el=$('rtConnection'); el.className='rt-connection '+(ok?'ok':'bad'); el.textContent=(ok?'● Connected':'● Reconnecting')+(msg?` · ${msg}`:'');}
-            function animateCounter(key,next){const el=document.querySelector(`[data-counter="${key}"]`); if(!el) return; const from=counters[key] ?? parseInt(el.textContent||'0',10) || 0; const to=parseInt(next||0,10); counters[key]=to; const start=performance.now(); const dur=450; function step(t){const p=Math.min(1,(t-start)/dur); const val=Math.round(from+(to-from)*(1-Math.pow(1-p,3))); el.textContent=val; if(p<1) requestAnimationFrame(step);} requestAnimationFrame(step);}
-            function startDurationClock(baseSeconds){ if(state.durationTimer) clearInterval(state.durationTimer); let startTick=Date.now(); state.durationTimer=setInterval(()=>{const elapsed=Math.floor((Date.now()-startTick)/1000); $('rtMeetingDuration').textContent='Duration '+fmtSeconds((baseSeconds||0)+elapsed); updateActiveDurations(elapsed);},1000); }
-            function updateActiveDurations(extra){ document.querySelectorAll('[data-base-duration]').forEach(el=>{const active=el.getAttribute('data-active')==='1'; const base=parseInt(el.getAttribute('data-base-duration')||'0',10); el.textContent=fmtSeconds(base+(active?extra:0));}); }
-            function renderParticipants(rows){ const body=$('rtParticipantsBody'); const incoming=new Set(); let html=''; (rows||[]).forEach(p=>{const id=String(p.id||p.name); incoming.add(id); const isNew=!state.knownRows.has(id) && !state.firstLoad; const active=p.is_active; state.knownRows.set(id,p); html+=`<tr class="rt-row ${isNew?'new':''} ${active?'':'left'}" data-row-id="${esc(id)}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${p.is_known?'ok':'warn'}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="rt-duration" data-base-duration="${parseInt(p.duration_seconds||0,10)}" data-active="${active?'1':'0'}">${fmtSeconds(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td>${active?`<span class="status-pill status-live"><span class="status-pulse"></span>${esc(p.status)}</span>`:`<span class="badge ${badgeClass(p.status)}">${esc(p.status)}</span>`}</td></tr>`; });
-                for (const id of Array.from(state.knownRows.keys())) { if(!incoming.has(id)) state.knownRows.delete(id); }
-                body.innerHTML=html || '<tr><td colspan="7" class="muted">No participant data yet.</td></tr>'; }
-            function renderFeed(feed){ const box=$('rtFeed'); if(!feed || !feed.length){box.innerHTML='<div class="muted">No join/leave events yet.</div>';return;} box.innerHTML=feed.map(item=>`<div class="list-row rt-feed-item"><div><div style="font-weight:900">${esc(item.name)}</div><div class="muted">${esc(item.label)} · ${esc(item.time)}</div></div><span class="badge ${item.kind==='join'?'ok':'gray'}">${esc(item.tag)}</span></div>`).join(''); }
-            function renderNotJoined(rows){ const box=$('rtNotJoined'); if(!rows || !rows.length){box.innerHTML='<div class="empty-state" style="padding:22px 18px"><div class="empty-icon" style="width:58px;height:58px;font-size:22px">✅</div><div style="font-weight:900;margin-bottom:6px">All active members joined</div><div class="muted">No pending active member remains outside the current session.</div></div>';return;} box.innerHTML=rows.map(m=>`<div class="list-row"><div><div style="font-weight:800">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''); }
-            function renderSnapshot(data){
-                $('rtLoadingSkeleton').classList.add('rt-hidden'); $('rtLiveContent').classList.remove('rt-hidden'); state.firstLoad=false;
-                if(!data.has_live){ $('rtLiveBadgeText').textContent='LIVE DASHBOARD IDLE'; $('rtMeetingTopic').textContent='Waiting for the next Zoom session'; $('rtMeetingCopy').textContent='No active live meeting right now. This page will reconnect automatically when Zoom webhook events arrive.'; $('rtMeetingId').textContent='Meeting ID -'; $('rtMeetingStarted').textContent='Started -'; $('rtRiskBadge').textContent='Risk Idle'; $('rtRiskBadge').className='badge gray'; $('rtHostStatus').textContent='Absent'; $('rtHostStatus').className='rt-stat-value rt-host absent'; ['active_now','known_count','unknown_count','not_joined_count'].forEach(k=>animateCounter(k,0)); $('rtNoLive').classList.remove('rt-hidden'); $('rtTableWrap').classList.add('rt-hidden'); renderFeed([]); renderNotJoined([]); startDurationClock(0); return; }
-                const m=data.meeting||{}, s=data.summary||{}; $('rtLiveBadgeText').textContent='LIVE OPERATIONS BOARD'; $('rtMeetingTopic').textContent=m.topic||'Untitled Meeting'; $('rtMeetingCopy').textContent='Real-time command board for participant flow, host visibility, member presence, unknown risk, and attendance movement.'; $('rtMeetingId').textContent='Meeting ID '+(m.id||'-'); $('rtMeetingStarted').textContent='Started '+(m.start_time||'-'); $('rtRiskBadge').textContent='Risk '+(s.risk||'Idle'); $('rtRiskBadge').className='badge '+(s.risk==='Healthy'?'ok':s.risk==='Warning'?'warn':'danger'); $('rtHostStatus').textContent=s.host_present?'Present':'Absent'; $('rtHostStatus').className='rt-stat-value rt-host '+(s.host_present?'present':'absent'); animateCounter('active_now',s.active_now); animateCounter('known_count',s.known_count); animateCounter('unknown_count',s.unknown_count); animateCounter('not_joined_count',s.not_joined_count); $('rtNoLive').classList.add('rt-hidden'); $('rtTableWrap').classList.remove('rt-hidden'); renderParticipants(data.participants||[]); renderFeed(data.feed||[]); renderNotJoined(data.not_joined||[]); startDurationClock(s.meeting_duration_seconds||0);
+            let lastPayload = {{ data|tojson }};
+            let tickBase = Date.now();
+            function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
+            function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
+            function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
+            function render(data){
+                lastPayload=data; tickBase=Date.now();
+                document.getElementById('lfBadge').textContent=data.has_live?'LIVE MEETING RUNNING':'LIVE DASHBOARD IDLE';
+                document.getElementById('lfTopic').textContent=data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting';
+                document.getElementById('lfMeetingId').textContent='Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-');
+                document.getElementById('lfStarted').textContent='Started '+(data.has_live?(data.meeting.start_time||'-'):'-');
+                document.getElementById('lfDuration').textContent='Duration '+fmt((data.summary||{}).meeting_duration_seconds||0);
+                document.getElementById('lfActive').textContent=(data.summary||{}).active_now||0;
+                document.getElementById('lfKnown').textContent=(data.summary||{}).known_count||0;
+                document.getElementById('lfUnknown').textContent=(data.summary||{}).unknown_count||0;
+                document.getElementById('lfHost').textContent=(data.summary||{}).host_present?'Present':'Absent';
+                document.getElementById('lfNotJoined').textContent=(data.summary||{}).not_joined_count||0;
+                const rows=data.participants||[];
+                document.getElementById('lfEmpty').style.display=rows.length?'none':'block';
+                document.getElementById('lfTableWrap').style.display=rows.length?'block':'none';
+                document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt(p.duration_seconds||0,10)}" data-active="${p.is_active?1:0}">${fmt(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
+                document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
+                document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
             }
-            async function poll(){ try{ const res=await fetch('/api/live-snapshot',{headers:{'Accept':'application/json'},cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status); const data=await res.json(); state.failed=0; setConnection(true,'updated '+new Date().toLocaleTimeString()); renderSnapshot(data); }catch(err){ state.failed++; setConnection(false, state.failed>1?'retrying':''); console.warn('Live polling failed',err); } finally { setTimeout(poll,pollMs); } }
-            try { renderSnapshot(window.__INITIAL_LIVE_SNAPSHOT__ || {has_live:false, participants:[], feed:[], not_joined:[], summary:{}}); } catch(e) { console.warn('Initial live render failed', e); }
-            poll();
+            async function poll(){
+                try{let r=await fetch('{{ url_for("api_live_snapshot") }}?t='+Date.now(),{cache:'no-store',credentials:'same-origin'});let d=await r.json();document.getElementById('lfConn').className='live-fix-conn ok';document.getElementById('lfConn').textContent='● Updated '+new Date().toLocaleTimeString();render(d);}catch(e){document.getElementById('lfConn').className='live-fix-conn bad';document.getElementById('lfConn').textContent='● Poll retrying';}
+                setTimeout(poll,2000);
+            }
+            setInterval(function(){let extra=Math.floor((Date.now()-tickBase)/1000);document.querySelectorAll('.live-fix-duration').forEach(function(el){let base=parseInt(el.getAttribute('data-base')||'0',10);let active=el.getAttribute('data-active')==='1';el.textContent=fmt(base+(active?extra:0));}); if(lastPayload && lastPayload.summary){document.getElementById('lfDuration').textContent='Duration '+fmt((lastPayload.summary.meeting_duration_seconds||0)+extra);}},1000);
+            render(lastPayload); poll();
         })();
         </script>
         """,
-        initial_live_payload=build_live_snapshot_payload(include_feed=True),
+        data=initial_payload,
+        fmt_seconds=lambda sec: f"{max(int(sec or 0),0)//3600:02d}:{(max(int(sec or 0),0)%3600)//60:02d}:{max(int(sec or 0),0)%60:02d}",
     )
     return page("Live", body, "live")
 
