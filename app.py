@@ -44,6 +44,54 @@ th { position: sticky; top:0; background:#111827;}
     color: white;
 }
 
+
+
+/* ===== FINAL POLISH UI FIXES ===== */
+.card, .glass-panel, .hero, .hero-chip, .panel, .mini-card, .analytics-card {
+    background-color: rgba(15,23,42,.72) !important;
+    background-image: linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.025)) !important;
+    border-color: rgba(148,163,184,.18) !important;
+}
+.card[style*="background: white"], .card[style*="background:white"],
+.card[style*="background:#fff"], .card[style*="background: #fff"],
+.card[style*="background-color:white"], .card[style*="background-color: white"] {
+    background: rgba(15,23,42,.72) !important;
+    color: #e5e7eb !important;
+}
+.status-toggle-btn {
+    width: 136px;
+    min-width: 136px;
+    height: 38px;
+    border: 0;
+    border-radius: 999px;
+    padding: 0;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    overflow: hidden;
+    cursor: pointer;
+    font-weight: 950;
+    font-size: 11px;
+    letter-spacing: .02em;
+    box-shadow: 0 10px 26px rgba(0,0,0,.26);
+    background: linear-gradient(90deg,#ef4444,#fb7185) !important;
+    color: white !important;
+}
+.status-toggle-btn.is-active { background: linear-gradient(90deg,#22c55e,#10b981) !important; }
+.status-toggle-btn .status-toggle-label { width:50%; text-align:center; z-index:2; pointer-events:none; }
+.status-toggle-btn .status-toggle-knob { position:absolute; top:4px; left:4px; width:calc(50% - 4px); height:30px; border-radius:999px; background:rgba(255,255,255,.96); box-shadow:0 8px 18px rgba(0,0,0,.25); transition:transform .22s ease; z-index:1; }
+.status-toggle-btn.is-active .status-toggle-knob { transform: translateX(68px); }
+.status-toggle-btn.is-active .label-active { color:#065f46; }
+.status-toggle-btn:not(.is-active) .label-inactive { color:#7f1d1d; }
+.status-toggle-btn:not(.is-active) .label-active, .status-toggle-btn.is-active .label-inactive { color:rgba(255,255,255,.78); }
+.activity-clean-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:16px}
+.activity-clean-card{border:1px solid rgba(148,163,184,.18);border-radius:20px;padding:16px;background:rgba(15,23,42,.72);box-shadow:0 18px 42px rgba(0,0,0,.22)}
+.activity-clean-card small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.activity-clean-card strong{display:block;font-size:28px;margin-top:8px}
+.activity-type{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;border:1px solid rgba(255,255,255,.12)}
+.activity-type.login{background:rgba(34,197,94,.14);color:#86efac}.activity-type.logout{background:rgba(244,63,94,.14);color:#fda4af}.activity-type.zoom{background:rgba(56,189,248,.14);color:#7dd3fc}.activity-type.other{background:rgba(168,85,247,.14);color:#d8b4fe}
+.activity-table td{vertical-align:top}.activity-details{max-width:520px;white-space:normal;word-break:break-word;color:#cbd5e1}
+
 </style>
 '''
 # ===== END THEME =====
@@ -5017,7 +5065,8 @@ def login():
             session["role"] = user["role"]
             if "theme" not in session:
                 session["theme"] = "light"
-            log_activity("login", f"{username} logged in")
+            session["login_time"] = now_local().isoformat()
+            log_activity("login", f"{username} logged in | role={user['role']}")
             return redirect(url_for("home"))
 
         login_error = "Invalid username or password"
@@ -5065,7 +5114,10 @@ def login():
 
 @app.route("/logout")
 def logout():
-    log_activity("logout", f"{session.get('username')} logged out")
+    login_time = parse_dt(session.get("login_time"))
+    logout_time = now_local()
+    duration_seconds = int((logout_time - login_time).total_seconds()) if login_time else 0
+    log_activity("logout", f"{session.get('username')} logged out | role={session.get('role')} | duration_seconds={duration_seconds}")
     session.clear()
     return redirect(url_for("login"))
 
@@ -5862,7 +5914,7 @@ def members():
 
         if action == "add" and can_edit_users():
             full_name = request.form.get("full_name", "").strip()
-            email = None
+            email = request.form.get("email", "").strip() or None
             phone = request.form.get("phone", "").strip() or None
 
             if full_name:
@@ -5981,10 +6033,8 @@ def members():
                     {% if edit_member %}<input type='hidden' name='member_id' value='{{ edit_member.id }}'>{% endif %}
                     <label>Full Name</label>
                     <input name='full_name' required value='{{ member_display_name(edit_member) if edit_member else "" }}'>
-                    {% if edit_member %}
                     <label>Email</label>
-                    <input name='email' value='{{ edit_member.email if edit_member else "" }}'>
-                    {% endif %}
+                    <input name='email' type='email' placeholder='member@example.com' value='{{ edit_member.email if edit_member else "" }}'>
                     <label>Phone</label>
                     <input name='phone' value='{{ edit_member.phone if edit_member else "" }}'>
                     <button type='submit'>{{ 'Update Member' if edit_member else 'Save Member' }}</button>
@@ -6047,10 +6097,10 @@ def members():
                                     <form method='post' class='toggle-form'>
                                         <input type='hidden' name='action' value='toggle'>
                                         <input type='hidden' name='member_id' value='{{ m.id }}'>
-                                        <button type='submit' class='toggle-switch {% if m.active|string in ['1', 'True', 'true', 't'] %}on{% else %}off{% endif %}' aria-label='Toggle member status'>
-                                            <span class='toggle-knob'></span>
-                                            <span class='toggle-icon toggle-on'>✓</span>
-                                            <span class='toggle-icon toggle-off'>✕</span>
+                                        <button type='submit' class='status-toggle-btn {% if m.active|string in ['1', 'True', 'true', 't'] %}is-active{% endif %}' aria-label='Toggle member status'>
+                                            <span class='status-toggle-label label-inactive'>Inactive</span>
+                                            <span class='status-toggle-label label-active'>Active</span>
+                                            <span class='status-toggle-knob'></span>
                                         </button>
                                     </form>
                                     <form method='post' onsubmit='return confirm("Delete this member?")'>
@@ -6369,7 +6419,11 @@ def users():
                                 <form method='post'>
                                     <input type='hidden' name='action' value='toggle'>
                                     <input type='hidden' name='user_id' value='{{ u.id }}'>
-                                    <button class='btn warn small' type='submit'>Toggle</button>
+                                    <button type='submit' class='status-toggle-btn {% if u.is_active|string in ['1', 'True', 'true', 't'] %}is-active{% endif %}' aria-label='Toggle user status'>
+                                        <span class='status-toggle-label label-inactive'>Inactive</span>
+                                        <span class='status-toggle-label label-active'>Active</span>
+                                        <span class='status-toggle-knob'></span>
+                                    </button>
                                 </form>
                                 <form method='post'>
                                     <input type='hidden' name='action' value='password'>
@@ -8313,249 +8367,133 @@ def settings():
 @app.route("/activity")
 @login_required
 def activity():
-    """Production audit log UI with safe filters, search, pagination and cached summaries."""
+    """Clean production activity dashboard: login/logout sessions + Zoom join/leave activity."""
     def _positive_int(value, default, minimum=1, maximum=500):
         try:
             number = int(value)
         except Exception:
             number = default
-        if number < minimum:
-            number = minimum
-        if number > maximum:
-            number = maximum
-        return number
+        return max(minimum, min(maximum, number))
 
-    def _parse_date_filter(value):
-        text = str(value or "").strip()
-        if not text:
-            return None
-        try:
-            return datetime.strptime(text, "%Y-%m-%d").date()
-        except Exception:
-            return None
+    def _activity_kind(action):
+        text = str(action or "").lower()
+        if "login" in text:
+            return "login"
+        if "logout" in text:
+            return "logout"
+        if "participant" in text or "zoom" in text or "join" in text or "leave" in text or "meeting" in text:
+            return "zoom"
+        return "other"
 
-    q = str(request.args.get("q", "") or "").strip()
+    page_no = _positive_int(request.args.get("page", 1), 1, 1, 100000)
+    per_page = _positive_int(request.args.get("per_page", 50), 50, 10, 100)
+    offset = (page_no - 1) * per_page
+
+    allowed_actions = [
+        "login", "logout", "zoom_participant_event", "zoom_started", "zoom_meeting_ended",
+        "member_add", "member_edit", "member_toggle", "user_add", "user_edit", "user_toggle"
+    ]
     action_filter = str(request.args.get("action", "") or "").strip()
     username_filter = str(request.args.get("username", "") or "").strip()
-    from_date = _parse_date_filter(request.args.get("from_date"))
-    to_date = _parse_date_filter(request.args.get("to_date"))
-    page_no = _positive_int(request.args.get("page", 1), 1, 1, 100000)
-    per_page = _positive_int(request.args.get("per_page", 25), 25, 10, 100)
-    offset = (page_no - 1) * per_page
 
     where = []
     params = []
-    if q:
-        where.append("(COALESCE(action,'') ILIKE %s OR COALESCE(username,'') ILIKE %s OR COALESCE(details,'') ILIKE %s)")
-        like = f"%{q}%"
-        params.extend([like, like, like])
     if action_filter:
-        where.append("action = %s")
+        where.append("action=%s")
         params.append(action_filter)
-    if username_filter:
-        where.append("username = %s")
-        params.append(username_filter)
-    if from_date:
-        where.append("created_at::date >= %s")
-        params.append(from_date)
-    if to_date:
-        where.append("created_at::date <= %s")
-        params.append(to_date)
-
-    where_sql = " WHERE " + " AND ".join(where) if where else ""
-    cache_key = _cache_make_key("activity_page", {
-        "q": q,
-        "action": action_filter,
-        "username": username_filter,
-        "from": from_date.isoformat() if from_date else "",
-        "to": to_date.isoformat() if to_date else "",
-        "page": page_no,
-        "per": per_page,
-    })
-    cached_payload = _cache_get(cache_key)
-
-    if cached_payload:
-        rows = cached_payload["rows"]
-        total_rows = cached_payload["total_rows"]
-        actions = cached_payload["actions"]
-        users = cached_payload["users"]
-        summary = cached_payload["summary"]
     else:
-        with db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) AS total FROM activity_log{where_sql}", params)
-                total_rows = int((cur.fetchone() or {}).get("total") or 0)
+        where.append("(action ILIKE %s OR action ILIKE %s OR action ILIKE %s OR action ILIKE %s OR action ILIKE %s)")
+        params.extend(["%login%", "%logout%", "%zoom%", "%join%", "%leave%"])
+    if username_filter:
+        where.append("username=%s")
+        params.append(username_filter)
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
 
-                cur.execute(
-                    f"""
-                    SELECT *
-                    FROM activity_log
-                    {where_sql}
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    params + [per_page, offset],
-                )
-                rows = cur.fetchall()
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS total FROM activity_log{where_sql}", params)
+            total_rows = int((cur.fetchone() or {}).get("total") or 0)
 
-                cur.execute("SELECT DISTINCT action FROM activity_log WHERE action IS NOT NULL AND action <> '' ORDER BY action LIMIT 80")
-                actions = [r.get("action") for r in cur.fetchall() if r.get("action")]
+            cur.execute(
+                f"""
+                SELECT id, username, action, details, created_at
+                FROM activity_log
+                {where_sql}
+                ORDER BY created_at::timestamp DESC NULLS LAST, id DESC
+                LIMIT %s OFFSET %s
+                """,
+                params + [per_page, offset],
+            )
+            rows = cur.fetchall()
 
-                cur.execute("SELECT DISTINCT username FROM activity_log WHERE username IS NOT NULL AND username <> '' ORDER BY username LIMIT 80")
-                users = [r.get("username") for r in cur.fetchall() if r.get("username")]
+            cur.execute("SELECT DISTINCT username FROM activity_log WHERE username IS NOT NULL AND username<>'' ORDER BY username LIMIT 80")
+            users = [r.get("username") for r in cur.fetchall() if r.get("username")]
 
-                cur.execute(
-                    """
-                    SELECT
-                        COUNT(*) AS total,
-                        COUNT(*) FILTER (WHERE CAST(created_at AS TIMESTAMP) >= NOW() - INTERVAL '24 hours') AS last_24h,
-                        COUNT(DISTINCT COALESCE(username, 'system')) AS unique_users,
-                        COUNT(*) FILTER (WHERE lower(COALESCE(action,'')) LIKE '%error%' OR lower(COALESCE(details,'')) LIKE '%error%') AS error_like
-                    FROM activity_log
-                    """
-                )
-                summary = cur.fetchone() or {}
-
-        _cache_set(cache_key, {
-            "rows": rows,
-            "total_rows": total_rows,
-            "actions": actions,
-            "users": users,
-            "summary": summary,
-        })
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE action ILIKE '%login%') AS logins,
+                    COUNT(*) FILTER (WHERE action ILIKE '%logout%') AS logouts,
+                    COUNT(*) FILTER (WHERE action ILIKE '%zoom%' OR action ILIKE '%join%' OR action ILIKE '%leave%') AS zoom_events
+                FROM activity_log
+                """
+            )
+            summary = cur.fetchone() or {}
 
     total_pages = max((total_rows + per_page - 1) // per_page, 1)
     page_no = min(page_no, total_pages)
 
-    def action_badge(action):
-        text = str(action or "system").lower()
-        if any(word in text for word in ("delete", "failed", "error", "critical")):
-            return "danger"
-        if any(word in text for word in ("login", "created", "added", "sent", "success")):
-            return "success"
-        if any(word in text for word in ("update", "edit", "settings", "report")):
-            return "warning"
-        return "info"
-
     body = render_template_string(
         """
-        <style>
-        .audit-filter-grid{display:grid;grid-template-columns:1.2fr repeat(5,minmax(120px,1fr));gap:10px;align-items:end}
-        .audit-filter-grid input,.audit-filter-grid select{width:100%;padding:11px 12px;border-radius:14px;border:1px solid rgba(148,163,184,.25);background:rgba(15,23,42,.72);color:#e5e7eb;outline:none}
-        .audit-filter-grid label{font-size:12px;color:#94a3b8;font-weight:800;display:block;margin-bottom:6px}
-        .audit-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900;border:1px solid rgba(255,255,255,.12)}
-        .audit-badge.info{background:rgba(59,130,246,.14);color:#93c5fd}.audit-badge.success{background:rgba(34,197,94,.14);color:#86efac}.audit-badge.warning{background:rgba(245,158,11,.14);color:#fcd34d}.audit-badge.danger{background:rgba(239,68,68,.14);color:#fca5a5}
-        .pagination-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.page-btn{padding:9px 12px;border-radius:12px;text-decoration:none;border:1px solid rgba(148,163,184,.25);color:#e5e7eb;background:rgba(15,23,42,.65);font-weight:900}.page-btn.disabled{opacity:.35;pointer-events:none}.log-details{max-width:520px;white-space:normal;word-break:break-word;color:#cbd5e1}.audit-row:hover{background:rgba(99,102,241,.08)}
-        @media(max-width:1000px){.audit-filter-grid{grid-template-columns:1fr 1fr}.audit-filter-grid .wide{grid-column:1/-1}}@media(max-width:640px){.audit-filter-grid{grid-template-columns:1fr}}
-        
-/* TOGGLE SWITCH */
-.toggle-switch {
-    position: relative;
-    width: 120px;
-    height: 36px;
-    background: linear-gradient(90deg,#9333ea,#6366f1);
-    border-radius: 999px;
-    display: flex;
-    align-items: center;
-    cursor: pointer;
-    padding: 4px;
-}
-.toggle-circle {
-    width: 50%;
-    height: 100%;
-    background: white;
-    border-radius: 999px;
-    transition: all 0.3s ease;
-}
-.toggle-active .toggle-circle {
-    transform: translateX(100%);
-}
-.toggle-label {
-    position: absolute;
-    width: 100%;
-    text-align: center;
-    font-size: 12px;
-    font-weight: bold;
-    color: white;
-}
-
-</style>
         <div class="hero">
             <div class="hero-grid">
                 <div>
-                    <div class="badge info" style="margin-bottom:12px">Production Audit Trail</div>
-                    <h1 class="hero-title">Activity Logs, Filters & System Events</h1>
-                    <div class="hero-copy">Fast searchable logs with pagination, badges, cached summaries and production-safe database indexing.</div>
+                    <div class="badge info" style="margin-bottom:12px">Clean Activity Dashboard</div>
+                    <h1 class="hero-title">Activity Timeline</h1>
+                    <div class="hero-copy">Shows important production activity only: user login/logout sessions and Zoom meeting join/leave events.</div>
                 </div>
                 <div class="hero-stats">
                     <div class="hero-chip"><div class="small">Total Logs</div><div class="big">{{ summary.total or 0 }}</div></div>
-                    <div class="hero-chip"><div class="small">Last 24h</div><div class="big">{{ summary.last_24h or 0 }}</div></div>
-                    <div class="hero-chip"><div class="small">Users</div><div class="big">{{ summary.unique_users or 0 }}</div></div>
-                    <div class="hero-chip"><div class="small">Warnings</div><div class="big">{{ summary.error_like or 0 }}</div></div>
+                    <div class="hero-chip"><div class="small">Logins</div><div class="big">{{ summary.logins or 0 }}</div></div>
+                    <div class="hero-chip"><div class="small">Logouts</div><div class="big">{{ summary.logouts or 0 }}</div></div>
+                    <div class="hero-chip"><div class="small">Zoom Events</div><div class="big">{{ summary.zoom_events or 0 }}</div></div>
                 </div>
             </div>
         </div>
 
         <div class="card glass-panel" style="margin-bottom:16px">
-            <div class="section-title"><div><h3 style="margin:0">Audit Search & Filters</h3><p>Use filters to quickly inspect user actions, report events, settings changes, and system logs.</p></div></div>
             <form method="get" class="audit-filter-grid">
-                <div class="wide"><label>Search</label><input name="q" value="{{ q }}" placeholder="Search action, user, details..."></div>
-                <div><label>Action</label><select name="action"><option value="">All actions</option>{% for act in actions %}<option value="{{ act }}" {% if act==action_filter %}selected{% endif %}>{{ act }}</option>{% endfor %}</select></div>
-                <div><label>User</label><select name="username"><option value="">All users</option>{% for u in users %}<option value="{{ u }}" {% if u==username_filter %}selected{% endif %}>{{ u }}</option>{% endfor %}</select></div>
-                <div><label>From</label><input type="date" name="from_date" value="{{ request.args.get('from_date','') }}"></div>
-                <div><label>To</label><input type="date" name="to_date" value="{{ request.args.get('to_date','') }}"></div>
+                <div><label>Activity Type</label><select name="action"><option value="">Login / Logout / Zoom only</option>{% for act in allowed_actions %}<option value="{{ act }}" {% if action_filter==act %}selected{% endif %}>{{ act }}</option>{% endfor %}</select></div>
+                <div><label>User</label><select name="username"><option value="">All users</option>{% for u in users %}<option value="{{ u }}" {% if username_filter==u %}selected{% endif %}>{{ u }}</option>{% endfor %}</select></div>
                 <div><label>Rows</label><select name="per_page"><option value="25" {% if per_page==25 %}selected{% endif %}>25</option><option value="50" {% if per_page==50 %}selected{% endif %}>50</option><option value="100" {% if per_page==100 %}selected{% endif %}>100</option></select></div>
-                <div class="mobile-actions" style="grid-column:1/-1"><button type="submit">Apply Filters</button><a class="ghost-link" href="{{ url_for('activity') }}">Reset</a></div>
+                <div style="display:flex;gap:8px;align-items:end"><button type="submit">Apply</button><a class="ghost-link" href="{{ url_for('activity') }}">Reset</a></div>
             </form>
         </div>
 
-        <div class="two-col">
-            <div class="card glass-panel">
-                <div class="section-title"><div><h3 style="margin:0">Recent Timeline</h3><p>Latest records from the current filtered result.</p></div></div>
-                <div class="activity-timeline">
-                    {% for a in rows[:12] %}
-                    <div class="activity-item">
-                        <div class="activity-dot">{{ (a.action or '•')[:1]|upper }}</div>
-                        <div>
-                            <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                                <div><span class="audit-badge {{ action_badge(a.action) }}">{{ a.action or 'system' }}</span></div>
-                                <div class="muted">{{ fmt_dt(a.created_at) }}</div>
-                            </div>
-                            <div class="muted" style="margin-top:6px">{{ a.username or 'system' }}</div>
-                            <div style="margin-top:6px;font-size:13px">{{ a.details or '-' }}</div>
-                        </div>
-                    </div>
+        <div class="card glass-panel">
+            <div class="section-title"><div><h3 style="margin:0">Important Activity</h3><p>User role/session activity and Zoom meeting presence activity.</p></div></div>
+            <div class="table-wrap">
+                <table class="activity-table">
+                    <tr><th>Time</th><th>User / Type</th><th>Activity</th><th>Details</th></tr>
+                    {% for a in rows %}
+                    {% set kind = activity_kind(a.action) %}
+                    <tr>
+                        <td>{{ fmt_dt(a.created_at) }}</td>
+                        <td><strong>{{ a.username or 'system' }}</strong><br><span class="muted">{{ 'admin/viewer/system' if not a.username else '' }}</span></td>
+                        <td><span class="activity-type {{ kind }}">{{ kind|upper }}</span><br><span class="muted">{{ a.action }}</span></td>
+                        <td class="activity-details">{{ a.details or '-' }}</td>
+                    </tr>
                     {% else %}
-                    <div class="empty-state"><div class="empty-icon">📝</div><div style="font-weight:900;margin-bottom:6px">No matching activity</div><div class="muted">Change filters or reset search.</div></div>
+                    <tr><td colspan="4"><div class="empty-state">No login/logout/Zoom activity found yet.</div></td></tr>
                     {% endfor %}
-                </div>
+                </table>
             </div>
-            <div class="stack">
-                <div class="card">
-                    <h3 style="margin-top:0">Activity Table</h3>
-                    <div class="muted" style="margin-bottom:10px">Showing {{ rows|length }} of {{ total_rows }} matching records.</div>
-                    <div class="table-wrap">
-                        <table>
-                            <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
-                            {% for a in rows %}
-                            <tr class="audit-row">
-                                <td>{{ fmt_dt(a.created_at) }}</td>
-                                <td>{{ a.username or 'system' }}</td>
-                                <td><span class="audit-badge {{ action_badge(a.action) }}">{{ a.action or '-' }}</span></td>
-                                <td class="log-details">{{ a.details or '-' }}</td>
-                            </tr>
-                            {% else %}
-                            <tr><td colspan="4"><div class="empty-state">No logs found for selected filters.</div></td></tr>
-                            {% endfor %}
-                        </table>
-                    </div>
-                    <div class="pagination-bar">
-                        <div class="muted">Page {{ page_no }} of {{ total_pages }}</div>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap">
-                            <a class="page-btn {% if page_no <= 1 %}disabled{% endif %}" href="{{ page_url(page_no-1) }}">← Previous</a>
-                            <a class="page-btn {% if page_no >= total_pages %}disabled{% endif %}" href="{{ page_url(page_no+1) }}">Next →</a>
-                        </div>
-                    </div>
+            <div class="pagination-bar">
+                <div class="muted">Page {{ page_no }} of {{ total_pages }}</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <a class="page-btn {% if page_no <= 1 %}disabled{% endif %}" href="{{ page_url(page_no-1) }}">← Previous</a>
+                    <a class="page-btn {% if page_no >= total_pages %}disabled{% endif %}" href="{{ page_url(page_no+1) }}">Next →</a>
                 </div>
             </div>
         </div>
@@ -8565,14 +8503,13 @@ def activity():
         page_no=page_no,
         per_page=per_page,
         total_pages=total_pages,
-        q=q,
-        actions=actions,
         users=users,
+        allowed_actions=allowed_actions,
         action_filter=action_filter,
         username_filter=username_filter,
         summary=summary,
         fmt_dt=fmt_dt,
-        action_badge=action_badge,
+        activity_kind=_activity_kind,
         page_url=lambda p: url_for('activity', **{**request.args.to_dict(), 'page': max(1, p)}),
     )
     return page("Activity", body, "activity")
