@@ -225,7 +225,13 @@ def db():
         connect_timeout = 5
     if connect_timeout <= 0:
         connect_timeout = 5
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=connect_timeout)
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=connect_timeout)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout TO 8000")
+    except Exception:
+        pass
+    return conn
 
 
 def _cache_make_key(prefix, payload):
@@ -1267,8 +1273,10 @@ def get_meeting_rows_last_activity(attendance_rows):
     return last_activity
 
 
-def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type):
-    is_host = bool(HOST_NAME_HINT and HOST_NAME_HINT in (participant_name or "").strip().lower())
+def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type, is_host_override=False):
+    name_for_host = (participant_name or "").strip().lower()
+    email_for_host = (participant_email or "").strip().lower()
+    is_host = bool(is_host_override) or bool(HOST_NAME_HINT and (HOST_NAME_HINT in name_for_host or HOST_NAME_HINT in email_for_host))
     member = find_member(participant_name, participant_email)
     key = participant_key(participant_name, participant_email)
 
@@ -1540,7 +1548,7 @@ def classify_row_for_meeting(row, start_time, end_time, present_percentage=None,
     return "ABSENT", total
 
 
-def finalize_meeting(meeting_uuid, ended_at=None):
+def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
     ended_at = parse_dt(ended_at) or now_local()
     present_percentage = get_setting("present_percentage", int)
     late_pct = get_setting("late_count_as_present_percentage", int)
@@ -1637,14 +1645,15 @@ def finalize_meeting(meeting_uuid, ended_at=None):
             )
             updated = cur.fetchone()
         conn.commit()
-    try:
-        evaluate_smart_alerts_for_meeting(meeting_uuid)
-    except Exception as e:
-        print(f"⚠️ Smart alert evaluation skipped: {e}")
-    try:
-        auto_send_smart_meeting_report(meeting_uuid, force=False)
-    except Exception as e:
-        print(f"⚠️ Smart report auto-send skipped: {e}")
+    if run_post_tasks:
+        try:
+            evaluate_smart_alerts_for_meeting(meeting_uuid)
+        except Exception as e:
+            print(f"⚠️ Smart alert evaluation skipped: {e}")
+        try:
+            auto_send_smart_meeting_report(meeting_uuid, force=False)
+        except Exception as e:
+            print(f"⚠️ Smart report auto-send skipped: {e}")
     return updated
 
 
@@ -8183,7 +8192,7 @@ def zoom_webhook():
         if event == "meeting.started":
             meeting = ensure_meeting(obj)
             print("✅ MEETING STARTED RESOLVED:", meeting)
-            log_activity("zoom_started", meeting["meeting_uuid"] if meeting else "unknown")
+            print("📝 WEBHOOK LOG zoom_started:", meeting["meeting_uuid"] if meeting else "unknown")
             return jsonify({"ok": True})
 
         if "participant_joined" in event or "participant_left" in event:
@@ -8235,14 +8244,25 @@ def zoom_webhook():
                 "event_time": str(event_time),
             })
 
+            zoom_host_id = str(obj.get("host_id") or "").strip()
+            participant_ids = {
+                str(participant.get("id") or "").strip(),
+                str(participant.get("participant_user_id") or "").strip(),
+                str(participant.get("user_id") or "").strip(),
+            }
+            is_host_override = bool(zoom_host_id and zoom_host_id in participant_ids) or (
+                bool(obj.get("host_email")) and str(obj.get("host_email")).strip().lower() == str(participant_email or "").strip().lower()
+            )
+
             update_participant(
                 meeting_uuid,
                 participant_name,
                 participant_email,
                 event_time,
                 event_type,
+                is_host_override=is_host_override,
             )
-            log_activity("zoom_participant_event", f"{event} :: {meeting_uuid} :: {participant_name}")
+            print("📝 WEBHOOK LOG zoom_participant_event:", f"{event} :: {meeting_uuid} :: {participant_name}")
             return jsonify({"ok": True})
 
         if event in ("meeting.ended", "meeting.end"):
@@ -8253,9 +8273,9 @@ def zoom_webhook():
                 print("❌ meeting not resolved")
                 return jsonify({"ok": False, "reason": "meeting not resolved"}), 200
 
-            finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local())
+            finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local(), run_post_tasks=False)
             print("✅ FINALIZED:", finalized)
-            log_activity("zoom_meeting_ended", meeting["meeting_uuid"])
+            print("📝 WEBHOOK LOG zoom_meeting_ended:", meeting["meeting_uuid"])
             return jsonify({"ok": True, "finalized": bool(finalized)})
 
         print("ℹ️ IGNORED EVENT:", event)
