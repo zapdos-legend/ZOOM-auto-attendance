@@ -1,71 +1,35 @@
-# Zoom Attendance Platform — Exact Structure Map
+# Zoom Attendance Platform — Real Modular Split
 
-This ZIP has the exact folder layout you requested.
+This version moves actual route code out of app.py into route/service modules while preserving the same Flask app object, URLs, DB helpers, Render start command, and Zoom webhook path.
 
-IMPORTANT SAFETY NOTE:
-- Your latest working app.py is kept as the running source of truth.
-- The new files/folders exist exactly as the final architecture map.
-- Logic is NOT forcibly moved yet because moving a huge live production app in one step can break routes, templates, DB helpers, webhook handling, or Render deployment.
-- Next, we migrate one feature at a time into these files while preserving behavior.
+## Running entry point
 
-## Exact Structure
+`app.py` is still the Gunicorn entry point:
 
-```text
-zoom-attendance/
-│
-├── app.py                     Main entry point
-│
-├── routes/                    Page logic
-│   ├── live.py                Live dashboard
-│   ├── members.py             Members page
-│   ├── users.py               Users page
-│   ├── analytics.py           Analytics
-│   ├── activity.py            Activity logs
-│   ├── auth.py                Login / logout
-│
-├── services/                  Core logic
-│   ├── zoom_webhook.py        Zoom webhook
-│   ├── attendance.py          Join/leave logic
-│   ├── analytics_service.py   Calculations
-│
-├── core/                      Shared system
-│   ├── db.py                  Database connection
-│   ├── utils.py               Helper functions
-│   ├── config.py              Env variables
-│
-├── templates/                 UI HTML
-│   ├── base.html
-│   ├── live.html
-│   ├── members.html
-│   ├── users.html
-│   ├── analytics.html
-│
-├── static/                    Frontend
-│   ├── css/style.css
-│   ├── js/app.js
-│
-├── requirements.txt
-├── Procfile
+```bash
+gunicorn app:app
 ```
 
-## How to migrate safely next
+## Files now containing actual extracted route code
 
-Recommended sequence:
-1. Move CSS into static/css/style.css
-2. Move JS into static/js/app.js
-3. Move live page into routes/live.py + templates/live.html
-4. Move members page into routes/members.py + templates/members.html
-5. Move users page
-6. Move analytics page
-7. Move activity page
-8. Move Zoom webhook and attendance services
+- routes/auth.py — login/logout/profile/root/theme
+- routes/home.py — home dashboard
+- routes/live.py — live dashboard APIs and /live
+- routes/members.py — members and member profile
+- routes/users.py — users dashboard
+- routes/analytics.py — analytics, attendance register, AI analytics pages
+- routes/meetings.py — meetings and report routes
+- routes/settings.py — settings and appearance
+- routes/activity.py — activity dashboard
+- routes/system.py — favicon/health
+- routes/alerts.py — alert run API
+- services/zoom_webhook.py — Zoom webhook route
+- services/notifications.py — push/email notification routes
 
-## How you should ask for future fixes
+## Shared helpers
 
-- Live dashboard issue → say "Live issue"
-- Members page issue → say "Members issue"
-- Users page issue → say "Users issue"
-- Analytics issue → say "Analytics issue"
-- Webhook issue → say "Webhook issue"
+For safety, shared helper functions and DB/schema utilities remain in app.py and are imported by modules at runtime. This avoids breaking the existing production logic while still putting route code in the correct places.
 
-I will tell you exactly which file(s) to upload or update.
+## Next migration stage
+
+Move shared helpers from app.py into core/db.py, core/utils.py and services/attendance.py one group at a time.

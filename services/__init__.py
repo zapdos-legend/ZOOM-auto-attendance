@@ -1,1 +1,1 @@
-"""Services package for business logic migration."""
+"""services package."""

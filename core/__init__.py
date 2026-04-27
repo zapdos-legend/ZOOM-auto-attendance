@@ -1,1 +1,1 @@
-"""Core package for shared app utilities."""
+"""core package."""
