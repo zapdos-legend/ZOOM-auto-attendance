@@ -1,1 +1,1 @@
-// Global JS placeholder. Current scripts are still inside app.py for safety.
+// Placeholder only. JS currently comes from app.py.

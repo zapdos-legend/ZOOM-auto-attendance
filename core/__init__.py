@@ -1,1 +1,1 @@
-"""core package."""
+"""Placeholder only."""
