@@ -1,4 +1,4 @@
-    # UI_UPDATE_V8_APPEARANCE_ENGINE__APPLIED = True
+    # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
 # UI_UPDATE_V3_ANALYTICS_TABS_DARK_REGISTER_APPLIED = True
@@ -4637,7 +4637,7 @@ BASE_HTML = """
 
 
         /* =========================================================
-           UI_UPDATE_V8_APPEARANCE_ENGINE__APPLIED
+           UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED
            SaaS Appearance Engine + Premium Skeleton Layer
            Safe CSS-only theme layer. Does not modify attendance/webhook logic.
         ========================================================= */
@@ -4803,43 +4803,6 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 /* ===== END V9 PATCH ===== */
 
 </style>
-
-<style>
-/* SAFE ANIMATION FIX */
-
-.card, .mini-card {
-    transition: transform 0.25s ease, box-shadow 0.25s ease;
-}
-
-.card:hover, .mini-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 12px 30px rgba(0,0,0,0.3);
-}
-
-button:active {
-    transform: scale(0.97);
-}
-
-/* tooltip */
-[data-tooltip] {
-    position: relative;
-}
-
-[data-tooltip]:hover::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    bottom: 120%;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #111;
-    color: #fff;
-    padding: 5px 8px;
-    font-size: 12px;
-    border-radius: 6px;
-    white-space: nowrap;
-}
-</style>
-
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
 
@@ -4943,7 +4906,7 @@ button:active {
     function applyAutoTooltips(){
         const selectors = 'th, h4, .label-with-tip';
         document.querySelectorAll(selectors).forEach((el) => {
-            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\s+/g,' ').trim();
+            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\\s+/g,' ').trim();
             if (!raw || el.querySelector('.tooltip')) return;
             if (!tooltipMap[raw]) return;
             const tip = document.createElement('span');
@@ -5170,7 +5133,7 @@ button:active {
             if (card.dataset.finalTooltipApplied === '1') return;
             const headingEl = card.querySelector('h1,h2,h3,.label,small');
             const heading = headingEl ? (headingEl.textContent || '').trim() : '';
-            const cleanHeading = heading.replace(/\s+/g,' ');
+            const cleanHeading = heading.replace(/\\s+/g,' ');
             const text = explanations[cleanHeading] || (cleanHeading ? `${cleanHeading}: this card shows an important system/attendance indicator.` : 'This card shows an important system/attendance indicator.');
             card.setAttribute('title', text);
             card.classList.add('smart-tooltip-card');
@@ -5181,7 +5144,7 @@ button:active {
     function removeRequestedAnalyticsSections(){
         const blocked = new Set(['Analytics Filters','Attendance Trend','Member Duration','Duration Distribution','Status Mix']);
         document.querySelectorAll('h1,h2,h3').forEach((heading) => {
-            const text = (heading.textContent || '').trim().replace(/\s+/g,' ');
+            const text = (heading.textContent || '').trim().replace(/\\s+/g,' ');
             if (!blocked.has(text)) return;
             const card = heading.closest('.card');
             if (card) card.remove();
@@ -8285,44 +8248,7 @@ def attendance_register_data():
 def attendance_register_export_excel():
     data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""), all_rows=True)
     output = io.StringIO()
-    output.write("<html><head><meta charset='utf-8'>
-<style>
-/* SAFE ANIMATION FIX */
-
-.card, .mini-card {
-    transition: transform 0.25s ease, box-shadow 0.25s ease;
-}
-
-.card:hover, .mini-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 12px 30px rgba(0,0,0,0.3);
-}
-
-button:active {
-    transform: scale(0.97);
-}
-
-/* tooltip */
-[data-tooltip] {
-    position: relative;
-}
-
-[data-tooltip]:hover::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    bottom: 120%;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #111;
-    color: #fff;
-    padding: 5px 8px;
-    font-size: 12px;
-    border-radius: 6px;
-    white-space: nowrap;
-}
-</style>
-
-</head><body><table border='1'>")
+    output.write("""<html><head><meta charset='utf-8'></head><body><table border='1'>""")
     output.write(f"<tr><th colspan='{len(data['days']) + 7}'>Attendance Register - {data['month_name']} {data['year']}</th></tr>")
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
@@ -9163,44 +9089,7 @@ def push_setup():
 }
 
 </style>
-    
-<style>
-/* SAFE ANIMATION FIX */
-
-.card, .mini-card {
-    transition: transform 0.25s ease, box-shadow 0.25s ease;
-}
-
-.card:hover, .mini-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 12px 30px rgba(0,0,0,0.3);
-}
-
-button:active {
-    transform: scale(0.97);
-}
-
-/* tooltip */
-[data-tooltip] {
-    position: relative;
-}
-
-[data-tooltip]:hover::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    bottom: 120%;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #111;
-    color: #fff;
-    padding: 5px 8px;
-    font-size: 12px;
-    border-radius: 6px;
-    white-space: nowrap;
-}
-</style>
-
-</head>
+    </head>
     <body>
         <div class="push-wrap">
             <div class="push-card">
@@ -9437,7 +9326,7 @@ def _ai_parse_threshold(query, default=AI_LEVEL3_LOW_ATTENDANCE_DEFAULT):
 def _ai_parse_days(query, default=None):
     import re
     q = (query or '').lower()
-    m = re.search(r'last\s+(\d{1,3})\s+(?:day|days)', q)
+    m = re.search(r'last\\s+(\d{1,3})\\s+(?:day|days)', q)
     if m:
         return max(1, min(365, int(m.group(1))))
     if 'last week' in q or 'past week' in q:
