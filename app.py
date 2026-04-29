@@ -80,7 +80,7 @@ th { position: sticky; top:0; background:#111827;}
 }
 .status-toggle-btn.is-active { background: linear-gradient(90deg,#22c55e,#10b981) !important; }
 .status-toggle-btn .status-toggle-label { width:50%; text-align:center; z-index:2; pointer-events:none; }
-.status-toggle-btn .status-toggle-knob { position:absolute; top:4px; left:4px; width:calc(50% - 4px); height:30px; border-radius:999px; background:rgba(255,255,255,.96); box-shadow:0 8px 18px rgba(0,0,0,.25); transition:transform .22s ease; z-index:1; }
+.status-toggle-btn .status-toggle-knob { position:absolute; top:4px; left:4px; width:calc(50% - 4px); height:30px; border-radius:999px; background:rgba(255,255,255,.96); box-shadow:0 8px 18px rgba(0,0,0,.25); transition:transform .62s cubic-bezier(.16,1,.3,1); z-index:1; }
 .status-toggle-btn.is-active .status-toggle-knob { transform: translateX(68px); }
 .status-toggle-btn.is-active .label-active { color:#065f46; }
 .status-toggle-btn:not(.is-active) .label-inactive { color:#7f1d1d; }
@@ -140,7 +140,7 @@ th { position: sticky; top:0; background:#111827;}
     background:#ffffff !important;
     box-shadow:0 10px 22px rgba(15,23,42,.34) !important;
     transform:translateX(0) !important;
-    transition: transform 0.5s cubic-bezier(.19,1,.22,1);
+    transition:transform .62s cubic-bezier(.16,1,.3,1) !important;
 }
 .status-toggle-btn.is-active .status-toggle-knob{transform:translateX(80px) !important;}
 .status-toggle-btn:not(.is-active) .label-inactive{color:#7c2d12 !important;}
@@ -150,6 +150,40 @@ th { position: sticky; top:0; background:#111827;}
 .status-toggle-btn:hover{filter:brightness(1.08) !important; transform:translateY(-1px);}
 .status-toggle-btn:active{transform:translateY(0) scale(.99);}
 .toggle-form{margin:0 !important;}
+
+
+
+/* ===== GPT-5.5 SAFE UI FIX: smoother status toggle + tooltip polish ===== */
+button.status-toggle-btn,
+.table-wrap button.status-toggle-btn,
+.card button.status-toggle-btn{
+    transition: transform .28s cubic-bezier(.16,1,.3,1), filter .28s ease, box-shadow .28s ease !important;
+    will-change: transform, filter !important;
+}
+button.status-toggle-btn::before{
+    transition: transform .62s cubic-bezier(.16,1,.3,1), box-shadow .36s ease, background .36s ease !important;
+    will-change: transform !important;
+}
+button.status-toggle-btn:hover::before{ box-shadow:0 14px 32px rgba(2,6,23,.42) !important; }
+.smart-tooltip-card{ position:relative; }
+.smart-tooltip-card::after{
+    content:'ⓘ';
+    position:absolute;
+    top:10px;
+    right:12px;
+    width:20px;
+    height:20px;
+    border-radius:999px;
+    display:grid;
+    place-items:center;
+    font-size:12px;
+    font-weight:900;
+    color:#c4b5fd;
+    background:rgba(124,58,237,.15);
+    border:1px solid rgba(196,181,253,.25);
+    opacity:.82;
+    pointer-events:none;
+}
 
 </style>
 '''
@@ -4703,7 +4737,7 @@ button.status-toggle-btn::before{
     box-shadow:0 10px 24px rgba(2,6,23,.36) !important;
     z-index:1 !important;
     transform:translateX(0) !important;
-    transition:transform .26s cubic-bezier(.2,.8,.2,1) !important;
+    transition:transform .62s cubic-bezier(.16,1,.3,1) !important;
 }
 button.status-toggle-btn.is-active::before{ transform:translateX(87px) !important; }
 button.status-toggle-btn .status-toggle-knob{ display:none !important; }
@@ -5070,7 +5104,59 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
             });
     }
 
+
+
+    function applyFinalDashboardTooltips(){
+        const explanations = {
+            'Total Meetings':'Total number of Zoom meetings captured by the platform.',
+            'Total Members':'Total registered members stored in the system.',
+            'Present':'Members whose attendance duration meets the present threshold.',
+            'Late':'Members below present threshold but above late threshold.',
+            'Absent':'Members below minimum attendance threshold or not joined.',
+            'Unknown':'Participants detected by Zoom but not matched with registered members.',
+            'Attendance Health':'Overall attendance quality score calculated from filtered meeting records.',
+            'Health Delta':'Difference between latest meeting health and previous meeting health.',
+            'Top Members':'Best performing members ranked by attendance, consistency and duration.',
+            'Risk Members':'Members whose attendance pattern is warning or critical.',
+            'Insights':'Auto-generated observations from the filtered attendance data.',
+            'Operational Alerts':'Detected issues such as low attendance, unknown spikes, and meeting quality warnings.',
+            'Auto Actions':'Suggested next actions based on risk and attendance analytics.',
+            'Attendance Heatmap':'Recent day-wise participation footprint; stronger cells mean better attendance.',
+            'Unknown Match Suggestions':'Possible matches between unknown Zoom names and registered members.',
+            'System Health':'Technical status of database, email, webhook, and background services.',
+            'DB Status':'Shows whether the PostgreSQL database connection is working.',
+            'Email Status':'Shows whether SMTP/email alerts are configured and ready.',
+            'Web Push Status':'Shows whether browser push notification setup is available.',
+            'Last Webhook':'Latest Zoom webhook event received by this platform.'
+        };
+        document.querySelectorAll('.card, .analytics-card, .mini-card, .mini-kpi, .kpi-card, .hero-chip, .setting-tile, .activity-clean-card').forEach((card) => {
+            if (card.dataset.finalTooltipApplied === '1') return;
+            const headingEl = card.querySelector('h1,h2,h3,.label,small');
+            const heading = headingEl ? (headingEl.textContent || '').trim() : '';
+            const cleanHeading = heading.replace(/\s+/g,' ');
+            const text = explanations[cleanHeading] || (cleanHeading ? `${cleanHeading}: this card shows an important system/attendance indicator.` : 'This card shows an important system/attendance indicator.');
+            card.setAttribute('title', text);
+            card.classList.add('smart-tooltip-card');
+            card.dataset.finalTooltipApplied = '1';
+        });
+    }
+
+    function removeRequestedAnalyticsSections(){
+        const blocked = new Set(['Analytics Filters','Attendance Trend','Member Duration','Duration Distribution','Status Mix']);
+        document.querySelectorAll('h1,h2,h3').forEach((heading) => {
+            const text = (heading.textContent || '').trim().replace(/\s+/g,' ');
+            if (!blocked.has(text)) return;
+            const card = heading.closest('.card');
+            if (card) card.remove();
+        });
+        document.querySelectorAll('.grid-2,.grid-3').forEach((grid) => {
+            if (!grid.querySelector('.card')) grid.remove();
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', function(){
+        removeRequestedAnalyticsSections();
+        applyFinalDashboardTooltips();
         setupAppearanceEngineV8();
         setupGlobalThemeSystem();
         applyAutoTooltips();
@@ -5122,18 +5208,6 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
-
-
-<script>
-document.addEventListener("DOMContentLoaded", function(){
-    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
-        if(!el.hasAttribute("title")){
-            let txt = el.innerText.slice(0,80);
-            el.setAttribute("title", txt || "Analytics insight");
-        }
-    });
-});
-</script>
 
 </body>
 </html>
@@ -7111,7 +7185,7 @@ def analytics():
                 {% if member_chart.empty %}
                     <div class="empty-state" style="padding:24px 18px">
                         <div class="empty-icon" style="width:58px;height:58px;font-size:22px">📊</div>
-                        
+                        <div style="font-weight:900;margin-bottom:6px">No member duration data</div>
                         <div class="muted">Adjust filters or wait for tracked member attendance to appear.</div>
                     </div>
                 {% else %}
@@ -8179,19 +8253,7 @@ def attendance_register_export_excel():
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
         output.write(f"<tr><td>{row['name']}</td><td>{row['total_meetings']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
-    output.write("</table>
-<script>
-document.addEventListener("DOMContentLoaded", function(){
-    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
-        if(!el.hasAttribute("title")){
-            let txt = el.innerText.slice(0,80);
-            el.setAttribute("title", txt || "Analytics insight");
-        }
-    });
-});
-</script>
-
-</body></html>")
+    output.write("</table></body></html>")
     filename = f"attendance_register_{data['year']}_{data['month']:02d}.xls"
     return Response(output.getvalue(), mimetype="application/vnd.ms-excel", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
@@ -9112,19 +9174,7 @@ def push_setup():
             }}
         }}
         </script>
-    
-<script>
-document.addEventListener("DOMContentLoaded", function(){
-    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
-        if(!el.hasAttribute("title")){
-            let txt = el.innerText.slice(0,80);
-            el.setAttribute("title", txt || "Analytics insight");
-        }
-    });
-});
-</script>
-
-</body>
+    </body>
     </html>
     """
     return render_template_string(html)
@@ -10035,43 +10085,7 @@ def ai_frontend_patch_v112(response):
         if request.path == '/ai-intelligence' and response.content_type and 'text/html' in response.content_type.lower():
             html = response.get_data(as_text=True)
             if 'UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED' not in html:
-                html = html.replace('
-<script>
-document.addEventListener("DOMContentLoaded", function(){
-    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
-        if(!el.hasAttribute("title")){
-            let txt = el.innerText.slice(0,80);
-            el.setAttribute("title", txt || "Analytics insight");
-        }
-    });
-});
-</script>
-
-</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n
-<script>
-document.addEventListener("DOMContentLoaded", function(){
-    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
-        if(!el.hasAttribute("title")){
-            let txt = el.innerText.slice(0,80);
-            el.setAttribute("title", txt || "Analytics insight");
-        }
-    });
-});
-</script>
-
-</body>') if '
-<script>
-document.addEventListener("DOMContentLoaded", function(){
-    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
-        if(!el.hasAttribute("title")){
-            let txt = el.innerText.slice(0,80);
-            el.setAttribute("title", txt || "Analytics insight");
-        }
-    });
-});
-</script>
-
-</body>' in html else html + _AI_FRONTEND_PATCH_V112
+                html = html.replace('</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n</body>') if '</body>' in html else html + _AI_FRONTEND_PATCH_V112
                 response.set_data(html)
                 response.headers['Content-Length'] = str(len(response.get_data()))
     except Exception as exc:
