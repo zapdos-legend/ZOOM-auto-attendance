@@ -1,4 +1,3 @@
-# FINAL_UI_LIVE_TOGGLE_PATCH_APPLIED = True
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
@@ -60,12 +59,12 @@ th { position: sticky; top:0; background:#111827;}
     color: #e5e7eb !important;
 }
 .status-toggle-btn {
-    width: 148px;
-    min-width: 148px;
-    height: 42px;
+    width: 136px;
+    min-width: 136px;
+    height: 38px;
     border: 0;
     border-radius: 999px;
-    padding: 4px;
+    padding: 0;
     position: relative;
     display: inline-flex;
     align-items: center;
@@ -75,25 +74,82 @@ th { position: sticky; top:0; background:#111827;}
     font-weight: 950;
     font-size: 11px;
     letter-spacing: .02em;
-    box-shadow: 0 12px 30px rgba(34,211,238,.22), inset 0 0 0 1px rgba(255,255,255,.16);
-    background: linear-gradient(90deg,#7c3aed,#22d3ee) !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.26);
+    background: linear-gradient(90deg,#ef4444,#fb7185) !important;
     color: white !important;
-    transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
 }
-.status-toggle-btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
-.status-toggle-btn .status-toggle-label { width:50%; text-align:center; z-index:2; pointer-events:none; transition:color .22s ease, opacity .22s ease; }
-.status-toggle-btn .status-toggle-knob { position:absolute; top:4px; left:4px; width:70px; height:34px; border-radius:999px; background:rgba(255,255,255,.97); box-shadow:0 10px 24px rgba(0,0,0,.28); transition:transform .24s cubic-bezier(.2,.8,.2,1); z-index:1; }
-.status-toggle-btn.is-active .status-toggle-knob { transform: translateX(70px); }
-.status-toggle-btn.is-active .label-active { color:#0f766e; opacity:1; }
-.status-toggle-btn:not(.is-active) .label-inactive { color:#6d28d9; opacity:1; }
-.status-toggle-btn:not(.is-active) .label-active, .status-toggle-btn.is-active .label-inactive { color:rgba(255,255,255,.86); opacity:.95; }
-.toggle-form{margin:0;display:inline-flex;align-items:center;}
+.status-toggle-btn.is-active { background: linear-gradient(90deg,#22c55e,#10b981) !important; }
+.status-toggle-btn .status-toggle-label { width:50%; text-align:center; z-index:2; pointer-events:none; }
+.status-toggle-btn .status-toggle-knob { position:absolute; top:4px; left:4px; width:calc(50% - 4px); height:30px; border-radius:999px; background:rgba(255,255,255,.96); box-shadow:0 8px 18px rgba(0,0,0,.25); transition:transform .22s ease; z-index:1; }
+.status-toggle-btn.is-active .status-toggle-knob { transform: translateX(68px); }
+.status-toggle-btn.is-active .label-active { color:#065f46; }
+.status-toggle-btn:not(.is-active) .label-inactive { color:#7f1d1d; }
+.status-toggle-btn:not(.is-active) .label-active, .status-toggle-btn.is-active .label-inactive { color:rgba(255,255,255,.78); }
 .activity-clean-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:16px}
 .activity-clean-card{border:1px solid rgba(148,163,184,.18);border-radius:20px;padding:16px;background:rgba(15,23,42,.72);box-shadow:0 18px 42px rgba(0,0,0,.22)}
 .activity-clean-card small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.activity-clean-card strong{display:block;font-size:28px;margin-top:8px}
 .activity-type{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;border:1px solid rgba(255,255,255,.12)}
 .activity-type.login{background:rgba(34,197,94,.14);color:#86efac}.activity-type.logout{background:rgba(244,63,94,.14);color:#fda4af}.activity-type.zoom{background:rgba(56,189,248,.14);color:#7dd3fc}.activity-type.other{background:rgba(168,85,247,.14);color:#d8b4fe}
 .activity-table td{vertical-align:top}.activity-details{max-width:520px;white-space:normal;word-break:break-word;color:#cbd5e1}
+
+
+
+/* ===== FINAL FIX: CLEAR ACTIVE/INACTIVE PILL TOGGLE LIKE REFERENCE IMAGE ===== */
+.status-toggle-btn{
+    width:170px !important;
+    min-width:170px !important;
+    height:44px !important;
+    border-radius:999px !important;
+    padding:5px !important;
+    position:relative !important;
+    display:inline-flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    gap:0 !important;
+    border:0 !important;
+    overflow:hidden !important;
+    cursor:pointer !important;
+    background:linear-gradient(90deg,#9333ea,#7c3aed,#6366f1) !important;
+    box-shadow:0 12px 30px rgba(147,51,234,.30), inset 0 0 0 1px rgba(255,255,255,.14) !important;
+}
+.status-toggle-btn .status-toggle-label{
+    position:relative !important;
+    z-index:2 !important;
+    width:50% !important;
+    height:34px !important;
+    display:flex !important;
+    align-items:center !important;
+    justify-content:center !important;
+    text-align:center !important;
+    font-size:12px !important;
+    line-height:1 !important;
+    font-weight:950 !important;
+    letter-spacing:.01em !important;
+    pointer-events:none !important;
+    white-space:nowrap !important;
+    transition:color .22s ease, opacity .22s ease !important;
+}
+.status-toggle-btn .status-toggle-knob{
+    position:absolute !important;
+    z-index:1 !important;
+    top:5px !important;
+    left:5px !important;
+    width:calc(50% - 5px) !important;
+    height:34px !important;
+    border-radius:999px !important;
+    background:#ffffff !important;
+    box-shadow:0 10px 22px rgba(15,23,42,.34) !important;
+    transform:translateX(0) !important;
+    transition:transform .25s cubic-bezier(.2,.8,.2,1) !important;
+}
+.status-toggle-btn.is-active .status-toggle-knob{transform:translateX(80px) !important;}
+.status-toggle-btn:not(.is-active) .label-inactive{color:#7c2d12 !important;}
+.status-toggle-btn:not(.is-active) .label-active{color:#ffffff !important; opacity:.86 !important;}
+.status-toggle-btn.is-active .label-active{color:#6d28d9 !important;}
+.status-toggle-btn.is-active .label-inactive{color:#ffffff !important; opacity:.86 !important;}
+.status-toggle-btn:hover{filter:brightness(1.08) !important; transform:translateY(-1px);}
+.status-toggle-btn:active{transform:translateY(0) scale(.99);}
+.toggle-form{margin:0 !important;}
 
 </style>
 '''
@@ -5650,7 +5706,7 @@ def build_live_snapshot_payload(include_feed=True):
                     "sort": (parse_dt(p.get("last_leave")) or start_dt).timestamp(),
                 })
 
-    participant_payload = sorted(participant_payload, key=lambda x: (x.get("duration_seconds") or 0), reverse=True)
+    participant_payload = sorted(participant_payload, key=lambda x: (int(x.get("duration_seconds") or 0), 1 if x.get("is_active") else 0, str(x.get("name") or "").lower()), reverse=True)
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
@@ -5693,7 +5749,11 @@ def build_live_snapshot_payload(include_feed=True):
 @app.route("/api/live-snapshot")
 @login_required
 def api_live_snapshot():
-    return jsonify(build_live_snapshot_payload(include_feed=True))
+    response = jsonify(build_live_snapshot_payload(include_feed=True))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/api/live-summary")
@@ -5732,7 +5792,7 @@ def live():
             .live-fix-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
             .live-fix-badge{display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:8px 13px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.34);color:#fecaca;font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
             .live-fix-dot{width:10px;height:10px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 rgba(239,68,68,.7);animation:liveFixPulse 1.2s infinite}@keyframes liveFixPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.7)}70%{box-shadow:0 0 0 12px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
-            .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px;transition:transform .22s ease}.live-fix-value.bump{transform:scale(1.08)}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)} .live-fix-badge.is-live{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.42);color:#bbf7d0}.live-fix-badge.is-live .live-fix-dot{background:#22c55e;animation:none}.live-nav-live{background:linear-gradient(135deg,#16a34a,#22c55e)!important;box-shadow:0 12px 30px rgba(34,197,94,.35)!important}.live-nav-idle{background:linear-gradient(135deg,#dc2626,#ef4444)!important;box-shadow:0 12px 30px rgba(239,68,68,.35)!important}
+            .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)} .live-fix-badge.is-live{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.42);color:#bbf7d0}.live-fix-badge.is-live .live-fix-dot{background:#22c55e;animation:none}.live-nav-live{background:linear-gradient(135deg,#16a34a,#22c55e)!important;box-shadow:0 12px 30px rgba(34,197,94,.35)!important}.live-nav-idle{background:linear-gradient(135deg,#dc2626,#ef4444)!important;box-shadow:0 12px 30px rgba(239,68,68,.35)!important}.live-fix-badge .live-fix-dot{animation:liveFixPulse 1s infinite !important}.live-fix-badge.is-live .live-fix-dot{background:#22c55e !important;animation:liveFixGreenPulse 1s infinite !important}@keyframes liveFixGreenPulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.8);transform:scale(1)}70%{box-shadow:0 0 0 14px rgba(34,197,94,0);transform:scale(1.18)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0);transform:scale(1)}}
         
 /* TOGGLE SWITCH */
 .toggle-switch {
@@ -5827,7 +5887,7 @@ def live():
             let tickBase = Date.now();
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
-            function animateCounter(id,next){const el=document.getElementById(id);if(!el)return;const target=parseInt(next||0,10);const start=parseInt(el.textContent||'0',10);if(start===target){el.textContent=target;return;}const t0=performance.now();const dur=520;el.classList.add('bump');function step(t){const p=Math.min(1,(t-t0)/dur);const eased=1-Math.pow(1-p,3);el.textContent=Math.round(start+(target-start)*eased);if(p<1){requestAnimationFrame(step);}else{el.textContent=target;setTimeout(()=>el.classList.remove('bump'),120);}}requestAnimationFrame(step);}
+            function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);const start=parseInt(el.textContent||'0',10)||0;if(start===next){el.textContent=next;return;}const t0=performance.now(),dur=520;function step(t){const p=Math.min((t-t0)/dur,1);const eased=1-Math.pow(1-p,3);el.textContent=Math.round(start+(next-start)*eased);if(p<1)requestAnimationFrame(step);else el.textContent=next;}requestAnimationFrame(step);}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
             function render(data){
                 lastPayload=data; tickBase=Date.now();
@@ -5840,11 +5900,11 @@ def live():
                 document.getElementById('lfMeetingId').textContent='Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-');
                 document.getElementById('lfStarted').textContent='Started '+(data.has_live?(data.meeting.start_time||'-'):'-');
                 document.getElementById('lfDuration').textContent='Duration '+fmt((data.summary||{}).meeting_duration_seconds||0);
-                animateCounter('lfActive',(data.summary||{}).active_now||0);
-                animateCounter('lfKnown',(data.summary||{}).known_count||0);
-                animateCounter('lfUnknown',(data.summary||{}).unknown_count||0);
+                animateLiveNumber('lfActive',(data.summary||{}).active_now||0);
+                animateLiveNumber('lfKnown',(data.summary||{}).known_count||0);
+                animateLiveNumber('lfUnknown',(data.summary||{}).unknown_count||0);
                 document.getElementById('lfHost').textContent=(data.summary||{}).host_present?'Present':'Absent';
-                animateCounter('lfNotJoined',(data.summary||{}).not_joined_count||0);
+                animateLiveNumber('lfNotJoined',(data.summary||{}).not_joined_count||0);
                 const rows=data.participants||[];
                 document.getElementById('lfEmpty').style.display=rows.length?'none':'block';
                 document.getElementById('lfTableWrap').style.display=rows.length?'block':'none';
