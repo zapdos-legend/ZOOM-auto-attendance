@@ -5209,6 +5209,71 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
 
+
+<script>
+// COUNTER ANIMATION
+function animateCounter(el, end) {
+    let start = 0;
+    let duration = 600;
+    let startTime = null;
+    function step(timestamp){
+        if(!startTime) startTime = timestamp;
+        let progress = timestamp - startTime;
+        let value = Math.min(end * (progress/duration), end);
+        el.innerText = Math.floor(value);
+        if(progress < duration) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+// AUTO APPLY COUNTERS
+document.querySelectorAll('[data-counter]').forEach(el=>{
+    let val = parseInt(el.innerText)||0;
+    animateCounter(el, val);
+});
+
+// REAL-TIME DURATION UPDATE
+setInterval(()=>{
+    document.querySelectorAll('[data-duration]').forEach(el=>{
+        let sec = parseInt(el.getAttribute('data-duration')) || 0;
+        sec++;
+        el.setAttribute('data-duration', sec);
+        let m = Math.floor(sec/60);
+        let s = sec%60;
+        el.innerText = m+":"+(s<10?"0"+s:s);
+    });
+},1000);
+
+// TOAST SYSTEM
+function showToast(msg){
+    let t = document.createElement('div');
+    t.innerText = "✅ "+msg;
+    t.style.position='fixed';
+    t.style.bottom='20px';
+    t.style.right='20px';
+    t.style.background='#22c55e';
+    t.style.color='white';
+    t.style.padding='10px 14px';
+    t.style.borderRadius='8px';
+    t.style.opacity='0';
+    t.style.transition='all .3s';
+    document.body.appendChild(t);
+    setTimeout(()=>{t.style.opacity='1'; t.style.transform='translateY(-10px)';},50);
+    setTimeout(()=>{t.style.opacity='0';},1800);
+}
+
+// PARTICIPANT ROW ANIMATION
+function animateRow(row){
+    row.style.transform="translateX(40px)";
+    row.style.opacity="0";
+    setTimeout(()=>{
+        row.style.transition="all .4s ease";
+        row.style.transform="translateX(0)";
+        row.style.opacity="1";
+    },50);
+}
+</script>
+
 </body>
 </html>
 """
@@ -8253,7 +8318,72 @@ def attendance_register_export_excel():
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
         output.write(f"<tr><td>{row['name']}</td><td>{row['total_meetings']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
-    output.write("</table></body></html>")
+    output.write("</table>
+<script>
+// COUNTER ANIMATION
+function animateCounter(el, end) {
+    let start = 0;
+    let duration = 600;
+    let startTime = null;
+    function step(timestamp){
+        if(!startTime) startTime = timestamp;
+        let progress = timestamp - startTime;
+        let value = Math.min(end * (progress/duration), end);
+        el.innerText = Math.floor(value);
+        if(progress < duration) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+// AUTO APPLY COUNTERS
+document.querySelectorAll('[data-counter]').forEach(el=>{
+    let val = parseInt(el.innerText)||0;
+    animateCounter(el, val);
+});
+
+// REAL-TIME DURATION UPDATE
+setInterval(()=>{
+    document.querySelectorAll('[data-duration]').forEach(el=>{
+        let sec = parseInt(el.getAttribute('data-duration')) || 0;
+        sec++;
+        el.setAttribute('data-duration', sec);
+        let m = Math.floor(sec/60);
+        let s = sec%60;
+        el.innerText = m+":"+(s<10?"0"+s:s);
+    });
+},1000);
+
+// TOAST SYSTEM
+function showToast(msg){
+    let t = document.createElement('div');
+    t.innerText = "✅ "+msg;
+    t.style.position='fixed';
+    t.style.bottom='20px';
+    t.style.right='20px';
+    t.style.background='#22c55e';
+    t.style.color='white';
+    t.style.padding='10px 14px';
+    t.style.borderRadius='8px';
+    t.style.opacity='0';
+    t.style.transition='all .3s';
+    document.body.appendChild(t);
+    setTimeout(()=>{t.style.opacity='1'; t.style.transform='translateY(-10px)';},50);
+    setTimeout(()=>{t.style.opacity='0';},1800);
+}
+
+// PARTICIPANT ROW ANIMATION
+function animateRow(row){
+    row.style.transform="translateX(40px)";
+    row.style.opacity="0";
+    setTimeout(()=>{
+        row.style.transition="all .4s ease";
+        row.style.transform="translateX(0)";
+        row.style.opacity="1";
+    },50);
+}
+</script>
+
+</body></html>")
     filename = f"attendance_register_{data['year']}_{data['month']:02d}.xls"
     return Response(output.getvalue(), mimetype="application/vnd.ms-excel", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
@@ -9174,7 +9304,72 @@ def push_setup():
             }}
         }}
         </script>
-    </body>
+    
+<script>
+// COUNTER ANIMATION
+function animateCounter(el, end) {
+    let start = 0;
+    let duration = 600;
+    let startTime = null;
+    function step(timestamp){
+        if(!startTime) startTime = timestamp;
+        let progress = timestamp - startTime;
+        let value = Math.min(end * (progress/duration), end);
+        el.innerText = Math.floor(value);
+        if(progress < duration) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+// AUTO APPLY COUNTERS
+document.querySelectorAll('[data-counter]').forEach(el=>{
+    let val = parseInt(el.innerText)||0;
+    animateCounter(el, val);
+});
+
+// REAL-TIME DURATION UPDATE
+setInterval(()=>{
+    document.querySelectorAll('[data-duration]').forEach(el=>{
+        let sec = parseInt(el.getAttribute('data-duration')) || 0;
+        sec++;
+        el.setAttribute('data-duration', sec);
+        let m = Math.floor(sec/60);
+        let s = sec%60;
+        el.innerText = m+":"+(s<10?"0"+s:s);
+    });
+},1000);
+
+// TOAST SYSTEM
+function showToast(msg){
+    let t = document.createElement('div');
+    t.innerText = "✅ "+msg;
+    t.style.position='fixed';
+    t.style.bottom='20px';
+    t.style.right='20px';
+    t.style.background='#22c55e';
+    t.style.color='white';
+    t.style.padding='10px 14px';
+    t.style.borderRadius='8px';
+    t.style.opacity='0';
+    t.style.transition='all .3s';
+    document.body.appendChild(t);
+    setTimeout(()=>{t.style.opacity='1'; t.style.transform='translateY(-10px)';},50);
+    setTimeout(()=>{t.style.opacity='0';},1800);
+}
+
+// PARTICIPANT ROW ANIMATION
+function animateRow(row){
+    row.style.transform="translateX(40px)";
+    row.style.opacity="0";
+    setTimeout(()=>{
+        row.style.transition="all .4s ease";
+        row.style.transform="translateX(0)";
+        row.style.opacity="1";
+    },50);
+}
+</script>
+
+</body>
     </html>
     """
     return render_template_string(html)
@@ -10085,7 +10280,202 @@ def ai_frontend_patch_v112(response):
         if request.path == '/ai-intelligence' and response.content_type and 'text/html' in response.content_type.lower():
             html = response.get_data(as_text=True)
             if 'UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED' not in html:
-                html = html.replace('</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n</body>') if '</body>' in html else html + _AI_FRONTEND_PATCH_V112
+                html = html.replace('
+<script>
+// COUNTER ANIMATION
+function animateCounter(el, end) {
+    let start = 0;
+    let duration = 600;
+    let startTime = null;
+    function step(timestamp){
+        if(!startTime) startTime = timestamp;
+        let progress = timestamp - startTime;
+        let value = Math.min(end * (progress/duration), end);
+        el.innerText = Math.floor(value);
+        if(progress < duration) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+// AUTO APPLY COUNTERS
+document.querySelectorAll('[data-counter]').forEach(el=>{
+    let val = parseInt(el.innerText)||0;
+    animateCounter(el, val);
+});
+
+// REAL-TIME DURATION UPDATE
+setInterval(()=>{
+    document.querySelectorAll('[data-duration]').forEach(el=>{
+        let sec = parseInt(el.getAttribute('data-duration')) || 0;
+        sec++;
+        el.setAttribute('data-duration', sec);
+        let m = Math.floor(sec/60);
+        let s = sec%60;
+        el.innerText = m+":"+(s<10?"0"+s:s);
+    });
+},1000);
+
+// TOAST SYSTEM
+function showToast(msg){
+    let t = document.createElement('div');
+    t.innerText = "✅ "+msg;
+    t.style.position='fixed';
+    t.style.bottom='20px';
+    t.style.right='20px';
+    t.style.background='#22c55e';
+    t.style.color='white';
+    t.style.padding='10px 14px';
+    t.style.borderRadius='8px';
+    t.style.opacity='0';
+    t.style.transition='all .3s';
+    document.body.appendChild(t);
+    setTimeout(()=>{t.style.opacity='1'; t.style.transform='translateY(-10px)';},50);
+    setTimeout(()=>{t.style.opacity='0';},1800);
+}
+
+// PARTICIPANT ROW ANIMATION
+function animateRow(row){
+    row.style.transform="translateX(40px)";
+    row.style.opacity="0";
+    setTimeout(()=>{
+        row.style.transition="all .4s ease";
+        row.style.transform="translateX(0)";
+        row.style.opacity="1";
+    },50);
+}
+</script>
+
+</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n
+<script>
+// COUNTER ANIMATION
+function animateCounter(el, end) {
+    let start = 0;
+    let duration = 600;
+    let startTime = null;
+    function step(timestamp){
+        if(!startTime) startTime = timestamp;
+        let progress = timestamp - startTime;
+        let value = Math.min(end * (progress/duration), end);
+        el.innerText = Math.floor(value);
+        if(progress < duration) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+// AUTO APPLY COUNTERS
+document.querySelectorAll('[data-counter]').forEach(el=>{
+    let val = parseInt(el.innerText)||0;
+    animateCounter(el, val);
+});
+
+// REAL-TIME DURATION UPDATE
+setInterval(()=>{
+    document.querySelectorAll('[data-duration]').forEach(el=>{
+        let sec = parseInt(el.getAttribute('data-duration')) || 0;
+        sec++;
+        el.setAttribute('data-duration', sec);
+        let m = Math.floor(sec/60);
+        let s = sec%60;
+        el.innerText = m+":"+(s<10?"0"+s:s);
+    });
+},1000);
+
+// TOAST SYSTEM
+function showToast(msg){
+    let t = document.createElement('div');
+    t.innerText = "✅ "+msg;
+    t.style.position='fixed';
+    t.style.bottom='20px';
+    t.style.right='20px';
+    t.style.background='#22c55e';
+    t.style.color='white';
+    t.style.padding='10px 14px';
+    t.style.borderRadius='8px';
+    t.style.opacity='0';
+    t.style.transition='all .3s';
+    document.body.appendChild(t);
+    setTimeout(()=>{t.style.opacity='1'; t.style.transform='translateY(-10px)';},50);
+    setTimeout(()=>{t.style.opacity='0';},1800);
+}
+
+// PARTICIPANT ROW ANIMATION
+function animateRow(row){
+    row.style.transform="translateX(40px)";
+    row.style.opacity="0";
+    setTimeout(()=>{
+        row.style.transition="all .4s ease";
+        row.style.transform="translateX(0)";
+        row.style.opacity="1";
+    },50);
+}
+</script>
+
+</body>') if '
+<script>
+// COUNTER ANIMATION
+function animateCounter(el, end) {
+    let start = 0;
+    let duration = 600;
+    let startTime = null;
+    function step(timestamp){
+        if(!startTime) startTime = timestamp;
+        let progress = timestamp - startTime;
+        let value = Math.min(end * (progress/duration), end);
+        el.innerText = Math.floor(value);
+        if(progress < duration) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+// AUTO APPLY COUNTERS
+document.querySelectorAll('[data-counter]').forEach(el=>{
+    let val = parseInt(el.innerText)||0;
+    animateCounter(el, val);
+});
+
+// REAL-TIME DURATION UPDATE
+setInterval(()=>{
+    document.querySelectorAll('[data-duration]').forEach(el=>{
+        let sec = parseInt(el.getAttribute('data-duration')) || 0;
+        sec++;
+        el.setAttribute('data-duration', sec);
+        let m = Math.floor(sec/60);
+        let s = sec%60;
+        el.innerText = m+":"+(s<10?"0"+s:s);
+    });
+},1000);
+
+// TOAST SYSTEM
+function showToast(msg){
+    let t = document.createElement('div');
+    t.innerText = "✅ "+msg;
+    t.style.position='fixed';
+    t.style.bottom='20px';
+    t.style.right='20px';
+    t.style.background='#22c55e';
+    t.style.color='white';
+    t.style.padding='10px 14px';
+    t.style.borderRadius='8px';
+    t.style.opacity='0';
+    t.style.transition='all .3s';
+    document.body.appendChild(t);
+    setTimeout(()=>{t.style.opacity='1'; t.style.transform='translateY(-10px)';},50);
+    setTimeout(()=>{t.style.opacity='0';},1800);
+}
+
+// PARTICIPANT ROW ANIMATION
+function animateRow(row){
+    row.style.transform="translateX(40px)";
+    row.style.opacity="0";
+    setTimeout(()=>{
+        row.style.transition="all .4s ease";
+        row.style.transform="translateX(0)";
+        row.style.opacity="1";
+    },50);
+}
+</script>
+
+</body>' in html else html + _AI_FRONTEND_PATCH_V112
                 response.set_data(html)
                 response.headers['Content-Length'] = str(len(response.get_data()))
     except Exception as exc:
