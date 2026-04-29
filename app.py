@@ -4802,6 +4802,79 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 
 /* ===== END V9 PATCH ===== */
 
+
+
+/* ===== GPT-5.5 ACTIVATED SAAS MOTION LAYER - SAFE FRONTEND ONLY ===== */
+:root{
+    --motion-fast:220ms;
+    --motion-base:420ms;
+    --motion-slow:620ms;
+    --motion-ease:cubic-bezier(.16,1,.3,1);
+}
+body{
+    animation:g55PageIn .42s var(--motion-ease) both;
+}
+@keyframes g55PageIn{
+    from{opacity:0;transform:translateX(20px)}
+    to{opacity:1;transform:translateX(0)}
+}
+body::before{
+    content:"";
+    position:fixed;
+    inset:-18%;
+    z-index:-1;
+    pointer-events:none;
+    background:
+        radial-gradient(circle at 18% 24%, rgba(96,165,250,.13), transparent 23%),
+        radial-gradient(circle at 82% 18%, rgba(168,85,247,.12), transparent 22%),
+        radial-gradient(circle at 66% 86%, rgba(34,211,238,.08), transparent 24%);
+    filter:blur(2px);
+    opacity:.78;
+    animation:g55BgFloat 28s ease-in-out infinite alternate;
+}
+@keyframes g55BgFloat{
+    0%{transform:translate3d(-1.5%, -1%, 0) scale(1)}
+    100%{transform:translate3d(1.5%, 1%, 0) scale(1.035)}
+}
+.card,.mini-card,.analytics-card,.panel,.glass-panel,.hero,.table-wrap,.activity-clean-card{
+    transition:transform var(--motion-base) var(--motion-ease), box-shadow var(--motion-base) var(--motion-ease), border-color var(--motion-base) ease, background var(--motion-base) ease, opacity var(--motion-base) ease;
+    will-change:transform;
+}
+.card:hover,.mini-card:hover,.analytics-card:hover,.panel:hover,.glass-panel:hover,.activity-clean-card:hover{
+    transform:translateY(-4px) scale(1.008);
+    box-shadow:0 24px 60px rgba(2,6,23,.28) !important;
+}
+.g55-card-enter{opacity:0;transform:translateY(14px);animation:g55CardEnter .52s var(--motion-ease) forwards;animation-delay:var(--g55-delay,0ms)}
+@keyframes g55CardEnter{to{opacity:1;transform:translateY(0)}}
+button,.btn,a.btn,input[type="submit"],.status-toggle-btn{
+    transition:transform var(--motion-fast) var(--motion-ease), box-shadow var(--motion-base) ease, filter var(--motion-base) ease, background var(--motion-base) ease, color var(--motion-base) ease !important;
+    position:relative;
+    overflow:hidden;
+}
+button:hover,.btn:hover,a.btn:hover,input[type="submit"]:hover{filter:brightness(1.07);box-shadow:0 16px 36px rgba(59,130,246,.18)}
+button:active,.btn:active,a.btn:active,input[type="submit"]:active,.status-toggle-btn:active{transform:scale(.97) !important}
+.g55-ripple{position:absolute;border-radius:999px;transform:scale(0);animation:g55Ripple .6s ease-out;background:rgba(255,255,255,.42);pointer-events:none;z-index:0}
+@keyframes g55Ripple{to{transform:scale(4);opacity:0}}
+.status-toggle-btn .status-toggle-knob,.status-toggle-btn::before{
+    transition:transform .68s cubic-bezier(.16,1,.3,1), box-shadow .34s ease, background .34s ease !important;
+    will-change:transform;
+}
+.status-toggle-btn:hover .status-toggle-knob,.status-toggle-btn:hover::before{box-shadow:0 16px 34px rgba(2,6,23,.38) !important}
+.g55-counter{display:inline-block;transition:transform .18s var(--motion-ease), color .32s ease}.g55-counter.g55-bounce{animation:g55CounterBounce .36s var(--motion-ease)}
+@keyframes g55CounterBounce{0%{transform:scale(1)}45%{transform:scale(1.12)}100%{transform:scale(1)}}
+.live-heartbeat{position:relative;display:inline-flex!important;align-items:center;gap:8px}.live-heartbeat::before{content:"";width:10px;height:10px;border-radius:999px;background:#22c55e;box-shadow:0 0 0 0 rgba(34,197,94,.55);animation:g55Heartbeat var(--g55-heartbeat-speed,1.25s) ease-in-out infinite;flex:0 0 auto}.live-heartbeat.g55-low::before{background:#f97316;animation-duration:1.8s}.live-heartbeat.g55-high::before{background:#ef4444;animation-duration:.85s}
+@keyframes g55Heartbeat{0%{transform:scale(1);opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,.45)}50%{transform:scale(1.22);opacity:.62;box-shadow:0 0 0 12px rgba(34,197,94,0)}100%{transform:scale(1);opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+.g55-status-change{animation:g55StatusGlow .9s var(--motion-ease)}@keyframes g55StatusGlow{0%{box-shadow:0 0 0 rgba(34,197,94,0);filter:saturate(1)}45%{box-shadow:0 0 22px rgba(34,197,94,.45);filter:saturate(1.35)}100%{box-shadow:0 0 0 rgba(34,197,94,0);filter:saturate(1)}}
+tr.g55-row-enter{animation:g55RowEnter .48s var(--motion-ease) both}tr.g55-row-flash{animation:g55RowFlash 1.1s ease both}@keyframes g55RowEnter{from{opacity:0;transform:translateX(36px)}to{opacity:1;transform:translateX(0)}}@keyframes g55RowFlash{0%{background:rgba(34,197,94,.22)}100%{background:transparent}}
+.g55-critical,.critical,.risk-critical,[data-risk="critical"]{animation:g55CriticalPulse 1.9s ease-in-out infinite}.g55-alert-shake{animation:g55Shake .5s ease}@keyframes g55CriticalPulse{0%,100%{box-shadow:0 0 0 rgba(239,68,68,0)}50%{box-shadow:0 0 24px rgba(239,68,68,.38)}}@keyframes g55Shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+.g55-trend-up{color:#22c55e!important;animation:g55TrendUp .55s var(--motion-ease)}.g55-trend-down{color:#ef4444!important;animation:g55TrendDown .55s var(--motion-ease)}@keyframes g55TrendUp{from{transform:translateY(7px);opacity:.2}to{transform:translateY(0);opacity:1}}@keyframes g55TrendDown{from{transform:translateY(-7px);opacity:.2}to{transform:translateY(0);opacity:1}}
+.g55-tooltip-host{position:relative}.g55-tooltip-host::after{content:attr(data-g55-tooltip);position:absolute;right:10px;top:10px;max-width:260px;padding:9px 11px;border-radius:12px;background:rgba(2,6,23,.92);color:#f8fafc;border:1px solid rgba(148,163,184,.25);box-shadow:0 18px 40px rgba(2,6,23,.35);font-size:12px;font-weight:700;line-height:1.35;opacity:0;transform:translateY(6px);pointer-events:none;transition:opacity .22s ease,transform .22s ease;z-index:50}.g55-tooltip-host::before{content:"ⓘ";position:absolute;right:12px;top:10px;width:22px;height:22px;border-radius:999px;display:grid;place-items:center;background:rgba(124,58,237,.16);border:1px solid rgba(196,181,253,.28);color:#ddd6fe;font-size:12px;font-weight:900;z-index:49}.g55-tooltip-host:hover::after{opacity:1;transform:translateY(32px)}
+.g55-toast-wrap{position:fixed;right:22px;bottom:22px;z-index:99999;display:grid;gap:10px}.g55-toast{display:flex;align-items:center;gap:10px;min-width:240px;max-width:360px;padding:12px 14px;border-radius:16px;background:rgba(15,23,42,.94);color:#fff;border:1px solid rgba(148,163,184,.2);box-shadow:0 22px 52px rgba(2,6,23,.42);font-weight:800;animation:g55ToastIn .32s var(--motion-ease) both}.g55-toast .g55-check{width:22px;height:22px;border-radius:999px;display:grid;place-items:center;background:#22c55e;animation:g55CheckPop .42s var(--motion-ease)}.g55-toast.g55-hide{animation:g55ToastOut .28s ease forwards}@keyframes g55ToastIn{from{opacity:0;transform:translateY(14px) translateX(12px)}to{opacity:1;transform:translateY(0) translateX(0)}}@keyframes g55ToastOut{to{opacity:0;transform:translateY(10px) translateX(10px)}}@keyframes g55CheckPop{0%{transform:scale(.5)}70%{transform:scale(1.18)}100%{transform:scale(1)}}
+.g55-skeleton{position:relative;overflow:hidden;background:rgba(148,163,184,.12)!important;border-radius:14px}.g55-skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.16),transparent);animation:g55Shimmer 1.35s infinite}@keyframes g55Shimmer{100%{transform:translateX(100%)}}
+.g55-focus-active .g55-focus-target{position:relative;z-index:6;box-shadow:0 0 0 3px rgba(96,165,250,.25),0 26px 70px rgba(2,6,23,.35)!important}.g55-focus-active .main > *:not(.g55-focus-target){filter:blur(1.2px);opacity:.82;transition:filter .28s ease,opacity .28s ease}
+.g55-soft-dim{opacity:.86;filter:saturate(.88)}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
+/* ===== END GPT-5.5 ACTIVATED SAAS MOTION LAYER ===== */
 </style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
@@ -5209,6 +5282,239 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
 
+
+<script>
+(function(){
+'use strict';
+if(window.__G55_ACTIVATED_MOTION__) return;
+window.__G55_ACTIVATED_MOTION__ = true;
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+function parseNumberText(text){
+    if(!text) return null;
+    const cleaned = String(text).replace(/,/g,'').trim();
+    if(!/^-?\d+(\.\d+)?%?$/.test(cleaned)) return null;
+    return {value: parseFloat(cleaned), suffix: cleaned.endsWith('%') ? '%' : '', decimals: cleaned.includes('.') ? Math.min((cleaned.split('.')[1]||'').replace('%','').length,2) : 0};
+}
+function animateCounterNode(el, target, suffix, decimals){
+    if(!el || el.dataset.g55CounterDone === '1') return;
+    el.dataset.g55CounterDone = '1';
+    el.classList.add('g55-counter');
+    const duration = 900;
+    const start = performance.now();
+    const from = 0;
+    function frame(now){
+        const progress = Math.min((now - start) / duration, 1);
+        const eased = easeOutCubic(progress);
+        const val = from + (target - from) * eased;
+        el.textContent = (decimals ? val.toFixed(decimals) : Math.round(val).toLocaleString('en-IN')) + suffix;
+        if(progress < 1){ requestAnimationFrame(frame); }
+        else { el.textContent = (decimals ? target.toFixed(decimals) : Math.round(target).toLocaleString('en-IN')) + suffix; el.classList.add('g55-bounce'); setTimeout(()=>el.classList.remove('g55-bounce'),420); }
+    }
+    requestAnimationFrame(frame);
+}
+function activateCounters(root=document){
+    const selectors = ['.card strong','.mini-card strong','.analytics-card strong','.activity-clean-card strong','.hero strong','.stat-value','.metric-value','.kpi-value','[data-counter]'];
+    root.querySelectorAll(selectors.join(',')).forEach(el=>{
+        if(el.children.length) return;
+        const parsed = parseNumberText(el.textContent);
+        if(parsed && Math.abs(parsed.value) <= 10000000) animateCounterNode(el, parsed.value, parsed.suffix, parsed.decimals);
+    });
+}
+function secondsToClock(sec){
+    sec = Math.max(0, parseInt(sec||0,10));
+    const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+    if(h>0) return h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+    return m + ':' + String(s).padStart(2,'0');
+}
+function parseClock(text){
+    const v = String(text||'').trim();
+    if(!/^\d{1,2}:\d{2}(:\d{2})?$/.test(v)) return null;
+    const parts = v.split(':').map(x=>parseInt(x,10));
+    if(parts.length===3) return parts[0]*3600 + parts[1]*60 + parts[2];
+    return parts[0]*60 + parts[1];
+}
+function activateDurations(root=document){
+    const liveContext = /live|joined|active|participant/i.test(document.body.innerText.slice(0,3000));
+    if(!liveContext) return;
+    root.querySelectorAll('td,span,div').forEach(el=>{
+        if(el.dataset.g55DurationBound === '1' || el.children.length) return;
+        const sec = parseClock(el.textContent);
+        if(sec === null) return;
+        const row = el.closest('tr');
+        const rowText = row ? row.innerText.toLowerCase() : document.body.innerText.toLowerCase();
+        if(row && !(rowText.includes('joined') || rowText.includes('live') || rowText.includes('active'))) return;
+        el.dataset.g55DurationBound = '1';
+        el.dataset.g55Duration = String(sec);
+    });
+}
+setInterval(()=>{
+    document.querySelectorAll('[data-g55-duration]').forEach(el=>{
+        let sec = parseInt(el.dataset.g55Duration||'0',10) + 1;
+        el.dataset.g55Duration = String(sec);
+        el.textContent = secondsToClock(sec);
+    });
+},1000);
+function activateHeartbeat(){
+    const candidates = Array.from(document.querySelectorAll('.badge,.pill,.chip,.hero-chip,span,div,strong')).filter(el=>{
+        const txt=(el.textContent||'').trim().toLowerCase();
+        return txt === 'live' || txt === 'active live' || txt.includes(' live');
+    }).slice(0,8);
+    const participantCountText = document.body.innerText.match(/live participants\s*:?\s*(\d+)/i);
+    const count = participantCountText ? parseInt(participantCountText[1],10) : 0;
+    candidates.forEach(el=>{
+        el.classList.add('live-heartbeat');
+        if(count>=20) el.classList.add('g55-high'); else if(count<=1) el.classList.add('g55-low');
+    });
+}
+function activateCards(){
+    const cards = document.querySelectorAll('.card,.mini-card,.analytics-card,.panel,.glass-panel,.activity-clean-card');
+    cards.forEach((el,i)=>{
+        if(!el.classList.contains('g55-card-enter')){
+            el.classList.add('g55-card-enter');
+            el.style.setProperty('--g55-delay', Math.min(i*80, 560)+'ms');
+        }
+    });
+}
+const tooltipRules = [
+    ['active','Shows currently active/enabled users, members, or live participants. Higher value means more people are available or currently involved.'],
+    ['present','Shows members counted as present based on your attendance rules. Higher value means stronger meeting participation.'],
+    ['late','Shows members who joined but did not meet the full present threshold. Useful for follow-up and discipline tracking.'],
+    ['absent','Shows registered members who did not attend or stayed below the required threshold.'],
+    ['unknown','Shows participants who joined but are not matched with registered members. Useful for security and member-list cleanup.'],
+    ['duration','Shows time spent in meeting. Higher duration usually indicates stronger participation.'],
+    ['score','Shows calculated attendance health score using attendance, consistency, and duration signals.'],
+    ['risk','Shows attendance risk level. Critical or warning means the member needs attention.'],
+    ['trend','Shows whether attendance behavior is improving, declining, or stable over time.'],
+    ['report','Shows meeting summaries and downloadable attendance outputs.'],
+    ['email','Shows reminder/report email delivery status and configuration.'],
+    ['web push','Shows browser notification status for alerts and reminders.'],
+    ['db','Shows database availability and system health.'],
+    ['meeting','Shows Zoom meeting information and attendance tracking status.'],
+    ['member','Shows registered member-related data and participation health.'],
+    ['user','Shows dashboard login/user account status and permissions.'],
+    ['alert','Shows smart warnings generated from attendance and meeting health rules.'],
+    ['analytics','Shows processed attendance insights from historical meeting data.']
+];
+function inferTooltip(el){
+    const text = (el.innerText || el.textContent || '').toLowerCase().replace(/\s+/g,' ').trim();
+    for(const [key,msg] of tooltipRules){ if(text.includes(key)) return msg; }
+    const heading = el.querySelector('h1,h2,h3,h4,strong,small');
+    if(heading) return 'This section explains '+heading.textContent.trim()+' using your Zoom attendance data.';
+    return 'This section shows useful system or attendance information for your dashboard.';
+}
+function activateTooltips(root=document){
+    root.querySelectorAll('.card,.mini-card,.analytics-card,.panel,.glass-panel,.activity-clean-card,.hero-chip,.stat-card,.table-wrap').forEach(el=>{
+        if(el.dataset.g55TooltipBound === '1') return;
+        el.dataset.g55TooltipBound = '1';
+        const tip = inferTooltip(el);
+        el.setAttribute('title', tip);
+        el.setAttribute('data-g55-tooltip', tip);
+        el.classList.add('g55-tooltip-host');
+    });
+}
+function createToastWrap(){
+    let wrap = document.querySelector('.g55-toast-wrap');
+    if(!wrap){wrap=document.createElement('div');wrap.className='g55-toast-wrap';document.body.appendChild(wrap);} return wrap;
+}
+window.showToast = function(message, type='success'){
+    const wrap = createToastWrap();
+    const toast = document.createElement('div');
+    toast.className='g55-toast';
+    toast.innerHTML='<span class="g55-check">✓</span><span></span>';
+    toast.querySelector('span:last-child').textContent = message || 'Action completed successfully';
+    if(type==='error') toast.querySelector('.g55-check').style.background='#ef4444';
+    if(type==='warn') toast.querySelector('.g55-check').style.background='#f59e0b';
+    wrap.appendChild(toast);
+    setTimeout(()=>toast.classList.add('g55-hide'),1800);
+    setTimeout(()=>toast.remove(),2200);
+};
+function activateToasts(){
+    document.querySelectorAll('.flash,.alert,.message,.notification,[role="alert"]').forEach(el=>{
+        if(el.dataset.g55ToastShown === '1') return;
+        const msg=(el.innerText||el.textContent||'').trim();
+        if(msg){el.dataset.g55ToastShown='1'; window.showToast(msg, /error|failed|danger/i.test(msg)?'error':'success');}
+    });
+}
+function activateRows(){
+    document.querySelectorAll('tbody tr').forEach((row,i)=>{
+        if(row.dataset.g55RowBound === '1') return;
+        row.dataset.g55RowBound='1';
+        row.classList.add('g55-row-enter');
+        row.style.animationDelay = Math.min(i*35, 420)+'ms';
+    });
+}
+function activateTrends(){
+    document.querySelectorAll('td,span,strong,div').forEach(el=>{
+        if(el.children.length) return;
+        const txt=(el.textContent||'').trim();
+        if(txt.includes('↑') || /improving/i.test(txt)) el.classList.add('g55-trend-up');
+        if(txt.includes('↓') || /declining/i.test(txt)) el.classList.add('g55-trend-down');
+        if(/critical|host absent|low attendance/i.test(txt)) el.classList.add('g55-critical');
+    });
+}
+function addFocusMode(){
+    document.addEventListener('click', e=>{
+        const target = e.target.closest('.card,.mini-card,.analytics-card,.panel,.glass-panel,.activity-clean-card');
+        document.querySelectorAll('.g55-focus-target').forEach(x=>x.classList.remove('g55-focus-target'));
+        document.body.classList.remove('g55-focus-active');
+        if(target && !e.target.closest('button,a,input,select,textarea')){
+            target.classList.add('g55-focus-target');
+            document.body.classList.add('g55-focus-active');
+            setTimeout(()=>{target.classList.remove('g55-focus-target');document.body.classList.remove('g55-focus-active');},1200);
+        }
+    });
+}
+function addRipple(){
+    document.addEventListener('click', e=>{
+        const btn = e.target.closest('button,.btn,a.btn,input[type="submit"]');
+        if(!btn) return;
+        const rect = btn.getBoundingClientRect();
+        const ripple = document.createElement('span');
+        const size = Math.max(rect.width, rect.height);
+        ripple.className='g55-ripple';
+        ripple.style.width=ripple.style.height=size+'px';
+        ripple.style.left=(e.clientX-rect.left-size/2)+'px';
+        ripple.style.top=(e.clientY-rect.top-size/2)+'px';
+        btn.appendChild(ripple);
+        setTimeout(()=>ripple.remove(),650);
+    });
+}
+function chartDefaults(){
+    if(!window.Chart) return;
+    Chart.defaults.animation = {duration: 850, easing: 'easeOutQuart'};
+    Chart.defaults.transitions = {active:{animation:{duration:420}},resize:{animation:{duration:420}}};
+    Chart.defaults.elements.line.tension = .38;
+}
+function dataDrivenDim(){
+    const txt = document.body.innerText;
+    const m = txt.match(/live participants\s*:?\s*(\d+)/i);
+    if(m && parseInt(m[1],10)===0) document.body.classList.add('g55-soft-dim');
+}
+function activateAll(root=document){
+    chartDefaults();
+    activateCards();
+    activateTooltips(root);
+    activateCounters(root);
+    activateDurations(root);
+    activateHeartbeat();
+    activateToasts();
+    activateRows();
+    activateTrends();
+    dataDrivenDim();
+}
+document.addEventListener('DOMContentLoaded', ()=>{
+    addRipple();
+    addFocusMode();
+    activateAll(document);
+    const observer = new MutationObserver(mutations=>{
+        let should=false;
+        mutations.forEach(m=>{ if(m.addedNodes && m.addedNodes.length) should=true; });
+        if(should) setTimeout(()=>activateAll(document),80);
+    });
+    observer.observe(document.body,{childList:true,subtree:true});
+});
+})();
+</script>
 </body>
 </html>
 """
