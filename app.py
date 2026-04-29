@@ -4750,6 +4750,22 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
     70%{transform:scale(1.25);box-shadow:0 0 0 14px rgba(34,197,94,0)}
     100%{transform:scale(1);box-shadow:0 0 0 0 rgba(34,197,94,0)}
 }
+
+
+/* ===== V10 AJAX TOGGLE + MEMBER PROFILE GRAPH SPACE FIX ===== */
+.status-toggle-btn.is-saving{opacity:.72 !important; pointer-events:none !important; filter:saturate(.8) !important;}
+.status-toggle-btn.is-saving::after{content:""; position:absolute; right:12px; top:50%; width:12px; height:12px; margin-top:-6px; border:2px solid rgba(255,255,255,.55); border-top-color:#fff; border-radius:50%; z-index:3; animation:toggleSpin .65s linear infinite;}
+@keyframes toggleSpin{to{transform:rotate(360deg)}}
+.member-profile-layout-fix .profile-chart-grid{display:grid !important; grid-template-columns:repeat(2,minmax(420px,1fr)) !important; gap:18px !important; align-items:stretch !important;}
+.member-profile-layout-fix .profile-chart{min-height:430px !important; height:430px !important; padding:18px !important; position:relative !important; overflow:visible !important;}
+.member-profile-layout-fix .profile-chart.profile-chart-wide{grid-column:1 / -1 !important; min-height:400px !important; height:400px !important;}
+.member-profile-layout-fix .profile-chart canvas{width:100% !important; height:calc(100% - 92px) !important; max-height:none !important;}
+.chart-info-box{margin:8px 0 12px 0; padding:10px 12px; border-radius:14px; background:rgba(34,211,238,.10); border:1px solid rgba(34,211,238,.22); color:#cbd5e1; font-size:12px; line-height:1.45; font-weight:750;}
+.chart-info-box b{color:#f8fafc;}
+.profile-alert-wide{grid-column:1 / -1 !important;}
+@media(max-width:1200px){.member-profile-layout-fix .profile-chart-grid{grid-template-columns:1fr !important}.member-profile-layout-fix .profile-chart{min-height:390px !important;height:390px !important}}
+/* ===== END V10 PATCH ===== */
+
 /* ===== END V9 PATCH ===== */
 
 </style>
@@ -4892,6 +4908,47 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
         });
     }
 
+
+
+    function enableAjaxStatusToggles(){
+        document.querySelectorAll('form.toggle-form').forEach((form) => {
+            if (form.dataset.ajaxToggleBound === '1') return;
+            form.dataset.ajaxToggleBound = '1';
+            form.addEventListener('submit', async function(e){
+                e.preventDefault();
+                const btn = form.querySelector('.status-toggle-btn');
+                if (!btn || btn.classList.contains('is-saving')) return;
+                const wasActive = btn.classList.contains('is-active');
+                btn.classList.add('is-saving');
+                try{
+                    const fd = new FormData(form);
+                    await fetch(form.getAttribute('action') || window.location.href, {
+                        method: 'POST',
+                        body: fd,
+                        credentials: 'same-origin',
+                        headers: {'X-Requested-With':'XMLHttpRequest'}
+                    });
+                    btn.classList.toggle('is-active', !wasActive);
+                    const row = form.closest('tr');
+                    if(row){
+                        const badges = Array.from(row.querySelectorAll('.badge'));
+                        const statusBadge = badges.find(b => ['Active','Inactive','Disabled'].includes((b.textContent||'').trim()));
+                        if(statusBadge){
+                            const nowActive = !wasActive;
+                            statusBadge.textContent = nowActive ? 'Active' : (window.location.pathname.indexOf('/users') !== -1 ? 'Disabled' : 'Inactive');
+                            statusBadge.classList.remove('ok','danger');
+                            statusBadge.classList.add(nowActive ? 'ok' : 'danger');
+                        }
+                    }
+                }catch(err){
+                    alert('Status update failed. Please refresh and try again.');
+                }finally{
+                    btn.classList.remove('is-saving');
+                }
+            });
+        });
+    }
+
     function enhanceButtons(){
         document.querySelectorAll('button, .btn, .chip, .theme-switch').forEach((btn) => {
             btn.addEventListener('click', function(e){
@@ -5019,6 +5076,7 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
         applyAutoTooltips();
         animateMetrics();
         enhanceButtons();
+        enableAjaxStatusToggles();
         setupChartDefaults();
         polishLayoutSpacing();
         enhanceWowEffects();
@@ -6109,6 +6167,8 @@ def members():
                         cur.execute("UPDATE members SET active=%s WHERE id=%s", (next_val, member_id))
                 conn.commit()
             log_activity("member_toggle", str(member_id))
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"ok": True, "type": "member", "id": member_id})
             flash("Member status updated.", "success")
 
         elif action == "delete" and can_edit_users():
@@ -6301,7 +6361,7 @@ def member_profile(member_id):
         """
         <style>
             .member-profile-hero{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,.6fr);gap:16px;align-items:stretch}
-            .profile-title{font-size:30px;font-weight:950;margin:0 0 8px}.profile-sub{color:#cbd5e1;font-weight:700}.profile-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}.profile-kpi{border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:14px;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.025));box-shadow:0 16px 38px rgba(2,6,23,.18)}.profile-kpi small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.profile-kpi strong{display:block;font-size:28px;margin-top:6px}.profile-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.profile-chart{height:320px;position:relative}.profile-chart.small{height:280px}.risk-pill{display:inline-flex;gap:8px;align-items:center;border-radius:999px;padding:8px 12px;font-weight:950;background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.20)}.timeline-list{display:grid;gap:8px;max-height:360px;overflow:auto}.timeline-item{border:1px solid rgba(148,163,184,.16);border-radius:14px;padding:10px;background:rgba(255,255,255,.04)}.profile-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}@media(max-width:1050px){.member-profile-hero,.profile-chart-grid{grid-template-columns:1fr}}
+            .profile-title{font-size:30px;font-weight:950;margin:0 0 8px}.profile-sub{color:#cbd5e1;font-weight:700}.profile-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}.profile-kpi{border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:14px;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.025));box-shadow:0 16px 38px rgba(2,6,23,.18)}.profile-kpi small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.profile-kpi strong{display:block;font-size:28px;margin-top:6px}.profile-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(420px,1fr));gap:18px}.profile-chart{height:430px;position:relative}.profile-chart.profile-chart-wide{grid-column:1/-1;height:400px}.risk-pill{display:inline-flex;gap:8px;align-items:center;border-radius:999px;padding:8px 12px;font-weight:950;background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.20)}.timeline-list{display:grid;gap:8px;max-height:360px;overflow:auto}.timeline-item{border:1px solid rgba(148,163,184,.16);border-radius:14px;padding:10px;background:rgba(255,255,255,.04)}.profile-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}@media(max-width:1050px){.member-profile-hero,.profile-chart-grid{grid-template-columns:1fr}}
         
 /* TOGGLE SWITCH */
 .toggle-switch {
@@ -6335,7 +6395,7 @@ def member_profile(member_id):
 }
 
 </style>
-        <div class="member-profile-hero">
+        <div class="member-profile-layout-fix"><div class="member-profile-hero">
             <div class="hero">
                 <div class="profile-sub">Member Profile / Deep Insights</div>
                 <h2 class="profile-title">{{ member_display_name(data.member) }}</h2>
@@ -6366,23 +6426,26 @@ def member_profile(member_id):
         </div>
 
         <div class="profile-chart-grid">
-            <div class="card profile-chart"><h3>Score Over Time</h3><canvas id="memberScoreChart"></canvas></div>
-            <div class="card profile-chart"><h3>Duration Over Time</h3><canvas id="memberDurationChart"></canvas></div>
-            <div class="card profile-chart small"><h3>Status Distribution</h3><canvas id="memberStatusChart"></canvas></div>
-            <div class="card profile-chart small"><h3>Late Pattern</h3><canvas id="memberLateChart"></canvas></div>
+            <div class="card profile-chart">
+                <h3>Score Over Time</h3>
+                <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> score out of 100. Relation: higher line means stronger attendance consistency, duration participation, and engagement.</div>
+                <canvas id="memberScoreChart"></canvas>
+            </div>
+            <div class="card profile-chart">
+                <h3>Duration Over Time</h3>
+                <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> attended minutes. Relation: taller bars mean the member stayed longer in that meeting.</div>
+                <canvas id="memberDurationChart"></canvas>
+            </div>
+            <div class="card profile-chart profile-chart-wide">
+                <h3>Late Pattern</h3>
+                <div class="chart-info-box"><b>X-axis:</b> weekday. <b>Y-axis:</b> late count. Relation: taller bars show which days this member is more frequently late.</div>
+                <canvas id="memberLateChart"></canvas>
+            </div>
         </div>
 
         <br>
         <div class="grid">
-            <div class="card">
-                <h3>Risk History</h3>
-                <div class="timeline-list">
-                    {% for label in data.charts.risk_labels|reverse %}
-                    <div class="timeline-item"><b>{{ label }}</b> · Risk score {{ data.charts.risk_values[loop.revindex0] }}</div>
-                    {% else %}<div class="muted">No risk history yet.</div>{% endfor %}
-                </div>
-            </div>
-            <div class="card">
+            <div class="card profile-alert-wide">
                 <h3>Alert History</h3>
                 <div class="timeline-list">
                     {% for alert in data.alerts %}
@@ -6405,6 +6468,8 @@ def member_profile(member_id):
             </div>
         </div>
 
+        </div>
+
         <script>
         const memberProfileData = {{ data.charts|tojson }};
         function memberProfilePalette(){return (window.getThemePalette?window.getThemePalette():{ok:'#22c55e',warn:'#f59e0b',danger:'#ef4444',a:'#6366f1',b:'#22d3ee',c:'#a855f7',text:'#cbd5e1',grid:'rgba(148,163,184,.18)'});}
@@ -6413,7 +6478,6 @@ def member_profile(member_id):
             const p=memberProfilePalette();
             new Chart(document.getElementById('memberScoreChart'),{type:'line',data:{labels:memberProfileData.labels,datasets:[{label:'Score',data:memberProfileData.score,borderColor:p.a,backgroundColor:p.a,fill:false,tension:.42}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,max:100,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
             new Chart(document.getElementById('memberDurationChart'),{type:'bar',data:{labels:memberProfileData.labels,datasets:[{label:'Duration minutes',data:memberProfileData.duration,backgroundColor:p.b,borderColor:p.b}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
-            new Chart(document.getElementById('memberStatusChart'),{type:'doughnut',data:{labels:memberProfileData.status_distribution.labels,datasets:[{data:memberProfileData.status_distribution.values,backgroundColor:[p.ok,p.warn,p.danger,p.c]}]},options:{responsive:true,maintainAspectRatio:false}});
             new Chart(document.getElementById('memberLateChart'),{type:'bar',data:{labels:memberProfileData.late_pattern.map(x=>x.label),datasets:[{label:'Late count',data:memberProfileData.late_pattern.map(x=>x.count),backgroundColor:p.warn,borderColor:p.warn}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
         }
         document.addEventListener('DOMContentLoaded',()=>setTimeout(makeMemberProfileCharts,100));
@@ -6468,12 +6532,16 @@ def users():
                     row = cur.fetchone()
                     if row:
                         if row["username"] == session.get("username"):
+                            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                                return jsonify({"ok": False, "error": "You cannot disable your own active session."}), 400
                             flash("You cannot disable your own active session.", "error")
                             return redirect(url_for("users"))
                         next_val = db_false_value(conn, "users", "is_active") if is_truthy(row["is_active"]) else db_true_value(conn, "users", "is_active")
                         cur.execute("UPDATE users SET is_active=%s WHERE id=%s", (next_val, user_id))
                 conn.commit()
             log_activity("user_toggle", str(user_id))
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"ok": True, "type": "user", "id": user_id})
             flash("User status updated.", "success")
 
         elif action == "password":
