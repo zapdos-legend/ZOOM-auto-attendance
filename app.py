@@ -4660,6 +4660,98 @@ BASE_HTML = """
     color: white;
 }
 
+
+
+/* ===== V9 FINAL TOGGLE + LIVE REFRESH VISIBILITY PATCH ===== */
+form.toggle-form,
+form.live-toggle-form{
+    margin:0 !important;
+    display:inline-flex !important;
+    align-items:center !important;
+}
+button.status-toggle-btn,
+.table-wrap button.status-toggle-btn,
+.card button.status-toggle-btn{
+    all:unset !important;
+    box-sizing:border-box !important;
+    width:184px !important;
+    min-width:184px !important;
+    height:48px !important;
+    border-radius:999px !important;
+    padding:5px !important;
+    display:inline-grid !important;
+    grid-template-columns:1fr 1fr !important;
+    align-items:center !important;
+    position:relative !important;
+    overflow:hidden !important;
+    cursor:pointer !important;
+    user-select:none !important;
+    background:linear-gradient(90deg,#a855f7 0%,#9333ea 48%,#7c3aed 100%) !important;
+    box-shadow:0 14px 34px rgba(147,51,234,.36), inset 0 0 0 1px rgba(255,255,255,.18) !important;
+    font-family:inherit !important;
+    transition:transform .18s ease, filter .18s ease, box-shadow .18s ease !important;
+}
+button.status-toggle-btn::before{
+    content:"" !important;
+    position:absolute !important;
+    top:5px !important;
+    left:5px !important;
+    width:87px !important;
+    height:38px !important;
+    border-radius:999px !important;
+    background:#ffffff !important;
+    box-shadow:0 10px 24px rgba(2,6,23,.36) !important;
+    z-index:1 !important;
+    transform:translateX(0) !important;
+    transition:transform .26s cubic-bezier(.2,.8,.2,1) !important;
+}
+button.status-toggle-btn.is-active::before{ transform:translateX(87px) !important; }
+button.status-toggle-btn .status-toggle-knob{ display:none !important; }
+button.status-toggle-btn .status-toggle-label{
+    position:relative !important;
+    z-index:2 !important;
+    display:flex !important;
+    align-items:center !important;
+    justify-content:center !important;
+    width:100% !important;
+    height:38px !important;
+    border-radius:999px !important;
+    font-size:12px !important;
+    font-weight:950 !important;
+    letter-spacing:.01em !important;
+    line-height:1 !important;
+    white-space:nowrap !important;
+    pointer-events:none !important;
+    text-align:center !important;
+    text-shadow:none !important;
+}
+button.status-toggle-btn:not(.is-active) .label-inactive{ color:#7c2d12 !important; }
+button.status-toggle-btn:not(.is-active) .label-active{ color:#ffffff !important; opacity:.95 !important; }
+button.status-toggle-btn.is-active .label-active{ color:#7c3aed !important; }
+button.status-toggle-btn.is-active .label-inactive{ color:#ffffff !important; opacity:.95 !important; }
+button.status-toggle-btn:hover{ transform:translateY(-1px) !important; filter:brightness(1.08) !important; }
+button.status-toggle-btn:active{ transform:scale(.985) !important; }
+button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !important; outline-offset:3px !important; }
+.live-fix-badge .live-fix-dot,
+.live-fix-dot{
+    animation:liveFixStrongPulse 1s infinite !important;
+}
+.live-fix-badge.is-live .live-fix-dot{
+    background:#22c55e !important;
+    animation:liveFixStrongGreenPulse 1s infinite !important;
+}
+@keyframes liveFixStrongPulse{
+    0%{transform:scale(1);box-shadow:0 0 0 0 rgba(239,68,68,.9)}
+    70%{transform:scale(1.25);box-shadow:0 0 0 14px rgba(239,68,68,0)}
+    100%{transform:scale(1);box-shadow:0 0 0 0 rgba(239,68,68,0)}
+}
+@keyframes liveFixStrongGreenPulse{
+    0%{transform:scale(1);box-shadow:0 0 0 0 rgba(34,197,94,.9)}
+    70%{transform:scale(1.25);box-shadow:0 0 0 14px rgba(34,197,94,0)}
+    100%{transform:scale(1);box-shadow:0 0 0 0 rgba(34,197,94,0)}
+}
+/* ===== END V9 PATCH ===== */
+
 </style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
@@ -5706,7 +5798,7 @@ def build_live_snapshot_payload(include_feed=True):
                     "sort": (parse_dt(p.get("last_leave")) or start_dt).timestamp(),
                 })
 
-    participant_payload = sorted(participant_payload, key=lambda x: (int(x.get("duration_seconds") or 0), 1 if x.get("is_active") else 0, str(x.get("name") or "").lower()), reverse=True)
+    participant_payload = sorted(participant_payload, key=lambda x: (-int(x.get("duration_seconds") or 0), -int(1 if x.get("is_active") else 0), str(x.get("name") or "").lower()))
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
@@ -5887,6 +5979,8 @@ def live():
             let tickBase = Date.now();
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
+            function secFromText(t){const p=String(t||'').trim().split(':').map(Number);if(p.length!==3||p.some(isNaN))return 0;return p[0]*3600+p[1]*60+p[2];}
+            function sortLiveRowsByDuration(){const body=document.getElementById('lfRows');if(!body)return;[...body.querySelectorAll('tr')].sort((a,b)=>secFromText(b.querySelector('.live-fix-duration')?.textContent)-secFromText(a.querySelector('.live-fix-duration')?.textContent)).forEach(r=>body.appendChild(r));}
             function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);const start=parseInt(el.textContent||'0',10)||0;if(start===next){el.textContent=next;return;}const t0=performance.now(),dur=520;function step(t){const p=Math.min((t-t0)/dur,1);const eased=1-Math.pow(1-p,3);el.textContent=Math.round(start+(next-start)*eased);if(p<1)requestAnimationFrame(step);else el.textContent=next;}requestAnimationFrame(step);}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
             function render(data){
@@ -5909,6 +6003,7 @@ def live():
                 document.getElementById('lfEmpty').style.display=rows.length?'none':'block';
                 document.getElementById('lfTableWrap').style.display=rows.length?'block':'none';
                 document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt((p.is_active?p.stored_seconds:p.duration_seconds)||0,10)}" data-active="${p.is_active?1:0}" data-current-join-ms="${p.is_active?parseInt(p.current_join_epoch_ms||0,10):0}">${fmt(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
+                sortLiveRowsByDuration();
                 document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
                 document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
             }
@@ -5930,6 +6025,7 @@ def live():
                     let sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((nowMs-startMs)/1000));
                     document.getElementById('lfDuration').textContent='Duration '+fmt(sec);
                 }
+                sortLiveRowsByDuration();
             },1000);
             render(lastPayload); poll();
         })();
@@ -6480,7 +6576,7 @@ def users():
                         <td>
                             <div class='row'>
                                 <a class='btn secondary small' href='{{ url_for("users", edit_id=u.id) }}'>Edit</a>
-                                <form method='post'>
+                                <form method='post' class='toggle-form'>
                                     <input type='hidden' name='action' value='toggle'>
                                     <input type='hidden' name='user_id' value='{{ u.id }}'>
                                     <button type='submit' class='status-toggle-btn {% if u.is_active|string in ['1', 'True', 'true', 't'] %}is-active{% endif %}' aria-label='Toggle user status'>
