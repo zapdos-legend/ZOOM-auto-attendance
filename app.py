@@ -140,7 +140,7 @@ th { position: sticky; top:0; background:#111827;}
     background:#ffffff !important;
     box-shadow:0 10px 22px rgba(15,23,42,.34) !important;
     transform:translateX(0) !important;
-    transition:transform .25s cubic-bezier(.2,.8,.2,1) !important;
+    transition: transform 0.5s cubic-bezier(.19,1,.22,1);
 }
 .status-toggle-btn.is-active .status-toggle-knob{transform:translateX(80px) !important;}
 .status-toggle-btn:not(.is-active) .label-inactive{color:#7c2d12 !important;}
@@ -5123,6 +5123,18 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
 
+
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
+        if(!el.hasAttribute("title")){
+            let txt = el.innerText.slice(0,80);
+            el.setAttribute("title", txt || "Analytics insight");
+        }
+    });
+});
+</script>
+
 </body>
 </html>
 """
@@ -7099,7 +7111,7 @@ def analytics():
                 {% if member_chart.empty %}
                     <div class="empty-state" style="padding:24px 18px">
                         <div class="empty-icon" style="width:58px;height:58px;font-size:22px">📊</div>
-                        <div style="font-weight:900;margin-bottom:6px">No member duration data</div>
+                        
                         <div class="muted">Adjust filters or wait for tracked member attendance to appear.</div>
                     </div>
                 {% else %}
@@ -8167,7 +8179,19 @@ def attendance_register_export_excel():
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
         output.write(f"<tr><td>{row['name']}</td><td>{row['total_meetings']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
-    output.write("</table></body></html>")
+    output.write("</table>
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
+        if(!el.hasAttribute("title")){
+            let txt = el.innerText.slice(0,80);
+            el.setAttribute("title", txt || "Analytics insight");
+        }
+    });
+});
+</script>
+
+</body></html>")
     filename = f"attendance_register_{data['year']}_{data['month']:02d}.xls"
     return Response(output.getvalue(), mimetype="application/vnd.ms-excel", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
@@ -9088,7 +9112,19 @@ def push_setup():
             }}
         }}
         </script>
-    </body>
+    
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
+        if(!el.hasAttribute("title")){
+            let txt = el.innerText.slice(0,80);
+            el.setAttribute("title", txt || "Analytics insight");
+        }
+    });
+});
+</script>
+
+</body>
     </html>
     """
     return render_template_string(html)
@@ -9999,7 +10035,43 @@ def ai_frontend_patch_v112(response):
         if request.path == '/ai-intelligence' and response.content_type and 'text/html' in response.content_type.lower():
             html = response.get_data(as_text=True)
             if 'UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED' not in html:
-                html = html.replace('</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n</body>') if '</body>' in html else html + _AI_FRONTEND_PATCH_V112
+                html = html.replace('
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
+        if(!el.hasAttribute("title")){
+            let txt = el.innerText.slice(0,80);
+            el.setAttribute("title", txt || "Analytics insight");
+        }
+    });
+});
+</script>
+
+</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
+        if(!el.hasAttribute("title")){
+            let txt = el.innerText.slice(0,80);
+            el.setAttribute("title", txt || "Analytics insight");
+        }
+    });
+});
+</script>
+
+</body>') if '
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .analytics-card, .mini-card').forEach(el=>{
+        if(!el.hasAttribute("title")){
+            let txt = el.innerText.slice(0,80);
+            el.setAttribute("title", txt || "Analytics insight");
+        }
+    });
+});
+</script>
+
+</body>' in html else html + _AI_FRONTEND_PATCH_V112
                 response.set_data(html)
                 response.headers['Content-Length'] = str(len(response.get_data()))
     except Exception as exc:
