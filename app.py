@@ -874,6 +874,15 @@ body.za-socket-live-mode .za-realtime-pill::before{
 </script>
 /* ===== END PHASE 2 ADVANCED REALTIME UI ===== */
 
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 '''
 # ===== END THEME =====
@@ -5535,6 +5544,15 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 
 /* ===== END V9 PATCH ===== */
 
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 <style>
@@ -5557,6 +5575,15 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
     background: white;
     color: #111;
 }
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 
@@ -5565,6 +5592,15 @@ button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 </head>
@@ -6131,9 +6167,57 @@ button:active {
     color: white;
 }
 
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
 
+
+
+<script>
+(function(){
+  if(window.__ZA_ROW_SORT_ENGINE__) return;
+  window.__ZA_ROW_SORT_ENGINE__ = true;
+
+  function getDuration(row){
+    var el = row.querySelector("[data-za-duration-seconds]");
+    if(!el) return 0;
+    return parseInt(el.dataset.zaDurationSeconds || "0",10);
+  }
+
+  function animateReorder(tbody){
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+
+    rows.forEach(function(r){
+      r.classList.add("za-row-move");
+    });
+
+    var sorted = rows.sort(function(a,b){
+      return getDuration(b) - getDuration(a);
+    });
+
+    sorted.forEach(function(row){
+      tbody.appendChild(row);
+    });
+  }
+
+  function run(){
+    var table = document.querySelector("table tbody");
+    if(!table) return;
+
+    animateReorder(table);
+  }
+
+  setInterval(run, 2000);
+})();
+</script>
 
 </body>
 </html>
@@ -6988,6 +7072,15 @@ def live():
     color: white;
 }
 
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
         <div class="live-fix-hero">
@@ -7424,6 +7517,15 @@ def member_profile(member_id):
     font-size: 12px;
     font-weight: bold;
     color: white;
+}
+
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
 }
 
 </style>
@@ -7891,6 +7993,15 @@ def analytics():
     color: white;
 }
 
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 
@@ -7942,6 +8053,15 @@ def analytics():
     font-size: 12px;
     font-weight: bold;
     color: white;
+}
+
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
 }
 
 </style>
@@ -8953,6 +9073,15 @@ def attendance_register():
     color: white;
 }
 
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 
@@ -9034,6 +9163,15 @@ def attendance_register():
     font-size: 12px;
     font-weight: bold;
     color: white;
+}
+
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
 }
 
 </style>
@@ -9215,6 +9353,15 @@ def attendance_register_export_excel():
     background: white;
     color: #111;
 }
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 
@@ -9223,6 +9370,15 @@ button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 </head><body><table border='1'>""")
@@ -9230,7 +9386,46 @@ button:active {
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
         output.write(f"<tr><td>{row['name']}</td><td>{row['total_meetings']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
-    output.write("</table></body></html>")
+    output.write("</table>
+<script>
+(function(){
+  if(window.__ZA_ROW_SORT_ENGINE__) return;
+  window.__ZA_ROW_SORT_ENGINE__ = true;
+
+  function getDuration(row){
+    var el = row.querySelector("[data-za-duration-seconds]");
+    if(!el) return 0;
+    return parseInt(el.dataset.zaDurationSeconds || "0",10);
+  }
+
+  function animateReorder(tbody){
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+
+    rows.forEach(function(r){
+      r.classList.add("za-row-move");
+    });
+
+    var sorted = rows.sort(function(a,b){
+      return getDuration(b) - getDuration(a);
+    });
+
+    sorted.forEach(function(row){
+      tbody.appendChild(row);
+    });
+  }
+
+  function run(){
+    var table = document.querySelector("table tbody");
+    if(!table) return;
+
+    animateReorder(table);
+  }
+
+  setInterval(run, 2000);
+})();
+</script>
+
+</body></html>")
     filename = f"attendance_register_{data['year']}_{data['month']:02d}.xls"
     return Response(output.getvalue(), mimetype="application/vnd.ms-excel", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
@@ -10065,6 +10260,15 @@ def push_setup():
     color: white;
 }
 
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
     
 <style>
@@ -10087,6 +10291,15 @@ def push_setup():
     background: white;
     color: #111;
 }
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 
@@ -10095,6 +10308,15 @@ button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
+}
+
 </style>
 
 </head>
@@ -10183,6 +10405,45 @@ button:active {
         }}
         </script>
     
+
+<script>
+(function(){
+  if(window.__ZA_ROW_SORT_ENGINE__) return;
+  window.__ZA_ROW_SORT_ENGINE__ = true;
+
+  function getDuration(row){
+    var el = row.querySelector("[data-za-duration-seconds]");
+    if(!el) return 0;
+    return parseInt(el.dataset.zaDurationSeconds || "0",10);
+  }
+
+  function animateReorder(tbody){
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+
+    rows.forEach(function(r){
+      r.classList.add("za-row-move");
+    });
+
+    var sorted = rows.sort(function(a,b){
+      return getDuration(b) - getDuration(a);
+    });
+
+    sorted.forEach(function(row){
+      tbody.appendChild(row);
+    });
+  }
+
+  function run(){
+    var table = document.querySelector("table tbody");
+    if(!table) return;
+
+    animateReorder(table);
+  }
+
+  setInterval(run, 2000);
+})();
+</script>
+
 </body>
     </html>
     """
@@ -10288,6 +10549,15 @@ def notification_control():
     font-size: 12px;
     font-weight: bold;
     color: white;
+}
+
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
 }
 
 </style>
@@ -10617,6 +10887,15 @@ def ai_intelligence():
     font-size: 12px;
     font-weight: bold;
     color: white;
+}
+
+
+/* ===== NEXT LEVEL LIVE UI: SORT + MOVE ANIMATION ===== */
+.za-row-move{
+    transition: transform 0.45s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+}
+.za-row-fade-out{
+    opacity: 0.5;
 }
 
 </style>
