@@ -5164,7 +5164,7 @@ button:active {
             if (card.dataset.finalTooltipApplied === '1') return;
             const headingEl = card.querySelector('h1,h2,h3,.label,small');
             const heading = headingEl ? (headingEl.textContent || '').trim() : '';
-            const cleanHeading = heading.replace(/\\\s+/g,' ');
+            const cleanHeading = heading.replace(/\\s+/g,' ');
             const text = explanations[cleanHeading] || (cleanHeading ? `${cleanHeading}: this card shows an important system/attendance indicator.` : 'This card shows an important system/attendance indicator.');
             card.setAttribute('title', text);
             card.classList.add('smart-tooltip-card');
@@ -5175,7 +5175,7 @@ button:active {
     function removeRequestedAnalyticsSections(){
         const blocked = new Set(['Analytics Filters','Attendance Trend','Member Duration','Duration Distribution','Status Mix']);
         document.querySelectorAll('h1,h2,h3').forEach((heading) => {
-            const text = (heading.textContent || '').trim().replace(/\\\s+/g,' ');
+            const text = (heading.textContent || '').trim().replace(/\\s+/g,' ');
             if (!blocked.has(text)) return;
             const card = heading.closest('.card');
             if (card) card.remove();
