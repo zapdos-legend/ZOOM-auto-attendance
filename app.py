@@ -314,7 +314,7 @@ button:active,.btn:active,a.btn:active{
     started:false,
     easer:function(t){ return 1 - Math.pow(1 - t, 3); },
     parseNumber:function(text){
-      var m = String(text || "").replace(/,/g,"").match(/-?\d+(\.\d+)?/);
+      var m = String(text || "").replace(/,/g,"").match(/-?\\d+(\\.\\d+)?/);
       return m ? Number(m[0]) : null;
     },
     animateNumber:function(el, target){
@@ -322,8 +322,8 @@ button:active,.btn:active,a.btn:active{
       if(target === null || isNaN(target)) return;
       el.dataset.zaAnimated = "1";
       var original = el.textContent || "";
-      var prefix = original.match(/^\D*/)[0] || "";
-      var suffix = (original.match(/\D*$/) || [""])[0] || "";
+      var prefix = original.match(/^\\D*/)[0] || "";
+      var suffix = (original.match(/\\D*$/) || [""])[0] || "";
       var start = 0, duration = 850, started = null, self = this;
       function step(ts){
         if(!started) started = ts;
@@ -351,7 +351,7 @@ button:active,.btn:active,a.btn:active{
       var parts = text.split(":").map(function(x){ return parseInt(x,10); });
       if(parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0]*60+parts[1];
       if(parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) return parts[0]*3600+parts[1]*60+parts[2];
-      var m = text.match(/(\d+)\s*(min|mins|minute|minutes)/i);
+      var m = text.match(/(\\d+)\\s*(min|mins|minute|minutes)/i);
       if(m) return parseInt(m[1],10)*60;
       return null;
     },
@@ -366,7 +366,7 @@ button:active,.btn:active,a.btn:active{
       var cells = Array.from(document.querySelectorAll("td,span,div")).filter(function(el){
         var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
         var text = (el.textContent || "").trim();
-        return (label.indexOf("duration") !== -1 || /^\d{1,3}:\d{2}(:\d{2})?$/.test(text)) && self.secondsFromText(text) !== null;
+        return (label.indexOf("duration") !== -1 || /^\\d{1,3}:\\d{2}(:\\d{2})?$/.test(text)) && self.secondsFromText(text) !== null;
       }).slice(0,120);
       cells.forEach(function(el){
         if(!el.dataset.zaDurationSeconds){
@@ -477,6 +477,75 @@ button:active,.btn:active,a.btn:active{
         setTimeout(function(){ target.classList.remove("za-focus-mode"); },1600);
       }, true);
     },
+
+    initRealtimeSocket:function(){
+      var self = this;
+      function bind(){
+        if(!window.io || window.__zaSocketBound) return;
+        try{
+          window.__zaSocketBound = true;
+          var socket = window.io({transports:["websocket","polling"], reconnection:true, reconnectionAttempts:Infinity});
+          window.zaSocket = socket;
+          socket.on("connect", function(){
+            self.toast("Realtime connected");
+            document.body.classList.add("za-realtime-connected");
+          });
+          socket.on("disconnect", function(){
+            document.body.classList.remove("za-realtime-connected");
+          });
+          ["live_update","participant_join","participant_leave","meeting_finalized","smart_alert","risk_update"].forEach(function(evt){
+            socket.on(evt, function(payload){
+              payload = payload || {};
+              var label = payload.message || payload.name || payload.event || evt.replace(/_/g," ");
+              if(evt === "participant_join") self.toast("Joined: " + label);
+              else if(evt === "participant_leave") self.toast("Left: " + label);
+              else if(evt === "smart_alert") self.toast("Alert: " + label);
+              else if(evt === "risk_update") self.toast("Risk updated");
+              window.dispatchEvent(new CustomEvent("za:realtime", {detail:{event:evt, payload:payload}}));
+              if(typeof window.zaLiveRefresh === "function"){
+                try{ window.zaLiveRefresh(true); }catch(e){}
+              }
+            });
+          });
+        }catch(e){}
+      }
+      if(window.io){ bind(); return; }
+      if(!document.getElementById("za-socketio-client")){
+        var s=document.createElement("script");
+        s.id="za-socketio-client";
+        s.src="/socket.io/socket.io.js";
+        s.onload=bind;
+        s.onerror=function(){ window.__zaSocketBound=false; };
+        document.head.appendChild(s);
+      }
+    },
+    initRiskBadges:function(){
+      function applyBadgeToRow(name, status, score){
+        if(!name) return;
+        var rows = document.querySelectorAll("tbody tr");
+        rows.forEach(function(row){
+          if(row.dataset.zaRiskBound === "1") return;
+          var txt = (row.textContent || "").toLowerCase();
+          if(txt.indexOf(String(name).toLowerCase()) === -1) return;
+          row.dataset.zaRiskBound = "1";
+          var badge = document.createElement("span");
+          var cls = status === "Healthy" ? "ok" : (status === "Warning" ? "warn" : "danger");
+          badge.className = "badge " + cls;
+          badge.textContent = status + " " + Math.round(score || 0);
+          badge.style.marginLeft = "8px";
+          var first = row.querySelector("td");
+          if(first) first.appendChild(badge);
+        });
+      }
+      if(!location.pathname.includes("members") && !location.pathname.includes("analytics") && !location.pathname.includes("home")) return;
+      fetch("/api/member-risk-summary?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(data){
+          if(!data || !data.ok) return;
+          (data.members || []).forEach(function(m){ applyBadgeToRow(m.name, m.risk_status, m.score); });
+        }).catch(function(){});
+    },
+
     initCharts:function(){
       if(window.Chart && window.Chart.defaults){
         window.Chart.defaults.animation = {duration: 900, easing: "easeOutQuart"};
@@ -510,6 +579,8 @@ button:active,.btn:active,a.btn:active{
       this.initFlashToasts();
       this.initTrends();
       this.initFocus();
+      this.initRealtimeSocket();
+      this.initRiskBadges();
       this.initCharts();
       this.initLivePollingPolish();
     }
@@ -522,6 +593,10 @@ button:active,.btn:active,a.btn:active{
 })();
 </script>
 /* ===== END OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
+
+
+body.za-realtime-connected .za-live-dot{animation-duration:1s!important;}
+.badge.warn{background:rgba(245,158,11,.16)!important;color:#fde68a!important;border-color:rgba(245,158,11,.35)!important;}
 
 </style>
 '''
@@ -2038,6 +2113,24 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
     _cache_clear_prefix("graph_analytics")
     _cache_clear_prefix("attendance_register")
 
+    try:
+        emit_realtime(
+            "participant_join" if event_type == "join" else "participant_leave",
+            {
+                "meeting_uuid": meeting_uuid,
+                "name": participant_name,
+                "email": participant_email or "",
+                "event": event_type,
+                "is_member": bool(member),
+                "is_host": bool(is_host),
+                "time": fmt_dt(event_time),
+                "message": f"{participant_name} {'joined' if event_type == 'join' else 'left'}",
+            },
+        )
+        emit_realtime("live_update", {"meeting_uuid": meeting_uuid, "reason": event_type, "ts": time.time()})
+    except Exception as exc:
+        print(f"⚠️ realtime participant emit skipped: {exc}")
+
 
 def classify_row_for_meeting(row, start_time, end_time, present_percentage=None, late_pct=None):
     if present_percentage is None:
@@ -2171,6 +2264,19 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
             auto_send_smart_meeting_report(meeting_uuid, force=False)
         except Exception as e:
             print(f"⚠️ Smart report auto-send skipped: {e}")
+
+    try:
+        emit_realtime(
+            "meeting_finalized",
+            {
+                "meeting_uuid": meeting_uuid,
+                "message": "Meeting finalized",
+                "ended_at": fmt_dt(ended_at),
+            },
+        )
+        emit_realtime("live_update", {"meeting_uuid": meeting_uuid, "reason": "meeting_finalized", "ts": time.time()})
+    except Exception as exc:
+        print(f"⚠️ realtime finalize emit skipped: {exc}")
     return updated
 
 
@@ -6527,10 +6633,11 @@ def live():
                 document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
                 document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
             }
-            async function poll(){
+            async function poll(skipSchedule){
                 try{let r=await fetch('{{ url_for("api_live_snapshot") }}?t='+Date.now(),{cache:'no-store',credentials:'same-origin'});let d=await r.json();document.getElementById('lfConn').className='live-fix-conn ok';document.getElementById('lfConn').textContent='● Updated '+new Date().toLocaleTimeString();render(d);}catch(e){document.getElementById('lfConn').className='live-fix-conn bad';document.getElementById('lfConn').textContent='● Poll retrying';}
-                setTimeout(poll,2000);
+                if(!skipSchedule){setTimeout(poll,2000);}
             }
+            window.zaLiveRefresh=function(){ return poll(true); };
             setInterval(function(){
                 const nowMs=Date.now();
                 document.querySelectorAll('.live-fix-duration').forEach(function(el){
@@ -10557,22 +10664,28 @@ def api_alerts_run_now():
 
 
 
+
 # ================== PHASE 2 SAFE REALTIME + INTELLIGENCE ==================
 try:
     from flask_socketio import SocketIO
-    socketio = SocketIO(app, cors_allowed_origins="*")
-except:
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading", logger=False, engineio_logger=False)
+except Exception as _socketio_error:
     socketio = None
+    print(f"⚠️ SocketIO disabled: {_socketio_error}")
 
-def emit_realtime(event, data):
+def emit_realtime(event, data=None):
+    """Best-effort realtime push. Never breaks core attendance/webhook flow."""
     try:
         if socketio:
-            socketio.emit(event, data)
-    except:
-        pass
+            socketio.emit(event, data or {}, namespace="/")
+    except Exception as exc:
+        print(f"⚠️ realtime emit skipped for {event}: {exc}")
 
 def calculate_member_score(attendance, consistency, duration):
     try:
+        attendance = max(0, min(100, float(attendance or 0)))
+        consistency = max(0, min(100, float(consistency or 0)))
+        duration = max(0, min(100, float(duration or 0)))
         score = (attendance * 0.5) + (consistency * 0.3) + (duration * 0.2)
         if score >= 80:
             status = "Healthy"
@@ -10580,10 +10693,114 @@ def calculate_member_score(attendance, consistency, duration):
             status = "Warning"
         else:
             status = "Critical"
-        return round(score,2), status
-    except:
+        return round(score, 2), status
+    except Exception:
         return 0, "Unknown"
+
+def calculate_trend_from_statuses(statuses):
+    """Simple trend from recent attendance statuses, no schema changes."""
+    if not statuses:
+        return "Stable"
+    weights = {"PRESENT": 3, "HOST": 3, "LATE": 2, "ABSENT": 0, "JOINED": 1, "LEFT": 1}
+    vals = [weights.get(str(s or "").upper(), 0) for s in statuses[-6:]]
+    if len(vals) < 4:
+        return "Stable"
+    first = sum(vals[:len(vals)//2]) / max(len(vals[:len(vals)//2]), 1)
+    second = sum(vals[len(vals)//2:]) / max(len(vals[len(vals)//2:]), 1)
+    if second - first >= 0.6:
+        return "Improving"
+    if first - second >= 0.6:
+        return "Declining"
+    return "Stable"
+
+@app.route("/api/member-risk-summary")
+@login_required
+def api_member_risk_summary():
+    """Risk API used by UI badges. Read-only and compatible with old/new DB rows."""
+    try:
+        limit = int(request.args.get("limit", "300") or "300")
+    except Exception:
+        limit = 300
+    limit = max(1, min(limit, 1000))
+    members_out = []
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                name_sql = member_name_sql(conn)
+                cur.execute(
+                    f"SELECT id, {name_sql} AS display_name, email, phone FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY COALESCE({name_sql}, '') LIMIT %s",
+                    (limit,),
+                )
+                members = cur.fetchall()
+                for m in members:
+                    mid = m.get("id")
+                    cur.execute(
+                        """
+                        SELECT COALESCE(a.final_status, a.status, 'ABSENT') AS status,
+                               COALESCE(a.total_seconds, 0) AS total_seconds,
+                               mt.start_time,
+                               mt.end_time
+                        FROM attendance a
+                        LEFT JOIN meetings mt ON mt.meeting_uuid = a.meeting_uuid
+                        WHERE a.member_id=%s
+                        ORDER BY COALESCE(mt.start_time, a.updated_at, a.created_at) DESC
+                        LIMIT 12
+                        """,
+                        (mid,),
+                    )
+                    rows = cur.fetchall()
+                    total = len(rows)
+                    present_like = sum(1 for r in rows if str(r.get("status") or "").upper() in ("PRESENT", "HOST"))
+                    late_like = sum(1 for r in rows if str(r.get("status") or "").upper() == "LATE")
+                    attendance_pct = ((present_like + late_like * 0.5) / total * 100) if total else 0
+
+                    good_streak = 0
+                    for r in rows:
+                        if str(r.get("status") or "").upper() in ("PRESENT", "HOST", "LATE"):
+                            good_streak += 1
+                    consistency = min(100, (good_streak / max(total, 1)) * 100) if total else 0
+
+                    duration_scores = []
+                    for r in rows:
+                        st = parse_dt(r.get("start_time"))
+                        et = parse_dt(r.get("end_time"))
+                        meeting_seconds = max(int((et - st).total_seconds()), 1) if st and et and et >= st else 0
+                        if meeting_seconds:
+                            duration_scores.append(min(100, (int(r.get("total_seconds") or 0) / meeting_seconds) * 100))
+                    duration_pct = sum(duration_scores) / len(duration_scores) if duration_scores else attendance_pct
+
+                    score, risk_status = calculate_member_score(attendance_pct, consistency, duration_pct)
+                    trend = calculate_trend_from_statuses([r.get("status") for r in reversed(rows)])
+                    members_out.append({
+                        "id": mid,
+                        "name": member_display_name(m),
+                        "email": m.get("email") or "",
+                        "score": score,
+                        "risk_status": risk_status,
+                        "attendance_pct": round(attendance_pct, 2),
+                        "consistency": round(consistency, 2),
+                        "duration_pct": round(duration_pct, 2),
+                        "trend": trend,
+                    })
+        return jsonify({"ok": True, "members": members_out})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "members": []}), 200
+
+if socketio:
+    def _za_socket_connect():
+        emit_realtime("server_ready", {"message": "Realtime connected"})
+    def _za_socket_ping(data=None):
+        emit_realtime("server_pong", {"ok": True, "ts": time.time()})
+    try:
+        socketio.on_event("connect", _za_socket_connect, namespace="/")
+        socketio.on_event("za_ping", _za_socket_ping, namespace="/")
+    except Exception as exc:
+        print(f"⚠️ socket event registration skipped: {exc}")
 # ========================================================================
 
 if __name__ == "__main__":
-    socketio.run(app,host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+    port = int(os.getenv("PORT", "5000"))
+    if socketio:
+        socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
+    else:
+        app.run(host="0.0.0.0", port=port, debug=True)
