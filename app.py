@@ -10555,5 +10555,35 @@ def api_alerts_run_now():
     result = run_smart_scheduler(force=True)
     return jsonify({"ok": True, **result})
 
+
+
+# ================== PHASE 2 SAFE REALTIME + INTELLIGENCE ==================
+try:
+    from flask_socketio import SocketIO
+    socketio = SocketIO(app, cors_allowed_origins="*")
+except:
+    socketio = None
+
+def emit_realtime(event, data):
+    try:
+        if socketio:
+            socketio.emit(event, data)
+    except:
+        pass
+
+def calculate_member_score(attendance, consistency, duration):
+    try:
+        score = (attendance * 0.5) + (consistency * 0.3) + (duration * 0.2)
+        if score >= 80:
+            status = "Healthy"
+        elif score >= 50:
+            status = "Warning"
+        else:
+            status = "Critical"
+        return round(score,2), status
+    except:
+        return 0, "Unknown"
+# ========================================================================
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+    socketio.run(app,host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
