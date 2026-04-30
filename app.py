@@ -4937,7 +4937,7 @@ button:active {
     function applyAutoTooltips(){
         const selectors = 'th, h4, .label-with-tip';
         document.querySelectorAll(selectors).forEach((el) => {
-            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\\s+/g,' ').trim();
+            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\\\s+/g,' ').trim();
             if (!raw || el.querySelector('.tooltip')) return;
             if (!tooltipMap[raw]) return;
             const tip = document.createElement('span');
@@ -5164,7 +5164,7 @@ button:active {
             if (card.dataset.finalTooltipApplied === '1') return;
             const headingEl = card.querySelector('h1,h2,h3,.label,small');
             const heading = headingEl ? (headingEl.textContent || '').trim() : '';
-            const cleanHeading = heading.replace(/\\s+/g,' ');
+            const cleanHeading = heading.replace(/\\\s+/g,' ');
             const text = explanations[cleanHeading] || (cleanHeading ? `${cleanHeading}: this card shows an important system/attendance indicator.` : 'This card shows an important system/attendance indicator.');
             card.setAttribute('title', text);
             card.classList.add('smart-tooltip-card');
@@ -5175,7 +5175,7 @@ button:active {
     function removeRequestedAnalyticsSections(){
         const blocked = new Set(['Analytics Filters','Attendance Trend','Member Duration','Duration Distribution','Status Mix']);
         document.querySelectorAll('h1,h2,h3').forEach((heading) => {
-            const text = (heading.textContent || '').trim().replace(/\\s+/g,' ');
+            const text = (heading.textContent || '').trim().replace(/\\\s+/g,' ');
             if (!blocked.has(text)) return;
             const card = heading.closest('.card');
             if (card) card.remove();
@@ -8327,7 +8327,7 @@ button:active {
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
         output.write(f"<tr><td>{row['name']}</td><td>{row['total_meetings']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
-    output.write("</table>
+    output.write("</table>")
 <script>
 document.addEventListener("DOMContentLoaded", function(){
     document.querySelectorAll('.card, .mini-card, .analytics-card').forEach(el=>{
@@ -9455,7 +9455,7 @@ def _ai_parse_threshold(query, default=AI_LEVEL3_LOW_ATTENDANCE_DEFAULT):
 def _ai_parse_days(query, default=None):
     import re
     q = (query or '').lower()
-    m = re.search(r'last\\s+(\d{1,3})\\s+(?:day|days)', q)
+    m = re.search(r'last\\\s+(\d{1,3})\\\s+(?:day|days)', q)
     if m:
         return max(1, min(365, int(m.group(1))))
     if 'last week' in q or 'past week' in q:
