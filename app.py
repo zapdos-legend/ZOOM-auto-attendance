@@ -8339,7 +8339,7 @@ document.addEventListener("DOMContentLoaded", function(){
 });
 </script>
 
-</body></html>")
+"""</body></html>""")
     filename = f"attendance_register_{data['year']}_{data['month']:02d}.xls"
     return Response(output.getvalue(), mimetype="application/vnd.ms-excel", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
