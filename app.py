@@ -47,51 +47,25 @@ th { position: sticky; top:0; background:#111827;}
 
 
 
-/* ===== FINAL POLISH UI FIXES ===== */
-.card, .glass-panel, .hero, .hero-chip, .panel, .mini-card, .analytics-card {
-    background-color: rgba(15,23,42,.72) !important;
-    background-image: linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.025)) !important;
-    border-color: rgba(148,163,184,.18) !important;
+
+/* ===== SAFE NON-DESTRUCTIVE UI ENHANCEMENTS ===== */
+button, .btn, a.btn {
+    transition: transform .18s ease, filter .18s ease, box-shadow .18s ease;
 }
-.card[style*="background: white"], .card[style*="background:white"],
-.card[style*="background:#fff"], .card[style*="background: #fff"],
-.card[style*="background-color:white"], .card[style*="background-color: white"] {
-    background: rgba(15,23,42,.72) !important;
-    color: #e5e7eb !important;
+button:active, .btn:active, a.btn:active {
+    transform: scale(.98);
 }
-.status-toggle-btn {
-    width: 136px;
-    min-width: 136px;
-    height: 38px;
-    border: 0;
-    border-radius: 999px;
-    padding: 0;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: space-between;
-    overflow: hidden;
-    cursor: pointer;
-    font-weight: 950;
-    font-size: 11px;
-    letter-spacing: .02em;
-    box-shadow: 0 10px 26px rgba(0,0,0,.26);
-    background: linear-gradient(90deg,#ef4444,#fb7185) !important;
-    color: white !important;
+.card:hover, .glass-panel:hover, .panel:hover, .mini-card:hover, .analytics-card:hover {
+    transition: transform .22s ease, box-shadow .22s ease;
+    transform: translateY(-1px);
 }
-.status-toggle-btn.is-active { background: linear-gradient(90deg,#22c55e,#10b981) !important; }
-.status-toggle-btn .status-toggle-label { width:50%; text-align:center; z-index:2; pointer-events:none; }
-.status-toggle-btn .status-toggle-knob { position:absolute; top:4px; left:4px; width:calc(50% - 4px); height:30px; border-radius:999px; background:rgba(255,255,255,.96); box-shadow:0 8px 18px rgba(0,0,0,.25); transition:transform .22s ease; z-index:1; }
-.status-toggle-btn.is-active .status-toggle-knob { transform: translateX(68px); }
-.status-toggle-btn.is-active .label-active { color:#065f46; }
-.status-toggle-btn:not(.is-active) .label-inactive { color:#7f1d1d; }
-.status-toggle-btn:not(.is-active) .label-active, .status-toggle-btn.is-active .label-inactive { color:rgba(255,255,255,.78); }
-.activity-clean-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:16px}
-.activity-clean-card{border:1px solid rgba(148,163,184,.18);border-radius:20px;padding:16px;background:rgba(15,23,42,.72);box-shadow:0 18px 42px rgba(0,0,0,.22)}
-.activity-clean-card small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.activity-clean-card strong{display:block;font-size:28px;margin-top:8px}
-.activity-type{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;border:1px solid rgba(255,255,255,.12)}
-.activity-type.login{background:rgba(34,197,94,.14);color:#86efac}.activity-type.logout{background:rgba(244,63,94,.14);color:#fda4af}.activity-type.zoom{background:rgba(56,189,248,.14);color:#7dd3fc}.activity-type.other{background:rgba(168,85,247,.14);color:#d8b4fe}
-.activity-table td{vertical-align:top}.activity-details{max-width:520px;white-space:normal;word-break:break-word;color:#cbd5e1}
+.status-toggle-btn,
+.status-toggle-btn * {
+    transition: transform .35s cubic-bezier(.16,1,.3,1), color .22s ease, background .22s ease, opacity .22s ease;
+}
+.tooltip, [data-tip] {
+    transition: opacity .2s ease, transform .2s ease;
+}
 
 </style>
 '''
