@@ -5005,7 +5005,7 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
     function applyAutoTooltips(){
         const selectors = 'th, h4, .label-with-tip';
         document.querySelectorAll(selectors).forEach((el) => {
-            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\\s+/g,' ').trim();
+            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\s+/g,' ').trim();
             if (!raw || el.querySelector('.tooltip')) return;
             if (!tooltipMap[raw]) return;
             const tip = document.createElement('span');
