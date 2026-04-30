@@ -7935,7 +7935,7 @@ def attendance_register_data():
 def attendance_register_export_excel():
     data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""), all_rows=True)
     output = io.StringIO()
-    output.write("""<html><head><meta charset='utf-8'>""")</head><body><table border='1'>")
+    output.write("""<html><head><meta charset='utf-8'></head><body><table border='1'>""")
     output.write(f"<tr><th colspan='{len(data['days']) + 7}'>Attendance Register - {data['month_name']} {data['year']}</th></tr>")
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
