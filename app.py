@@ -5927,6 +5927,176 @@ button:active {
 })();
 </script>
 
+
+<script>
+/* ===== LIVE AUTO REFRESH FIX: SOCKET-FIRST + SAFE FALLBACK ===== */
+(function(){
+  if(window.__ZA_LIVE_AUTO_REFRESH_FIX_V1__) return;
+  window.__ZA_LIVE_AUTO_REFRESH_FIX_V1__ = true;
+
+  var lastSnapshotAt = 0;
+  var socketStarted = false;
+  var fallbackBusy = false;
+
+  function dispatchSnapshot(payload){
+    payload = payload || {};
+    lastSnapshotAt = Date.now();
+    window.__zaLastSocketSnapshot = payload;
+    try{ window.dispatchEvent(new CustomEvent("za:live-snapshot", {detail:payload})); }catch(e){}
+    if(typeof window.zaApplyLiveSnapshot === "function"){
+      try{ window.zaApplyLiveSnapshot(payload); }catch(e){}
+    }
+  }
+
+  function dispatchSummary(payload){
+    payload = payload || {};
+    try{ window.dispatchEvent(new CustomEvent("za:live-summary", {detail:payload})); }catch(e){}
+    if(typeof window.zaApplyLiveSummary === "function"){
+      try{ window.zaApplyLiveSummary(payload); }catch(e){}
+    }
+  }
+
+  async function fetchLiveSnapshotFallback(reason){
+    if(fallbackBusy) return;
+    fallbackBusy = true;
+    try{
+      var res = await fetch("/api/live-snapshot?t=" + Date.now() + "&source=" + encodeURIComponent(reason || "fallback"), {
+        cache:"no-store",
+        credentials:"same-origin"
+      });
+      if(res.ok){
+        var payload = await res.json();
+        payload.socket_reason = payload.socket_reason || ("fallback_" + (reason || "timer"));
+        dispatchSnapshot(payload);
+        if(typeof window.ZoomAttendanceMotionEngine !== "undefined" && window.ZoomAttendanceMotionEngine.toast){
+          // No noisy toast every 2s. Only update silently.
+        }
+      }
+    }catch(e){
+      var conn = document.getElementById("lfConn");
+      if(conn){
+        conn.className = "live-fix-conn bad";
+        conn.textContent = "● Reconnecting live stream";
+      }
+    }finally{
+      fallbackBusy = false;
+    }
+  }
+
+  function requestSocketSnapshot(reason){
+    if(window.zaSocket && window.zaSocket.connected){
+      try{
+        window.zaSocket.emit("request_live_snapshot", {source: reason || "client_request", path: location.pathname});
+        return true;
+      }catch(e){}
+    }
+    return false;
+  }
+
+  function bindSocket(){
+    if(socketStarted || !window.io) return;
+    socketStarted = true;
+    try{
+      var socket = window.io({
+        transports:["websocket","polling"],
+        reconnection:true,
+        reconnectionAttempts:Infinity,
+        timeout:12000
+      });
+      window.zaSocket = socket;
+
+      socket.on("connect", function(){
+        document.body.classList.add("za-realtime-connected");
+        document.body.classList.add("za-socket-live-mode");
+        try{ window.dispatchEvent(new CustomEvent("za:socket-connected", {detail:{connected:true}})); }catch(e){}
+        requestSocketSnapshot("connect");
+      });
+
+      socket.on("disconnect", function(){
+        document.body.classList.remove("za-realtime-connected");
+        document.body.classList.remove("za-socket-live-mode");
+        try{ window.dispatchEvent(new CustomEvent("za:socket-disconnected", {detail:{connected:false}})); }catch(e){}
+      });
+
+      socket.on("live_snapshot", function(payload){ dispatchSnapshot(payload); });
+      socket.on("live_summary", function(payload){ dispatchSummary(payload); });
+
+      ["live_update","participant_join","participant_leave","meeting_finalized","smart_alert","risk_update","server_ready"].forEach(function(evt){
+        socket.on(evt, function(payload){
+          try{ window.dispatchEvent(new CustomEvent("za:realtime", {detail:{event:evt, payload:payload || {}}})); }catch(e){}
+          requestSocketSnapshot(evt);
+        });
+      });
+    }catch(e){
+      socketStarted = false;
+    }
+  }
+
+  function ensureSocketClient(){
+    if(window.io){ bindSocket(); return; }
+    if(document.getElementById("za-socketio-client-global")){
+      setTimeout(bindSocket, 300);
+      return;
+    }
+    var s = document.createElement("script");
+    s.id = "za-socketio-client-global";
+    s.src = "/socket.io/socket.io.js";
+    s.onload = bindSocket;
+    s.onerror = function(){ socketStarted = false; };
+    document.head.appendChild(s);
+  }
+
+  window.zaLiveRefresh = function(){
+    if(requestSocketSnapshot("manual_or_live_page")) return true;
+    fetchLiveSnapshotFallback("manual_or_live_page");
+    return false;
+  };
+
+  document.addEventListener("DOMContentLoaded", function(){
+    ensureSocketClient();
+
+    // Initial live-page paint correction.
+    if(location.pathname.indexOf("/live") !== -1){
+      setTimeout(function(){
+        if(!requestSocketSnapshot("live_initial")){
+          fetchLiveSnapshotFallback("live_initial");
+        }
+      }, 500);
+    }
+
+    // Safe fallback: only fetch when socket has not supplied a fresh snapshot.
+    // This restores automatic refresh while keeping socket as primary transport.
+    setInterval(function(){
+      if(location.pathname.indexOf("/live") === -1) return;
+      var socketOk = !!(window.zaSocket && window.zaSocket.connected);
+      var stale = !lastSnapshotAt || (Date.now() - lastSnapshotAt > 3500);
+      if(socketOk){
+        requestSocketSnapshot("live_timer_socket");
+        // If socket is connected but server/event does not reply, fallback next cycle.
+        if(stale && Date.now() - lastSnapshotAt > 7000){
+          fetchLiveSnapshotFallback("socket_stale");
+        }
+      }else{
+        fetchLiveSnapshotFallback("socket_disconnected");
+      }
+    }, 2000);
+
+    // Global nav, low-frequency safe refresh if socket hasn't supplied a summary.
+    setInterval(function(){
+      if(window.zaSocket && window.zaSocket.connected){
+        requestSocketSnapshot("nav_summary");
+      }else{
+        fetch("/api/live-summary?t=" + Date.now(), {cache:"no-store", credentials:"same-origin"})
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(data){ if(data) dispatchSummary(data); })
+          .catch(function(){});
+      }
+    }, 6000);
+  });
+})();
+</script>
+
+
 {% if session.get('user_id') and active %}
 <!-- AI Level 3 Floating Bot -->
 <style>.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}
@@ -6825,7 +6995,7 @@ def live():
                 <div>
                     <div class="live-fix-badge {{ 'is-live' if data.has_live else '' }}" id="lfBadgeWrap"><span class="live-fix-dot"></span><span id="lfBadge">{{ 'LIVE MEETING RUNNING' if data.has_live else 'LIVE DASHBOARD IDLE' }}</span></div>
                     <h1 class="hero-title" id="lfTopic" style="margin-top:14px">{{ data.meeting.topic if data.has_live else 'Waiting for Zoom meeting' }}</h1>
-                    <div class="hero-copy" id="lfCopy">This page now renders live attendance from server immediately and then refreshes every 2 seconds.</div>
+                    <div class="hero-copy" id="lfCopy">This page updates automatically using realtime socket events, with safe auto-refresh fallback.</div>
                     <div class="row" id="lfMetaRow" style="margin-top:14px;gap:10px;flex-wrap:wrap;display:{{ 'flex' if data.has_live else 'none' }}">
                         <span class="badge info" id="lfMeetingId">Meeting ID {{ data.meeting.id if data.has_live else '-' }}</span>
                         <span class="badge gray" id="lfStarted">Started {{ data.meeting.start_time if data.has_live else '-' }}</span>
@@ -6926,7 +7096,7 @@ def live():
                     return true;
                 }
                 document.getElementById('lfConn').className='live-fix-conn bad';
-                document.getElementById('lfConn').textContent='● Socket reconnecting';
+                document.getElementById('lfConn').textContent='● Auto-refresh fallback active';
                 return false;
             };
             window.addEventListener('za:live-snapshot', function(e){ applySocketPayload(e.detail); });
@@ -10919,6 +11089,23 @@ _AI_FRONTEND_PATCH_V112 = """
 """
 
 # Removed malformed ai_frontend_patch_v112 injected block to restore deployment.
+
+
+def _smart_alert_scheduler_worker():
+    """Render-safe background alert scheduler worker.
+    Keeps alert automation from breaking any page request if scheduler logic fails.
+    """
+    global ALERT_AUTOMATION_BG_RUNNING, ALERT_AUTOMATION_LAST_RUN_TS
+    try:
+        ALERT_AUTOMATION_LAST_RUN_TS = time.time()
+        try:
+            run_smart_scheduler(force=False)
+        except TypeError:
+            run_smart_scheduler()
+    except Exception as exc:
+        print(f"⚠️ smart alert scheduler worker skipped: {exc}")
+    finally:
+        ALERT_AUTOMATION_BG_RUNNING = False
 
 @app.after_request
 def smart_alert_automation_after_request(response):
