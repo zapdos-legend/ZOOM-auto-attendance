@@ -185,6 +185,344 @@ button.status-toggle-btn:hover::before{ box-shadow:0 14px 32px rgba(2,6,23,.42) 
     pointer-events:none;
 }
 
+
+/* ===== OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
+:root{
+  --za-motion-fast: 180ms;
+  --za-motion-base: 360ms;
+  --za-motion-slow: 560ms;
+  --za-ease-out: cubic-bezier(.16,1,.3,1);
+}
+.card,.mini-card,.analytics-card,.glass-panel,.panel,.activity-clean-card{
+  transition: transform var(--za-motion-base) var(--za-ease-out),
+              box-shadow var(--za-motion-base) var(--za-ease-out),
+              border-color var(--za-motion-base) ease,
+              filter var(--za-motion-base) ease;
+}
+.card:hover,.mini-card:hover,.analytics-card:hover,.glass-panel:hover,.panel:hover,.activity-clean-card:hover{
+  transform: translateY(-3px);
+  box-shadow: 0 18px 48px rgba(2,6,23,.34) !important;
+}
+button,.btn,a.btn,.nav-link{
+  transition: transform var(--za-motion-fast) var(--za-ease-out),
+              filter var(--za-motion-fast) ease,
+              box-shadow var(--za-motion-base) ease;
+}
+button:active,.btn:active,a.btn:active{
+  transform: scale(.975);
+}
+.status-toggle-btn .status-toggle-knob{
+  transition: transform .72s cubic-bezier(.16,1,.3,1), box-shadow .35s ease !important;
+}
+.za-live-dot{
+  display:inline-block;
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  margin-right:7px;
+  background:#22c55e;
+  box-shadow:0 0 0 0 rgba(34,197,94,.55);
+  animation: zaPulse 1.35s infinite;
+  vertical-align:middle;
+}
+.za-live-dot.off{
+  background:#ef4444;
+  box-shadow:0 0 0 0 rgba(239,68,68,.55);
+}
+@keyframes zaPulse{
+  0%{transform:scale(1);opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,.50);}
+  60%{transform:scale(1.22);opacity:.64;box-shadow:0 0 0 12px rgba(34,197,94,0);}
+  100%{transform:scale(1);opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,0);}
+}
+.za-card-enter{
+  animation: zaCardEnter .48s var(--za-ease-out) both;
+}
+@keyframes zaCardEnter{
+  from{opacity:0;transform:translateY(10px);}
+  to{opacity:1;transform:translateY(0);}
+}
+.za-focus-mode{
+  outline:2px solid rgba(139,92,246,.7) !important;
+  box-shadow:0 0 0 5px rgba(139,92,246,.16), 0 18px 48px rgba(2,6,23,.34) !important;
+}
+.za-tooltip-ready{
+  position:relative;
+}
+.za-tooltip-ready::after{
+  content:attr(data-za-tooltip);
+  position:absolute;
+  right:10px;
+  top:10px;
+  max-width:260px;
+  padding:8px 10px;
+  border-radius:12px;
+  font-size:12px;
+  line-height:1.35;
+  font-weight:800;
+  color:#e5e7eb;
+  background:rgba(15,23,42,.96);
+  border:1px solid rgba(148,163,184,.24);
+  box-shadow:0 18px 42px rgba(0,0,0,.32);
+  opacity:0;
+  transform:translateY(-4px);
+  pointer-events:none;
+  transition:opacity .2s ease, transform .2s ease;
+  z-index:9999;
+}
+.za-tooltip-ready:hover::after{
+  opacity:1;
+  transform:translateY(0);
+}
+.za-toast-wrap{
+  position:fixed;
+  right:18px;
+  bottom:18px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  z-index:99999;
+}
+.za-toast{
+  background:rgba(15,23,42,.96);
+  color:#ecfdf5;
+  border:1px solid rgba(34,197,94,.35);
+  box-shadow:0 18px 42px rgba(0,0,0,.35);
+  padding:12px 14px;
+  border-radius:16px;
+  font-weight:900;
+  transform:translateY(14px);
+  opacity:0;
+  animation:zaToastIn .28s var(--za-ease-out) forwards, zaToastOut .28s ease forwards 2s;
+}
+@keyframes zaToastIn{to{transform:translateY(0);opacity:1;}}
+@keyframes zaToastOut{to{transform:translateY(14px);opacity:0;}}
+.za-trend-up{animation:zaTrendUp .55s var(--za-ease-out);color:#86efac!important;}
+.za-trend-down{animation:zaTrendDown .55s var(--za-ease-out);color:#fca5a5!important;}
+@keyframes zaTrendUp{from{transform:translateY(6px);opacity:.4}to{transform:translateY(0);opacity:1}}
+@keyframes zaTrendDown{from{transform:translateY(-6px);opacity:.4}to{transform:translateY(0);opacity:1}}
+.za-critical{
+  animation:zaCritical 1.4s ease-in-out infinite;
+}
+@keyframes zaCritical{
+  0%,100%{box-shadow:0 0 0 rgba(239,68,68,0);}
+  50%{box-shadow:0 0 24px rgba(239,68,68,.28);}
+}
+<script>
+(function(){
+  if(window.ZoomAttendanceMotionEngine){ return; }
+  window.ZoomAttendanceMotionEngine = {
+    started:false,
+    easer:function(t){ return 1 - Math.pow(1 - t, 3); },
+    parseNumber:function(text){
+      var m = String(text || "").replace(/,/g,"").match(/-?\d+(\.\d+)?/);
+      return m ? Number(m[0]) : null;
+    },
+    animateNumber:function(el, target){
+      if(!el || el.dataset.zaAnimated === "1") return;
+      if(target === null || isNaN(target)) return;
+      el.dataset.zaAnimated = "1";
+      var original = el.textContent || "";
+      var prefix = original.match(/^\D*/)[0] || "";
+      var suffix = (original.match(/\D*$/) || [""])[0] || "";
+      var start = 0, duration = 850, started = null, self = this;
+      function step(ts){
+        if(!started) started = ts;
+        var p = Math.min((ts - started) / duration, 1);
+        var v = Math.round(start + (target - start) * self.easer(p));
+        el.textContent = prefix + v.toLocaleString() + suffix;
+        if(p < 1) requestAnimationFrame(step);
+        else {
+          el.style.transform = "scale(1.045)";
+          setTimeout(function(){ el.style.transform = ""; }, 140);
+        }
+      }
+      requestAnimationFrame(step);
+    },
+    initCounters:function(){
+      var self = this;
+      var candidates = document.querySelectorAll(".card strong,.mini-card strong,.analytics-card strong,.activity-clean-card strong,.stat-value,.metric-value,.kpi-value");
+      candidates.forEach(function(el){
+        var n = self.parseNumber(el.textContent);
+        if(n !== null && Math.abs(n) < 1000000) self.animateNumber(el,n);
+      });
+    },
+    secondsFromText:function(text){
+      text = String(text || "").trim();
+      var parts = text.split(":").map(function(x){ return parseInt(x,10); });
+      if(parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0]*60+parts[1];
+      if(parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) return parts[0]*3600+parts[1]*60+parts[2];
+      var m = text.match(/(\d+)\s*(min|mins|minute|minutes)/i);
+      if(m) return parseInt(m[1],10)*60;
+      return null;
+    },
+    formatSeconds:function(sec){
+      sec = Math.max(0, parseInt(sec || 0, 10));
+      var h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+      if(h > 0) return h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
+      return m + ":" + String(s).padStart(2,"0");
+    },
+    initDurations:function(){
+      var self = this;
+      var cells = Array.from(document.querySelectorAll("td,span,div")).filter(function(el){
+        var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
+        var text = (el.textContent || "").trim();
+        return (label.indexOf("duration") !== -1 || /^\d{1,3}:\d{2}(:\d{2})?$/.test(text)) && self.secondsFromText(text) !== null;
+      }).slice(0,120);
+      cells.forEach(function(el){
+        if(!el.dataset.zaDurationSeconds){
+          var sec = self.secondsFromText(el.textContent);
+          if(sec !== null) el.dataset.zaDurationSeconds = String(sec);
+        }
+      });
+      if(window.__zaDurationTimer) clearInterval(window.__zaDurationTimer);
+      window.__zaDurationTimer = setInterval(function(){
+        document.querySelectorAll("[data-za-duration-seconds]").forEach(function(el){
+          var row = el.closest("tr");
+          var statusText = row ? row.textContent.toLowerCase() : "";
+          if(statusText.indexOf("joined") === -1 && statusText.indexOf("live") === -1 && statusText.indexOf("active") === -1) return;
+          var sec = parseInt(el.dataset.zaDurationSeconds || "0",10) + 1;
+          el.dataset.zaDurationSeconds = String(sec);
+          el.textContent = self.formatSeconds(sec);
+        });
+      },1000);
+    },
+    initHeartbeat:function(){
+      var labels = Array.from(document.querySelectorAll("body *")).filter(function(el){
+        var t = (el.textContent || "").trim().toLowerCase();
+        return t === "live" || t === "active" || t.indexOf("live dashboard") !== -1;
+      }).slice(0,8);
+      labels.forEach(function(el){
+        if(el.dataset.zaPulseBound === "1") return;
+        el.dataset.zaPulseBound = "1";
+        var dot = document.createElement("span");
+        dot.className = "za-live-dot";
+        el.insertBefore(dot, el.firstChild);
+      });
+    },
+    initCards:function(){
+      var cards = document.querySelectorAll(".card,.mini-card,.analytics-card,.glass-panel,.panel,.activity-clean-card");
+      cards.forEach(function(card, idx){
+        card.classList.add("za-card-enter","za-tooltip-ready");
+        card.style.animationDelay = Math.min(idx*70, 420) + "ms";
+        if(!card.dataset.zaTooltip){
+          var heading = card.querySelector("h1,h2,h3,h4,strong,b");
+          var raw = ((heading && heading.textContent) || card.textContent || "").replace(/\\s+/g," ").trim().slice(0,90);
+          card.dataset.zaTooltip = raw ? ("This section shows: " + raw) : "This section shows important attendance insight.";
+        }
+      });
+    },
+    initButtons:function(){
+      document.addEventListener("click", function(e){
+        var btn = e.target.closest("button,.btn,a.btn");
+        if(!btn) return;
+        var ripple = document.createElement("span");
+        ripple.style.position="absolute";
+        ripple.style.borderRadius="999px";
+        ripple.style.pointerEvents="none";
+        ripple.style.width=ripple.style.height="10px";
+        ripple.style.background="rgba(255,255,255,.35)";
+        ripple.style.transform="scale(1)";
+        ripple.style.opacity="1";
+        ripple.style.transition="transform .45s ease, opacity .45s ease";
+        if(getComputedStyle(btn).position === "static") btn.style.position="relative";
+        btn.style.overflow="hidden";
+        var rect = btn.getBoundingClientRect();
+        ripple.style.left=(e.clientX-rect.left-5)+"px";
+        ripple.style.top=(e.clientY-rect.top-5)+"px";
+        btn.appendChild(ripple);
+        requestAnimationFrame(function(){ ripple.style.transform="scale(18)"; ripple.style.opacity="0"; });
+        setTimeout(function(){ ripple.remove(); },500);
+      }, true);
+    },
+    toast:function(msg){
+      var wrap = document.querySelector(".za-toast-wrap");
+      if(!wrap){
+        wrap = document.createElement("div");
+        wrap.className = "za-toast-wrap";
+        document.body.appendChild(wrap);
+      }
+      var t = document.createElement("div");
+      t.className = "za-toast";
+      t.textContent = "✅ " + (msg || "Action completed");
+      wrap.appendChild(t);
+      setTimeout(function(){ t.remove(); },2400);
+    },
+    initFlashToasts:function(){
+      var alerts = document.querySelectorAll(".alert,.flash,.message,[role='alert']");
+      alerts.forEach(function(a){
+        var txt = (a.textContent || "").replace(/\\s+/g," ").trim();
+        if(txt && !a.dataset.zaToasted){
+          a.dataset.zaToasted="1";
+          window.ZoomAttendanceMotionEngine.toast(txt.slice(0,120));
+        }
+      });
+    },
+    initTrends:function(){
+      document.querySelectorAll("td,span,div").forEach(function(el){
+        var t = (el.textContent || "").trim();
+        if(t.indexOf("↑") !== -1 || /improving/i.test(t)) el.classList.add("za-trend-up");
+        if(t.indexOf("↓") !== -1 || /declining/i.test(t)) el.classList.add("za-trend-down");
+        if(/critical|host absent|low attendance/i.test(t)) {
+          var card = el.closest(".card,.panel,.analytics-card,tr") || el;
+          card.classList.add("za-critical");
+        }
+      });
+    },
+    initFocus:function(){
+      document.addEventListener("click", function(e){
+        var target = e.target.closest(".card,.mini-card,.analytics-card,.panel,tr");
+        if(!target) return;
+        document.querySelectorAll(".za-focus-mode").forEach(function(x){ if(x !== target) x.classList.remove("za-focus-mode"); });
+        target.classList.add("za-focus-mode");
+        setTimeout(function(){ target.classList.remove("za-focus-mode"); },1600);
+      }, true);
+    },
+    initCharts:function(){
+      if(window.Chart && window.Chart.defaults){
+        window.Chart.defaults.animation = {duration: 900, easing: "easeOutQuart"};
+        window.Chart.defaults.transitions = {
+          active: {animation: {duration: 350}},
+          resize: {animation: {duration: 350}},
+          show: {animations: {x: {from: 0}, y: {from: 0}}}
+        };
+      }
+    },
+    initLivePollingPolish:function(){
+      if(window.__zaLivePolishTimer) clearInterval(window.__zaLivePolishTimer);
+      window.__zaLivePolishTimer = setInterval(function(){
+        document.querySelectorAll("tbody tr").forEach(function(row,idx){
+          if(!row.dataset.zaSeen){
+            row.dataset.zaSeen="1";
+            row.style.animation = "zaCardEnter .38s cubic-bezier(.16,1,.3,1) both";
+            row.style.animationDelay = Math.min(idx*20, 180) + "ms";
+          }
+        });
+      },2000);
+    },
+    start:function(){
+      if(this.started) return;
+      this.started = true;
+      this.initCards();
+      this.initButtons();
+      this.initCounters();
+      this.initDurations();
+      this.initHeartbeat();
+      this.initFlashToasts();
+      this.initTrends();
+      this.initFocus();
+      this.initCharts();
+      this.initLivePollingPolish();
+    }
+  };
+  if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded", function(){ window.ZoomAttendanceMotionEngine.start(); });
+  } else {
+    window.ZoomAttendanceMotionEngine.start();
+  }
+})();
+</script>
+/* ===== END OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
+
 </style>
 '''
 # ===== END THEME =====
@@ -267,6 +605,12 @@ try:
 except Exception:
     PERFORMANCE_CACHE_TTL_SECONDS = 45
 
+
+
+# ===== SAFE ALERT AUTOMATION DEFAULTS =====
+# Prevents after_request warning when older DB/runtime loads before alert automation state exists.
+ALERT_AUTOMATION_BG_RUNNING = globals().get("ALERT_AUTOMATION_BG_RUNNING", False)
+ALERT_AUTOMATION_LAST_RUN_TS = globals().get("ALERT_AUTOMATION_LAST_RUN_TS", 0)
 
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
