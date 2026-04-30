@@ -4803,6 +4803,37 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 /* ===== END V9 PATCH ===== */
 
 </style>
+
+<style>
+.toggle-btn {
+    position: relative;
+    display: inline-flex;
+    border-radius: 50px;
+    background: #1f2937;
+    padding: 4px;
+    cursor: pointer;
+}
+.toggle-btn span {
+    flex: 1;
+    text-align: center;
+    padding: 6px 10px;
+    border-radius: 50px;
+    transition: all 0.35s cubic-bezier(.22,1,.36,1);
+}
+.toggle-btn .active {
+    background: white;
+    color: #111;
+}
+</style>
+
+
+<style>
+button:active {
+    transform: scale(0.97);
+    transition: transform 0.1s;
+}
+</style>
+
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
 
@@ -5208,6 +5239,18 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
+
+
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .mini-card, .analytics-card').forEach(el=>{
+        if(!el.getAttribute("title")){
+            let label = el.innerText.trim().slice(0,80);
+            el.setAttribute("title", label || "Insight data");
+        }
+    });
+});
+</script>
 
 </body>
 </html>
@@ -8248,12 +8291,55 @@ def attendance_register_data():
 def attendance_register_export_excel():
     data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""), all_rows=True)
     output = io.StringIO()
-    output.write("""<html><head><meta charset='utf-8'></head><body><table border='1'>""")
+    output.write("""<html><head><meta charset='utf-8'>
+<style>
+.toggle-btn {
+    position: relative;
+    display: inline-flex;
+    border-radius: 50px;
+    background: #1f2937;
+    padding: 4px;
+    cursor: pointer;
+}
+.toggle-btn span {
+    flex: 1;
+    text-align: center;
+    padding: 6px 10px;
+    border-radius: 50px;
+    transition: all 0.35s cubic-bezier(.22,1,.36,1);
+}
+.toggle-btn .active {
+    background: white;
+    color: #111;
+}
+</style>
+
+
+<style>
+button:active {
+    transform: scale(0.97);
+    transition: transform 0.1s;
+}
+</style>
+
+</head><body><table border='1'>""")
     output.write(f"<tr><th colspan='{len(data['days']) + 7}'>Attendance Register - {data['month_name']} {data['year']}</th></tr>")
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
         output.write(f"<tr><td>{row['name']}</td><td>{row['total_meetings']}</td>" + "".join(f"<td>{c or '-'}</td>" for c in row["cells"]) + f"<td>{row['totals']['P']}</td><td>{row['totals']['L']}</td><td>{row['totals']['A']}</td><td>{row['totals']['U']}</td><td>{row['attendance_pct']}%</td></tr>")
-    output.write("</table></body></html>")
+    output.write("</table>
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .mini-card, .analytics-card').forEach(el=>{
+        if(!el.getAttribute("title")){
+            let label = el.innerText.trim().slice(0,80);
+            el.setAttribute("title", label || "Insight data");
+        }
+    });
+});
+</script>
+
+</body></html>")
     filename = f"attendance_register_{data['year']}_{data['month']:02d}.xls"
     return Response(output.getvalue(), mimetype="application/vnd.ms-excel", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
@@ -9089,7 +9175,38 @@ def push_setup():
 }
 
 </style>
-    </head>
+    
+<style>
+.toggle-btn {
+    position: relative;
+    display: inline-flex;
+    border-radius: 50px;
+    background: #1f2937;
+    padding: 4px;
+    cursor: pointer;
+}
+.toggle-btn span {
+    flex: 1;
+    text-align: center;
+    padding: 6px 10px;
+    border-radius: 50px;
+    transition: all 0.35s cubic-bezier(.22,1,.36,1);
+}
+.toggle-btn .active {
+    background: white;
+    color: #111;
+}
+</style>
+
+
+<style>
+button:active {
+    transform: scale(0.97);
+    transition: transform 0.1s;
+}
+</style>
+
+</head>
     <body>
         <div class="push-wrap">
             <div class="push-card">
@@ -9174,7 +9291,19 @@ def push_setup():
             }}
         }}
         </script>
-    </body>
+    
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .mini-card, .analytics-card').forEach(el=>{
+        if(!el.getAttribute("title")){
+            let label = el.innerText.trim().slice(0,80);
+            el.setAttribute("title", label || "Insight data");
+        }
+    });
+});
+</script>
+
+</body>
     </html>
     """
     return render_template_string(html)
@@ -10085,7 +10214,43 @@ def ai_frontend_patch_v112(response):
         if request.path == '/ai-intelligence' and response.content_type and 'text/html' in response.content_type.lower():
             html = response.get_data(as_text=True)
             if 'UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED' not in html:
-                html = html.replace('</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n</body>') if '</body>' in html else html + _AI_FRONTEND_PATCH_V112
+                html = html.replace('
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .mini-card, .analytics-card').forEach(el=>{
+        if(!el.getAttribute("title")){
+            let label = el.innerText.trim().slice(0,80);
+            el.setAttribute("title", label || "Insight data");
+        }
+    });
+});
+</script>
+
+</body>', _AI_FRONTEND_PATCH_V112 + '\n<!-- UI_UPDATE_V11_2_AI_ASSISTANT_COMMAND_ENGINE_FIX_APPLIED -->\n
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .mini-card, .analytics-card').forEach(el=>{
+        if(!el.getAttribute("title")){
+            let label = el.innerText.trim().slice(0,80);
+            el.setAttribute("title", label || "Insight data");
+        }
+    });
+});
+</script>
+
+</body>') if '
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+    document.querySelectorAll('.card, .mini-card, .analytics-card').forEach(el=>{
+        if(!el.getAttribute("title")){
+            let label = el.innerText.trim().slice(0,80);
+            el.setAttribute("title", label || "Insight data");
+        }
+    });
+});
+</script>
+
+</body>' in html else html + _AI_FRONTEND_PATCH_V112
                 response.set_data(html)
                 response.headers['Content-Length'] = str(len(response.get_data()))
     except Exception as exc:
