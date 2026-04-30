@@ -231,10 +231,33 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+# SAFE_WEBSOCKET_IMPORT_APPLIED
+try:
+    from flask_socketio import SocketIO
+except Exception:
+    SocketIO = None
+
+
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
+
+# SAFE_SOCKETIO_INIT_APPLIED
+socketio = None
+if SocketIO is not None and os.getenv("WEBSOCKET_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on"):
+    try:
+        socketio = SocketIO(
+            app,
+            cors_allowed_origins="*",
+            async_mode=os.getenv("SOCKET_ASYNC_MODE", "threading").strip() or "threading",
+            logger=False,
+            engineio_logger=False,
+        )
+        print("✅ WebSocket/polling layer initialized")
+    except Exception as _socket_init_error:
+        print(f"⚠️ WebSocket disabled, polling fallback active: {_socket_init_error}")
+        socketio = None
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 TIMEZONE_NAME = os.getenv("TIMEZONE_NAME", "Asia/Kolkata")
@@ -244,6 +267,8 @@ WEB_PUSH_ENABLED = os.getenv("WEB_PUSH_ENABLED", "false").strip().lower() in ("1
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:test@example.com").strip()
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+WEBSOCKET_ENABLED = os.getenv("WEBSOCKET_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+SOCKET_ASYNC_MODE = os.getenv("SOCKET_ASYNC_MODE", "threading").strip() or "threading"
 
 
 DEFAULT_SETTINGS = {
@@ -1289,6 +1314,68 @@ def log_activity(action, details=""):
         pass
 
 
+# SAFE_LIVE_REALTIME_HELPERS_APPLIED
+def emit_live_update(event_name="live_update", payload=None):
+    """Non-breaking realtime emit. If Socket.IO is unavailable, the app keeps working via polling."""
+    try:
+        if socketio is not None:
+            socketio.emit(event_name, payload or {}, namespace="/")
+    except Exception as exc:
+        print(f"⚠️ WebSocket emit failed, polling fallback will continue: {exc}")
+
+
+def build_live_payload():
+    """Small JSON snapshot for live dashboard polling/WebSocket refresh."""
+    try:
+        snapshot = read_live_snapshot()
+        if not snapshot:
+            return {
+                "ok": True,
+                "has_live": False,
+                "meeting": None,
+                "active_count": 0,
+                "participants": [],
+                "not_joined_count": 0,
+                "server_time": now_local().isoformat(),
+            }
+
+        meeting = snapshot.get("meeting") or {}
+        participants = []
+        for row in snapshot.get("participants", []):
+            status, total_seconds = get_live_status_for_row(row, meeting.get("start_time"))
+            participants.append({
+                "name": row.get("participant_name") or "-",
+                "email": row.get("participant_email") or "",
+                "is_member": bool(row.get("is_member")),
+                "is_host": bool(row.get("is_host")),
+                "status": status,
+                "current_join": bool(row.get("current_join")),
+                "total_seconds": int(total_seconds or 0),
+                "duration_minutes": mins_from_seconds(total_seconds or 0),
+                "first_join": fmt_time(row.get("first_join")),
+                "last_leave": fmt_time(row.get("last_leave")),
+                "rejoin_count": row.get("rejoin_count") or 0,
+            })
+
+        participants.sort(key=lambda p: p.get("total_seconds", 0), reverse=True)
+
+        return {
+            "ok": True,
+            "has_live": True,
+            "meeting": {
+                "uuid": meeting.get("meeting_uuid"),
+                "topic": meeting.get("topic") or "Zoom Meeting",
+                "start_time": fmt_dt(meeting.get("start_time")),
+                "status": meeting.get("status") or "live",
+            },
+            "active_count": len(snapshot.get("active_now") or []),
+            "participants": participants,
+            "not_joined_count": len(snapshot.get("not_joined_members") or []),
+            "server_time": now_local().isoformat(),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "server_time": now_local().isoformat()}
+
 def find_member(name: str, email: str | None = None):
     norm_name = (name or "").strip().lower()
     norm_email = (email or "").strip().lower()
@@ -1690,6 +1777,15 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
         conn.commit()
 
     refresh_live_meeting_summary(meeting_uuid)
+    # SAFE_UPDATE_PARTICIPANT_EMIT_APPLIED
+    emit_live_update("participant_update", {
+        "meeting_uuid": meeting_uuid,
+        "name": participant_name,
+        "email": participant_email or "",
+        "event": event_type,
+        "time": event_time.isoformat() if hasattr(event_time, "isoformat") else str(event_time),
+    })
+    emit_live_update("live_snapshot", build_live_payload())
     _cache_clear_prefix("analytics")
     _cache_clear_prefix("graph_analytics")
     _cache_clear_prefix("attendance_register")
@@ -1827,6 +1923,9 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
             auto_send_smart_meeting_report(meeting_uuid, force=False)
         except Exception as e:
             print(f"⚠️ Smart report auto-send skipped: {e}")
+    # SAFE_FINALIZE_MEETING_EMIT_APPLIED
+    emit_live_update("meeting_end", {"meeting_uuid": meeting_uuid})
+    emit_live_update("live_snapshot", build_live_payload())
     return updated
 
 
@@ -5322,6 +5421,166 @@ def handle_any_error(e):
         error_text=str(e),
     )
     return render_template_string(BASE_HTML, title="Error", body=body, nav=[], active=""), 500
+
+
+
+# SAFE_WEBSOCKET_CLIENT_INJECTION_APPLIED
+WEBSOCKET_CLIENT_JS = """
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+(function(){
+    if (window.__zoomLiveRealtimeInstalled) return;
+    window.__zoomLiveRealtimeInstalled = true;
+
+    function formatDuration(seconds){
+        seconds = Math.max(0, parseInt(seconds || 0, 10));
+        var h = Math.floor(seconds / 3600);
+        var m = Math.floor((seconds % 3600) / 60);
+        var s = seconds % 60;
+        if (h > 0) return h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
+        return m + ":" + String(s).padStart(2,"0");
+    }
+
+    function animateNumber(el, next){
+        if (!el) return;
+        var start = parseInt((el.textContent || "0").replace(/[^0-9-]/g,""), 10);
+        if (isNaN(start)) start = 0;
+        next = parseInt(next || 0, 10);
+        var startTime = null;
+        var duration = 520;
+        function tick(ts){
+            if (!startTime) startTime = ts;
+            var p = Math.min((ts - startTime) / duration, 1);
+            var eased = 1 - Math.pow(1 - p, 3);
+            var val = Math.round(start + (next - start) * eased);
+            el.textContent = val;
+            if (p < 1) requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+    }
+
+    function markLivePulse(activeCount){
+        document.querySelectorAll(".live-badge,.badge-live,[class*='live'],[id*='live']").forEach(function(el){
+            var txt = (el.textContent || "").toLowerCase();
+            if (txt.includes("live")) {
+                el.classList.add("zap-live-pulse");
+                el.style.setProperty("--pulse-speed", activeCount > 10 ? "0.85s" : "1.25s");
+            }
+        });
+    }
+
+    function updateLiveDom(payload){
+        if (!payload || !payload.ok) return;
+        var active = payload.active_count || 0;
+        markLivePulse(active);
+
+        document.querySelectorAll("[data-live-count], #live_count, #active_count, .live-count").forEach(function(el){
+            animateNumber(el, active);
+        });
+
+        document.querySelectorAll("[data-not-joined-count], #not_joined_count").forEach(function(el){
+            animateNumber(el, payload.not_joined_count || 0);
+        });
+
+        (payload.participants || []).forEach(function(p){
+            var name = (p.name || "").trim().toLowerCase();
+            if (!name) return;
+            document.querySelectorAll("tr").forEach(function(row){
+                if ((row.textContent || "").toLowerCase().includes(name)) {
+                    row.classList.add("zap-live-row");
+                    row.querySelectorAll("td,span,div").forEach(function(cell){
+                        var t = (cell.textContent || "").trim();
+                        if (/^[0-9]+(\\.[0-9]+)?\\s*(min|mins|minutes)?$/i.test(t) || /^[0-9]+:[0-9]{2}/.test(t)) {
+                            cell.setAttribute("data-zap-duration", p.total_seconds || 0);
+                            cell.textContent = formatDuration(p.total_seconds || 0);
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    function pollLive(){
+        fetch("/api/live-snapshot", {cache:"no-store"})
+            .then(function(r){ return r.ok ? r.json() : null; })
+            .then(updateLiveDom)
+            .catch(function(){});
+    }
+
+    try {
+        if (window.io) {
+            var socket = window.io({transports:["websocket","polling"], reconnection:true});
+            socket.on("connect", function(){ document.body.classList.add("zap-socket-connected"); pollLive(); });
+            socket.on("disconnect", function(){ document.body.classList.remove("zap-socket-connected"); });
+            socket.on("live_snapshot", updateLiveDom);
+            socket.on("participant_update", function(){ pollLive(); });
+            socket.on("meeting_end", function(){ pollLive(); });
+        }
+    } catch(e) {}
+
+    setInterval(function(){
+        document.querySelectorAll("[data-zap-duration]").forEach(function(el){
+            var sec = parseInt(el.getAttribute("data-zap-duration") || "0", 10) + 1;
+            el.setAttribute("data-zap-duration", sec);
+            el.textContent = formatDuration(sec);
+        });
+    }, 1000);
+
+    setInterval(pollLive, 2000);
+    document.addEventListener("DOMContentLoaded", pollLive);
+    pollLive();
+})();
+</script>
+"""
+
+WEBSOCKET_CLIENT_CSS = """
+<style>
+.zap-live-pulse {
+    position: relative;
+    box-shadow: 0 0 0 0 rgba(34,197,94,.45) !important;
+    animation: zapPulse var(--pulse-speed, 1.25s) ease-out infinite !important;
+}
+@keyframes zapPulse {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34,197,94,.45); }
+    70% { transform: scale(1.04); box-shadow: 0 0 0 12px rgba(34,197,94,0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+.zap-live-row {
+    transition: background-color .45s ease, transform .35s ease;
+}
+.zap-live-row:hover {
+    transform: translateX(2px);
+}
+.zap-socket-connected .zap-live-pulse::after {
+    content: '';
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-left: 7px;
+    border-radius: 50%;
+    background: #22c55e;
+}
+</style>
+"""
+
+
+@app.after_request
+def inject_safe_realtime_client(response):
+    try:
+        content_type = response.headers.get("Content-Type", "")
+        if response.status_code == 200 and "text/html" in content_type:
+            body = response.get_data(as_text=True)
+            if "window.__zoomLiveRealtimeInstalled" not in body:
+                injection = WEBSOCKET_CLIENT_CSS + WEBSOCKET_CLIENT_JS
+                if "</body>" in body:
+                    body = body.replace("</body>", injection + "</body>", 1)
+                else:
+                    body += injection
+                response.set_data(body)
+                response.headers["Content-Length"] = str(len(response.get_data()))
+    except Exception as exc:
+        print(f"⚠️ realtime client injection skipped: {exc}")
+    return response
 
 
 @app.route("/toggle-theme")
@@ -10431,5 +10690,23 @@ def api_alerts_run_now():
     result = run_smart_scheduler(force=True)
     return jsonify({"ok": True, **result})
 
+
+# SAFE_LIVE_POLLING_ROUTE_APPLIED
+@app.route("/api/live-snapshot")
+@login_required
+def api_live_snapshot():
+    return jsonify(build_live_payload())
+
+
+if socketio is not None:
+    @socketio.on("connect")
+    def _safe_socket_connect():
+        try:
+            emit_live_update("live_snapshot", build_live_payload())
+        except Exception as exc:
+            print(f"⚠️ Socket connect snapshot failed: {exc}")
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+    # SAFE_SOCKETIO_MAIN_RUN_APPLIED
+    (socketio.run if socketio is not None else app.run)(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)

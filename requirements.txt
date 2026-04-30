@@ -8,3 +8,8 @@ pywebpush==2.3.0
 py-vapid==1.9.4
 aiohttp==3.13.5
 pillow==12.2.0
+
+flask-socketio==5.3.6
+python-socketio==5.11.2
+python-engineio==4.9.1
+simple-websocket==1.0.0
