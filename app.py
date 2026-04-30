@@ -1,3 +1,4 @@
+# UPDATED FILE (ready to replace)
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
@@ -80,7 +81,7 @@ th { position: sticky; top:0; background:#111827;}
 }
 .status-toggle-btn.is-active { background: linear-gradient(90deg,#22c55e,#10b981) !important; }
 .status-toggle-btn .status-toggle-label { width:50%; text-align:center; z-index:2; pointer-events:none; }
-.status-toggle-btn .status-toggle-knob { position:absolute; top:4px; left:4px; width:calc(50% - 4px); height:30px; border-radius:999px; background:rgba(255,255,255,.96); box-shadow:0 8px 18px rgba(0,0,0,.25); transition:transform .62s cubic-bezier(.16,1,.3,1); z-index:1; }
+.status-toggle-btn .status-toggle-knob { position:absolute; top:4px; left:4px; width:calc(50% - 4px); height:30px; border-radius:999px; background:rgba(255,255,255,.96); box-shadow:0 8px 18px rgba(0,0,0,.25); transition:transform .22s ease; z-index:1; }
 .status-toggle-btn.is-active .status-toggle-knob { transform: translateX(68px); }
 .status-toggle-btn.is-active .label-active { color:#065f46; }
 .status-toggle-btn:not(.is-active) .label-inactive { color:#7f1d1d; }
@@ -91,99 +92,6 @@ th { position: sticky; top:0; background:#111827;}
 .activity-type{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;border:1px solid rgba(255,255,255,.12)}
 .activity-type.login{background:rgba(34,197,94,.14);color:#86efac}.activity-type.logout{background:rgba(244,63,94,.14);color:#fda4af}.activity-type.zoom{background:rgba(56,189,248,.14);color:#7dd3fc}.activity-type.other{background:rgba(168,85,247,.14);color:#d8b4fe}
 .activity-table td{vertical-align:top}.activity-details{max-width:520px;white-space:normal;word-break:break-word;color:#cbd5e1}
-
-
-
-/* ===== FINAL FIX: CLEAR ACTIVE/INACTIVE PILL TOGGLE LIKE REFERENCE IMAGE ===== */
-.status-toggle-btn{
-    width:170px !important;
-    min-width:170px !important;
-    height:44px !important;
-    border-radius:999px !important;
-    padding:5px !important;
-    position:relative !important;
-    display:inline-flex !important;
-    align-items:center !important;
-    justify-content:space-between !important;
-    gap:0 !important;
-    border:0 !important;
-    overflow:hidden !important;
-    cursor:pointer !important;
-    background:linear-gradient(90deg,#9333ea,#7c3aed,#6366f1) !important;
-    box-shadow:0 12px 30px rgba(147,51,234,.30), inset 0 0 0 1px rgba(255,255,255,.14) !important;
-}
-.status-toggle-btn .status-toggle-label{
-    position:relative !important;
-    z-index:2 !important;
-    width:50% !important;
-    height:34px !important;
-    display:flex !important;
-    align-items:center !important;
-    justify-content:center !important;
-    text-align:center !important;
-    font-size:12px !important;
-    line-height:1 !important;
-    font-weight:950 !important;
-    letter-spacing:.01em !important;
-    pointer-events:none !important;
-    white-space:nowrap !important;
-    transition:color .22s ease, opacity .22s ease !important;
-}
-.status-toggle-btn .status-toggle-knob{
-    position:absolute !important;
-    z-index:1 !important;
-    top:5px !important;
-    left:5px !important;
-    width:calc(50% - 5px) !important;
-    height:34px !important;
-    border-radius:999px !important;
-    background:#ffffff !important;
-    box-shadow:0 10px 22px rgba(15,23,42,.34) !important;
-    transform:translateX(0) !important;
-    transition:transform .62s cubic-bezier(.16,1,.3,1) !important;
-}
-.status-toggle-btn.is-active .status-toggle-knob{transform:translateX(80px) !important;}
-.status-toggle-btn:not(.is-active) .label-inactive{color:#7c2d12 !important;}
-.status-toggle-btn:not(.is-active) .label-active{color:#ffffff !important; opacity:.86 !important;}
-.status-toggle-btn.is-active .label-active{color:#6d28d9 !important;}
-.status-toggle-btn.is-active .label-inactive{color:#ffffff !important; opacity:.86 !important;}
-.status-toggle-btn:hover{filter:brightness(1.08) !important; transform:translateY(-1px);}
-.status-toggle-btn:active{transform:translateY(0) scale(.99);}
-.toggle-form{margin:0 !important;}
-
-
-
-/* ===== GPT-5.5 SAFE UI FIX: smoother status toggle + tooltip polish ===== */
-button.status-toggle-btn,
-.table-wrap button.status-toggle-btn,
-.card button.status-toggle-btn{
-    transition: transform .28s cubic-bezier(.16,1,.3,1), filter .28s ease, box-shadow .28s ease !important;
-    will-change: transform, filter !important;
-}
-button.status-toggle-btn::before{
-    transition: transform .62s cubic-bezier(.16,1,.3,1), box-shadow .36s ease, background .36s ease !important;
-    will-change: transform !important;
-}
-button.status-toggle-btn:hover::before{ box-shadow:0 14px 32px rgba(2,6,23,.42) !important; }
-.smart-tooltip-card{ position:relative; }
-.smart-tooltip-card::after{
-    content:'ⓘ';
-    position:absolute;
-    top:10px;
-    right:12px;
-    width:20px;
-    height:20px;
-    border-radius:999px;
-    display:grid;
-    place-items:center;
-    font-size:12px;
-    font-weight:900;
-    color:#c4b5fd;
-    background:rgba(124,58,237,.15);
-    border:1px solid rgba(196,181,253,.25);
-    opacity:.82;
-    pointer-events:none;
-}
 
 </style>
 '''
@@ -231,33 +139,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-# SAFE_WEBSOCKET_IMPORT_APPLIED
-try:
-    from flask_socketio import SocketIO
-except Exception:
-    SocketIO = None
-
-
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
-
-# SAFE_SOCKETIO_INIT_APPLIED
-socketio = None
-if SocketIO is not None and os.getenv("WEBSOCKET_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on"):
-    try:
-        socketio = SocketIO(
-            app,
-            cors_allowed_origins="*",
-            async_mode=os.getenv("SOCKET_ASYNC_MODE", "threading").strip() or "threading",
-            logger=False,
-            engineio_logger=False,
-        )
-        print("✅ WebSocket/polling layer initialized")
-    except Exception as _socket_init_error:
-        print(f"⚠️ WebSocket disabled, polling fallback active: {_socket_init_error}")
-        socketio = None
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 TIMEZONE_NAME = os.getenv("TIMEZONE_NAME", "Asia/Kolkata")
@@ -267,8 +152,6 @@ WEB_PUSH_ENABLED = os.getenv("WEB_PUSH_ENABLED", "false").strip().lower() in ("1
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:test@example.com").strip()
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
-WEBSOCKET_ENABLED = os.getenv("WEBSOCKET_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
-SOCKET_ASYNC_MODE = os.getenv("SOCKET_ASYNC_MODE", "threading").strip() or "threading"
 
 
 DEFAULT_SETTINGS = {
@@ -1314,68 +1197,6 @@ def log_activity(action, details=""):
         pass
 
 
-# SAFE_LIVE_REALTIME_HELPERS_APPLIED
-def emit_live_update(event_name="live_update", payload=None):
-    """Non-breaking realtime emit. If Socket.IO is unavailable, the app keeps working via polling."""
-    try:
-        if socketio is not None:
-            socketio.emit(event_name, payload or {}, namespace="/")
-    except Exception as exc:
-        print(f"⚠️ WebSocket emit failed, polling fallback will continue: {exc}")
-
-
-def build_live_payload():
-    """Small JSON snapshot for live dashboard polling/WebSocket refresh."""
-    try:
-        snapshot = read_live_snapshot()
-        if not snapshot:
-            return {
-                "ok": True,
-                "has_live": False,
-                "meeting": None,
-                "active_count": 0,
-                "participants": [],
-                "not_joined_count": 0,
-                "server_time": now_local().isoformat(),
-            }
-
-        meeting = snapshot.get("meeting") or {}
-        participants = []
-        for row in snapshot.get("participants", []):
-            status, total_seconds = get_live_status_for_row(row, meeting.get("start_time"))
-            participants.append({
-                "name": row.get("participant_name") or "-",
-                "email": row.get("participant_email") or "",
-                "is_member": bool(row.get("is_member")),
-                "is_host": bool(row.get("is_host")),
-                "status": status,
-                "current_join": bool(row.get("current_join")),
-                "total_seconds": int(total_seconds or 0),
-                "duration_minutes": mins_from_seconds(total_seconds or 0),
-                "first_join": fmt_time(row.get("first_join")),
-                "last_leave": fmt_time(row.get("last_leave")),
-                "rejoin_count": row.get("rejoin_count") or 0,
-            })
-
-        participants.sort(key=lambda p: p.get("total_seconds", 0), reverse=True)
-
-        return {
-            "ok": True,
-            "has_live": True,
-            "meeting": {
-                "uuid": meeting.get("meeting_uuid"),
-                "topic": meeting.get("topic") or "Zoom Meeting",
-                "start_time": fmt_dt(meeting.get("start_time")),
-                "status": meeting.get("status") or "live",
-            },
-            "active_count": len(snapshot.get("active_now") or []),
-            "participants": participants,
-            "not_joined_count": len(snapshot.get("not_joined_members") or []),
-            "server_time": now_local().isoformat(),
-        }
-    except Exception as exc:
-        return {"ok": False, "error": str(exc), "server_time": now_local().isoformat()}
-
 def find_member(name: str, email: str | None = None):
     norm_name = (name or "").strip().lower()
     norm_email = (email or "").strip().lower()
@@ -1777,15 +1598,6 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
         conn.commit()
 
     refresh_live_meeting_summary(meeting_uuid)
-    # SAFE_UPDATE_PARTICIPANT_EMIT_APPLIED
-    emit_live_update("participant_update", {
-        "meeting_uuid": meeting_uuid,
-        "name": participant_name,
-        "email": participant_email or "",
-        "event": event_type,
-        "time": event_time.isoformat() if hasattr(event_time, "isoformat") else str(event_time),
-    })
-    emit_live_update("live_snapshot", build_live_payload())
     _cache_clear_prefix("analytics")
     _cache_clear_prefix("graph_analytics")
     _cache_clear_prefix("attendance_register")
@@ -1923,9 +1735,6 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
             auto_send_smart_meeting_report(meeting_uuid, force=False)
         except Exception as e:
             print(f"⚠️ Smart report auto-send skipped: {e}")
-    # SAFE_FINALIZE_MEETING_EMIT_APPLIED
-    emit_live_update("meeting_end", {"meeting_uuid": meeting_uuid})
-    emit_live_update("live_snapshot", build_live_payload())
     return updated
 
 
@@ -4793,114 +4602,6 @@ BASE_HTML = """
     color: white;
 }
 
-
-
-/* ===== V9 FINAL TOGGLE + LIVE REFRESH VISIBILITY PATCH ===== */
-form.toggle-form,
-form.live-toggle-form{
-    margin:0 !important;
-    display:inline-flex !important;
-    align-items:center !important;
-}
-button.status-toggle-btn,
-.table-wrap button.status-toggle-btn,
-.card button.status-toggle-btn{
-    all:unset !important;
-    box-sizing:border-box !important;
-    width:184px !important;
-    min-width:184px !important;
-    height:48px !important;
-    border-radius:999px !important;
-    padding:5px !important;
-    display:inline-grid !important;
-    grid-template-columns:1fr 1fr !important;
-    align-items:center !important;
-    position:relative !important;
-    overflow:hidden !important;
-    cursor:pointer !important;
-    user-select:none !important;
-    background:linear-gradient(90deg,#a855f7 0%,#9333ea 48%,#7c3aed 100%) !important;
-    box-shadow:0 14px 34px rgba(147,51,234,.36), inset 0 0 0 1px rgba(255,255,255,.18) !important;
-    font-family:inherit !important;
-    transition:transform .18s ease, filter .18s ease, box-shadow .18s ease !important;
-}
-button.status-toggle-btn::before{
-    content:"" !important;
-    position:absolute !important;
-    top:5px !important;
-    left:5px !important;
-    width:87px !important;
-    height:38px !important;
-    border-radius:999px !important;
-    background:#ffffff !important;
-    box-shadow:0 10px 24px rgba(2,6,23,.36) !important;
-    z-index:1 !important;
-    transform:translateX(0) !important;
-    transition:transform .62s cubic-bezier(.16,1,.3,1) !important;
-}
-button.status-toggle-btn.is-active::before{ transform:translateX(87px) !important; }
-button.status-toggle-btn .status-toggle-knob{ display:none !important; }
-button.status-toggle-btn .status-toggle-label{
-    position:relative !important;
-    z-index:2 !important;
-    display:flex !important;
-    align-items:center !important;
-    justify-content:center !important;
-    width:100% !important;
-    height:38px !important;
-    border-radius:999px !important;
-    font-size:12px !important;
-    font-weight:950 !important;
-    letter-spacing:.01em !important;
-    line-height:1 !important;
-    white-space:nowrap !important;
-    pointer-events:none !important;
-    text-align:center !important;
-    text-shadow:none !important;
-}
-button.status-toggle-btn:not(.is-active) .label-inactive{ color:#7c2d12 !important; }
-button.status-toggle-btn:not(.is-active) .label-active{ color:#ffffff !important; opacity:.95 !important; }
-button.status-toggle-btn.is-active .label-active{ color:#7c3aed !important; }
-button.status-toggle-btn.is-active .label-inactive{ color:#ffffff !important; opacity:.95 !important; }
-button.status-toggle-btn:hover{ transform:translateY(-1px) !important; filter:brightness(1.08) !important; }
-button.status-toggle-btn:active{ transform:scale(.985) !important; }
-button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !important; outline-offset:3px !important; }
-.live-fix-badge .live-fix-dot,
-.live-fix-dot{
-    animation:liveFixStrongPulse 1s infinite !important;
-}
-.live-fix-badge.is-live .live-fix-dot{
-    background:#22c55e !important;
-    animation:liveFixStrongGreenPulse 1s infinite !important;
-}
-@keyframes liveFixStrongPulse{
-    0%{transform:scale(1);box-shadow:0 0 0 0 rgba(239,68,68,.9)}
-    70%{transform:scale(1.25);box-shadow:0 0 0 14px rgba(239,68,68,0)}
-    100%{transform:scale(1);box-shadow:0 0 0 0 rgba(239,68,68,0)}
-}
-@keyframes liveFixStrongGreenPulse{
-    0%{transform:scale(1);box-shadow:0 0 0 0 rgba(34,197,94,.9)}
-    70%{transform:scale(1.25);box-shadow:0 0 0 14px rgba(34,197,94,0)}
-    100%{transform:scale(1);box-shadow:0 0 0 0 rgba(34,197,94,0)}
-}
-
-
-/* ===== V10 AJAX TOGGLE + MEMBER PROFILE GRAPH SPACE FIX ===== */
-.status-toggle-btn.is-saving{opacity:.72 !important; pointer-events:none !important; filter:saturate(.8) !important;}
-.status-toggle-btn.is-saving::after{content:""; position:absolute; right:12px; top:50%; width:12px; height:12px; margin-top:-6px; border:2px solid rgba(255,255,255,.55); border-top-color:#fff; border-radius:50%; z-index:3; animation:toggleSpin .65s linear infinite;}
-@keyframes toggleSpin{to{transform:rotate(360deg)}}
-.member-profile-layout-fix .profile-chart-grid{display:grid !important; grid-template-columns:repeat(2,minmax(420px,1fr)) !important; gap:18px !important; align-items:stretch !important;}
-.member-profile-layout-fix .profile-chart{min-height:430px !important; height:430px !important; padding:18px !important; position:relative !important; overflow:visible !important;}
-.member-profile-layout-fix .profile-chart.profile-chart-wide{grid-column:1 / -1 !important; min-height:400px !important; height:400px !important;}
-.member-profile-layout-fix .profile-chart canvas{width:100% !important; height:calc(100% - 92px) !important; max-height:none !important;}
-.chart-info-box{margin:8px 0 12px 0; padding:10px 12px; border-radius:14px; background:rgba(34,211,238,.10); border:1px solid rgba(34,211,238,.22); color:#cbd5e1; font-size:12px; line-height:1.45; font-weight:750;}
-.chart-info-box b{color:#f8fafc;}
-.profile-alert-wide{grid-column:1 / -1 !important;}
-@media(max-width:1200px){.member-profile-layout-fix .profile-chart-grid{grid-template-columns:1fr !important}.member-profile-layout-fix .profile-chart{min-height:390px !important;height:390px !important}}
-/* ===== END V10 PATCH ===== */
-
-/* ===== END V9 PATCH ===== */
-
 </style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
@@ -5041,47 +4742,6 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
         });
     }
 
-
-
-    function enableAjaxStatusToggles(){
-        document.querySelectorAll('form.toggle-form').forEach((form) => {
-            if (form.dataset.ajaxToggleBound === '1') return;
-            form.dataset.ajaxToggleBound = '1';
-            form.addEventListener('submit', async function(e){
-                e.preventDefault();
-                const btn = form.querySelector('.status-toggle-btn');
-                if (!btn || btn.classList.contains('is-saving')) return;
-                const wasActive = btn.classList.contains('is-active');
-                btn.classList.add('is-saving');
-                try{
-                    const fd = new FormData(form);
-                    await fetch(form.getAttribute('action') || window.location.href, {
-                        method: 'POST',
-                        body: fd,
-                        credentials: 'same-origin',
-                        headers: {'X-Requested-With':'XMLHttpRequest'}
-                    });
-                    btn.classList.toggle('is-active', !wasActive);
-                    const row = form.closest('tr');
-                    if(row){
-                        const badges = Array.from(row.querySelectorAll('.badge'));
-                        const statusBadge = badges.find(b => ['Active','Inactive','Disabled'].includes((b.textContent||'').trim()));
-                        if(statusBadge){
-                            const nowActive = !wasActive;
-                            statusBadge.textContent = nowActive ? 'Active' : (window.location.pathname.indexOf('/users') !== -1 ? 'Disabled' : 'Inactive');
-                            statusBadge.classList.remove('ok','danger');
-                            statusBadge.classList.add(nowActive ? 'ok' : 'danger');
-                        }
-                    }
-                }catch(err){
-                    alert('Status update failed. Please refresh and try again.');
-                }finally{
-                    btn.classList.remove('is-saving');
-                }
-            });
-        });
-    }
-
     function enhanceButtons(){
         document.querySelectorAll('button, .btn, .chip, .theme-switch').forEach((btn) => {
             btn.addEventListener('click', function(e){
@@ -5203,65 +4863,12 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
             });
     }
 
-
-
-    function applyFinalDashboardTooltips(){
-        const explanations = {
-            'Total Meetings':'Total number of Zoom meetings captured by the platform.',
-            'Total Members':'Total registered members stored in the system.',
-            'Present':'Members whose attendance duration meets the present threshold.',
-            'Late':'Members below present threshold but above late threshold.',
-            'Absent':'Members below minimum attendance threshold or not joined.',
-            'Unknown':'Participants detected by Zoom but not matched with registered members.',
-            'Attendance Health':'Overall attendance quality score calculated from filtered meeting records.',
-            'Health Delta':'Difference between latest meeting health and previous meeting health.',
-            'Top Members':'Best performing members ranked by attendance, consistency and duration.',
-            'Risk Members':'Members whose attendance pattern is warning or critical.',
-            'Insights':'Auto-generated observations from the filtered attendance data.',
-            'Operational Alerts':'Detected issues such as low attendance, unknown spikes, and meeting quality warnings.',
-            'Auto Actions':'Suggested next actions based on risk and attendance analytics.',
-            'Attendance Heatmap':'Recent day-wise participation footprint; stronger cells mean better attendance.',
-            'Unknown Match Suggestions':'Possible matches between unknown Zoom names and registered members.',
-            'System Health':'Technical status of database, email, webhook, and background services.',
-            'DB Status':'Shows whether the PostgreSQL database connection is working.',
-            'Email Status':'Shows whether SMTP/email alerts are configured and ready.',
-            'Web Push Status':'Shows whether browser push notification setup is available.',
-            'Last Webhook':'Latest Zoom webhook event received by this platform.'
-        };
-        document.querySelectorAll('.card, .analytics-card, .mini-card, .mini-kpi, .kpi-card, .hero-chip, .setting-tile, .activity-clean-card').forEach((card) => {
-            if (card.dataset.finalTooltipApplied === '1') return;
-            const headingEl = card.querySelector('h1,h2,h3,.label,small');
-            const heading = headingEl ? (headingEl.textContent || '').trim() : '';
-            const cleanHeading = heading.replace(/\\s+/g,' ');
-            const text = explanations[cleanHeading] || (cleanHeading ? `${cleanHeading}: this card shows an important system/attendance indicator.` : 'This card shows an important system/attendance indicator.');
-            card.setAttribute('title', text);
-            card.classList.add('smart-tooltip-card');
-            card.dataset.finalTooltipApplied = '1';
-        });
-    }
-
-    function removeRequestedAnalyticsSections(){
-        const blocked = new Set(['Analytics Filters','Attendance Trend','Member Duration','Duration Distribution','Status Mix']);
-        document.querySelectorAll('h1,h2,h3').forEach((heading) => {
-            const text = (heading.textContent || '').trim().replace(/\\s+/g,' ');
-            if (!blocked.has(text)) return;
-            const card = heading.closest('.card');
-            if (card) card.remove();
-        });
-        document.querySelectorAll('.grid-2,.grid-3').forEach((grid) => {
-            if (!grid.querySelector('.card')) grid.remove();
-        });
-    }
-
     document.addEventListener('DOMContentLoaded', function(){
-        removeRequestedAnalyticsSections();
-        applyFinalDashboardTooltips();
         setupAppearanceEngineV8();
         setupGlobalThemeSystem();
         applyAutoTooltips();
         animateMetrics();
         enhanceButtons();
-        enableAjaxStatusToggles();
         setupChartDefaults();
         polishLayoutSpacing();
         enhanceWowEffects();
@@ -5421,166 +5028,6 @@ def handle_any_error(e):
         error_text=str(e),
     )
     return render_template_string(BASE_HTML, title="Error", body=body, nav=[], active=""), 500
-
-
-
-# SAFE_WEBSOCKET_CLIENT_INJECTION_APPLIED
-WEBSOCKET_CLIENT_JS = """
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script>
-(function(){
-    if (window.__zoomLiveRealtimeInstalled) return;
-    window.__zoomLiveRealtimeInstalled = true;
-
-    function formatDuration(seconds){
-        seconds = Math.max(0, parseInt(seconds || 0, 10));
-        var h = Math.floor(seconds / 3600);
-        var m = Math.floor((seconds % 3600) / 60);
-        var s = seconds % 60;
-        if (h > 0) return h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
-        return m + ":" + String(s).padStart(2,"0");
-    }
-
-    function animateNumber(el, next){
-        if (!el) return;
-        var start = parseInt((el.textContent || "0").replace(/[^0-9-]/g,""), 10);
-        if (isNaN(start)) start = 0;
-        next = parseInt(next || 0, 10);
-        var startTime = null;
-        var duration = 520;
-        function tick(ts){
-            if (!startTime) startTime = ts;
-            var p = Math.min((ts - startTime) / duration, 1);
-            var eased = 1 - Math.pow(1 - p, 3);
-            var val = Math.round(start + (next - start) * eased);
-            el.textContent = val;
-            if (p < 1) requestAnimationFrame(tick);
-        }
-        requestAnimationFrame(tick);
-    }
-
-    function markLivePulse(activeCount){
-        document.querySelectorAll(".live-badge,.badge-live,[class*='live'],[id*='live']").forEach(function(el){
-            var txt = (el.textContent || "").toLowerCase();
-            if (txt.includes("live")) {
-                el.classList.add("zap-live-pulse");
-                el.style.setProperty("--pulse-speed", activeCount > 10 ? "0.85s" : "1.25s");
-            }
-        });
-    }
-
-    function updateLiveDom(payload){
-        if (!payload || !payload.ok) return;
-        var active = payload.active_count || 0;
-        markLivePulse(active);
-
-        document.querySelectorAll("[data-live-count], #live_count, #active_count, .live-count").forEach(function(el){
-            animateNumber(el, active);
-        });
-
-        document.querySelectorAll("[data-not-joined-count], #not_joined_count").forEach(function(el){
-            animateNumber(el, payload.not_joined_count || 0);
-        });
-
-        (payload.participants || []).forEach(function(p){
-            var name = (p.name || "").trim().toLowerCase();
-            if (!name) return;
-            document.querySelectorAll("tr").forEach(function(row){
-                if ((row.textContent || "").toLowerCase().includes(name)) {
-                    row.classList.add("zap-live-row");
-                    row.querySelectorAll("td,span,div").forEach(function(cell){
-                        var t = (cell.textContent || "").trim();
-                        if (/^[0-9]+(\\.[0-9]+)?\\s*(min|mins|minutes)?$/i.test(t) || /^[0-9]+:[0-9]{2}/.test(t)) {
-                            cell.setAttribute("data-zap-duration", p.total_seconds || 0);
-                            cell.textContent = formatDuration(p.total_seconds || 0);
-                        }
-                    });
-                }
-            });
-        });
-    }
-
-    function pollLive(){
-        fetch("/api/live-snapshot", {cache:"no-store"})
-            .then(function(r){ return r.ok ? r.json() : null; })
-            .then(updateLiveDom)
-            .catch(function(){});
-    }
-
-    try {
-        if (window.io) {
-            var socket = window.io({transports:["websocket","polling"], reconnection:true});
-            socket.on("connect", function(){ document.body.classList.add("zap-socket-connected"); pollLive(); });
-            socket.on("disconnect", function(){ document.body.classList.remove("zap-socket-connected"); });
-            socket.on("live_snapshot", updateLiveDom);
-            socket.on("participant_update", function(){ pollLive(); });
-            socket.on("meeting_end", function(){ pollLive(); });
-        }
-    } catch(e) {}
-
-    setInterval(function(){
-        document.querySelectorAll("[data-zap-duration]").forEach(function(el){
-            var sec = parseInt(el.getAttribute("data-zap-duration") || "0", 10) + 1;
-            el.setAttribute("data-zap-duration", sec);
-            el.textContent = formatDuration(sec);
-        });
-    }, 1000);
-
-    setInterval(pollLive, 2000);
-    document.addEventListener("DOMContentLoaded", pollLive);
-    pollLive();
-})();
-</script>
-"""
-
-WEBSOCKET_CLIENT_CSS = """
-<style>
-.zap-live-pulse {
-    position: relative;
-    box-shadow: 0 0 0 0 rgba(34,197,94,.45) !important;
-    animation: zapPulse var(--pulse-speed, 1.25s) ease-out infinite !important;
-}
-@keyframes zapPulse {
-    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34,197,94,.45); }
-    70% { transform: scale(1.04); box-shadow: 0 0 0 12px rgba(34,197,94,0); }
-    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34,197,94,0); }
-}
-.zap-live-row {
-    transition: background-color .45s ease, transform .35s ease;
-}
-.zap-live-row:hover {
-    transform: translateX(2px);
-}
-.zap-socket-connected .zap-live-pulse::after {
-    content: '';
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    margin-left: 7px;
-    border-radius: 50%;
-    background: #22c55e;
-}
-</style>
-"""
-
-
-@app.after_request
-def inject_safe_realtime_client(response):
-    try:
-        content_type = response.headers.get("Content-Type", "")
-        if response.status_code == 200 and "text/html" in content_type:
-            body = response.get_data(as_text=True)
-            if "window.__zoomLiveRealtimeInstalled" not in body:
-                injection = WEBSOCKET_CLIENT_CSS + WEBSOCKET_CLIENT_JS
-                if "</body>" in body:
-                    body = body.replace("</body>", injection + "</body>", 1)
-                else:
-                    body += injection
-                response.set_data(body)
-                response.headers["Content-Length"] = str(len(response.get_data()))
-    except Exception as exc:
-        print(f"⚠️ realtime client injection skipped: {exc}")
-    return response
 
 
 @app.route("/toggle-theme")
@@ -6201,7 +5648,7 @@ def build_live_snapshot_payload(include_feed=True):
                     "sort": (parse_dt(p.get("last_leave")) or start_dt).timestamp(),
                 })
 
-    participant_payload = sorted(participant_payload, key=lambda x: (-int(x.get("duration_seconds") or 0), -int(1 if x.get("is_active") else 0), str(x.get("name") or "").lower()))
+    participant_payload = sorted(participant_payload, key=lambda x: (x.get("duration_seconds") or 0), reverse=True)
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
@@ -6244,11 +5691,7 @@ def build_live_snapshot_payload(include_feed=True):
 @app.route("/api/live-snapshot")
 @login_required
 def api_live_snapshot():
-    response = jsonify(build_live_snapshot_payload(include_feed=True))
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
+    return jsonify(build_live_snapshot_payload(include_feed=True))
 
 
 @app.route("/api/live-summary")
@@ -6287,7 +5730,7 @@ def live():
             .live-fix-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
             .live-fix-badge{display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:8px 13px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.34);color:#fecaca;font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
             .live-fix-dot{width:10px;height:10px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 rgba(239,68,68,.7);animation:liveFixPulse 1.2s infinite}@keyframes liveFixPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.7)}70%{box-shadow:0 0 0 12px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
-            .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)} .live-fix-badge.is-live{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.42);color:#bbf7d0}.live-fix-badge.is-live .live-fix-dot{background:#22c55e;animation:none}.live-nav-live{background:linear-gradient(135deg,#16a34a,#22c55e)!important;box-shadow:0 12px 30px rgba(34,197,94,.35)!important}.live-nav-idle{background:linear-gradient(135deg,#dc2626,#ef4444)!important;box-shadow:0 12px 30px rgba(239,68,68,.35)!important}.live-fix-badge .live-fix-dot{animation:liveFixPulse 1s infinite !important}.live-fix-badge.is-live .live-fix-dot{background:#22c55e !important;animation:liveFixGreenPulse 1s infinite !important}@keyframes liveFixGreenPulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.8);transform:scale(1)}70%{box-shadow:0 0 0 14px rgba(34,197,94,0);transform:scale(1.18)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0);transform:scale(1)}}
+            .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)} .live-fix-badge.is-live{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.42);color:#bbf7d0}.live-fix-badge.is-live .live-fix-dot{background:#22c55e;animation:none}.live-nav-live{background:linear-gradient(135deg,#16a34a,#22c55e)!important;box-shadow:0 12px 30px rgba(34,197,94,.35)!important}.live-nav-idle{background:linear-gradient(135deg,#dc2626,#ef4444)!important;box-shadow:0 12px 30px rgba(239,68,68,.35)!important}
         
 /* TOGGLE SWITCH */
 .toggle-switch {
@@ -6382,9 +5825,6 @@ def live():
             let tickBase = Date.now();
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
-            function secFromText(t){const p=String(t||'').trim().split(':').map(Number);if(p.length!==3||p.some(isNaN))return 0;return p[0]*3600+p[1]*60+p[2];}
-            function sortLiveRowsByDuration(){const body=document.getElementById('lfRows');if(!body)return;[...body.querySelectorAll('tr')].sort((a,b)=>secFromText(b.querySelector('.live-fix-duration')?.textContent)-secFromText(a.querySelector('.live-fix-duration')?.textContent)).forEach(r=>body.appendChild(r));}
-            function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);const start=parseInt(el.textContent||'0',10)||0;if(start===next){el.textContent=next;return;}const t0=performance.now(),dur=520;function step(t){const p=Math.min((t-t0)/dur,1);const eased=1-Math.pow(1-p,3);el.textContent=Math.round(start+(next-start)*eased);if(p<1)requestAnimationFrame(step);else el.textContent=next;}requestAnimationFrame(step);}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
             function render(data){
                 lastPayload=data; tickBase=Date.now();
@@ -6397,16 +5837,15 @@ def live():
                 document.getElementById('lfMeetingId').textContent='Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-');
                 document.getElementById('lfStarted').textContent='Started '+(data.has_live?(data.meeting.start_time||'-'):'-');
                 document.getElementById('lfDuration').textContent='Duration '+fmt((data.summary||{}).meeting_duration_seconds||0);
-                animateLiveNumber('lfActive',(data.summary||{}).active_now||0);
-                animateLiveNumber('lfKnown',(data.summary||{}).known_count||0);
-                animateLiveNumber('lfUnknown',(data.summary||{}).unknown_count||0);
+                document.getElementById('lfActive').textContent=(data.summary||{}).active_now||0;
+                document.getElementById('lfKnown').textContent=(data.summary||{}).known_count||0;
+                document.getElementById('lfUnknown').textContent=(data.summary||{}).unknown_count||0;
                 document.getElementById('lfHost').textContent=(data.summary||{}).host_present?'Present':'Absent';
-                animateLiveNumber('lfNotJoined',(data.summary||{}).not_joined_count||0);
+                document.getElementById('lfNotJoined').textContent=(data.summary||{}).not_joined_count||0;
                 const rows=data.participants||[];
                 document.getElementById('lfEmpty').style.display=rows.length?'none':'block';
                 document.getElementById('lfTableWrap').style.display=rows.length?'block':'none';
                 document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt((p.is_active?p.stored_seconds:p.duration_seconds)||0,10)}" data-active="${p.is_active?1:0}" data-current-join-ms="${p.is_active?parseInt(p.current_join_epoch_ms||0,10):0}">${fmt(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
-                sortLiveRowsByDuration();
                 document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
                 document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
             }
@@ -6428,7 +5867,6 @@ def live():
                     let sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((nowMs-startMs)/1000));
                     document.getElementById('lfDuration').textContent='Duration '+fmt(sec);
                 }
-                sortLiveRowsByDuration();
             },1000);
             render(lastPayload); poll();
         })();
@@ -6512,8 +5950,6 @@ def members():
                         cur.execute("UPDATE members SET active=%s WHERE id=%s", (next_val, member_id))
                 conn.commit()
             log_activity("member_toggle", str(member_id))
-            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                return jsonify({"ok": True, "type": "member", "id": member_id})
             flash("Member status updated.", "success")
 
         elif action == "delete" and can_edit_users():
@@ -6706,7 +6142,7 @@ def member_profile(member_id):
         """
         <style>
             .member-profile-hero{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,.6fr);gap:16px;align-items:stretch}
-            .profile-title{font-size:30px;font-weight:950;margin:0 0 8px}.profile-sub{color:#cbd5e1;font-weight:700}.profile-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}.profile-kpi{border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:14px;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.025));box-shadow:0 16px 38px rgba(2,6,23,.18)}.profile-kpi small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.profile-kpi strong{display:block;font-size:28px;margin-top:6px}.profile-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(420px,1fr));gap:18px}.profile-chart{height:430px;position:relative}.profile-chart.profile-chart-wide{grid-column:1/-1;height:400px}.risk-pill{display:inline-flex;gap:8px;align-items:center;border-radius:999px;padding:8px 12px;font-weight:950;background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.20)}.timeline-list{display:grid;gap:8px;max-height:360px;overflow:auto}.timeline-item{border:1px solid rgba(148,163,184,.16);border-radius:14px;padding:10px;background:rgba(255,255,255,.04)}.profile-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}@media(max-width:1050px){.member-profile-hero,.profile-chart-grid{grid-template-columns:1fr}}
+            .profile-title{font-size:30px;font-weight:950;margin:0 0 8px}.profile-sub{color:#cbd5e1;font-weight:700}.profile-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}.profile-kpi{border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:14px;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.025));box-shadow:0 16px 38px rgba(2,6,23,.18)}.profile-kpi small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.profile-kpi strong{display:block;font-size:28px;margin-top:6px}.profile-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.profile-chart{height:320px;position:relative}.profile-chart.small{height:280px}.risk-pill{display:inline-flex;gap:8px;align-items:center;border-radius:999px;padding:8px 12px;font-weight:950;background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.20)}.timeline-list{display:grid;gap:8px;max-height:360px;overflow:auto}.timeline-item{border:1px solid rgba(148,163,184,.16);border-radius:14px;padding:10px;background:rgba(255,255,255,.04)}.profile-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}@media(max-width:1050px){.member-profile-hero,.profile-chart-grid{grid-template-columns:1fr}}
         
 /* TOGGLE SWITCH */
 .toggle-switch {
@@ -6740,7 +6176,7 @@ def member_profile(member_id):
 }
 
 </style>
-        <div class="member-profile-layout-fix"><div class="member-profile-hero">
+        <div class="member-profile-hero">
             <div class="hero">
                 <div class="profile-sub">Member Profile / Deep Insights</div>
                 <h2 class="profile-title">{{ member_display_name(data.member) }}</h2>
@@ -6771,26 +6207,23 @@ def member_profile(member_id):
         </div>
 
         <div class="profile-chart-grid">
-            <div class="card profile-chart">
-                <h3>Score Over Time</h3>
-                <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> score out of 100. Relation: higher line means stronger attendance consistency, duration participation, and engagement.</div>
-                <canvas id="memberScoreChart"></canvas>
-            </div>
-            <div class="card profile-chart">
-                <h3>Duration Over Time</h3>
-                <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> attended minutes. Relation: taller bars mean the member stayed longer in that meeting.</div>
-                <canvas id="memberDurationChart"></canvas>
-            </div>
-            <div class="card profile-chart profile-chart-wide">
-                <h3>Late Pattern</h3>
-                <div class="chart-info-box"><b>X-axis:</b> weekday. <b>Y-axis:</b> late count. Relation: taller bars show which days this member is more frequently late.</div>
-                <canvas id="memberLateChart"></canvas>
-            </div>
+            <div class="card profile-chart"><h3>Score Over Time</h3><canvas id="memberScoreChart"></canvas></div>
+            <div class="card profile-chart"><h3>Duration Over Time</h3><canvas id="memberDurationChart"></canvas></div>
+            <div class="card profile-chart small"><h3>Status Distribution</h3><canvas id="memberStatusChart"></canvas></div>
+            <div class="card profile-chart small"><h3>Late Pattern</h3><canvas id="memberLateChart"></canvas></div>
         </div>
 
         <br>
         <div class="grid">
-            <div class="card profile-alert-wide">
+            <div class="card">
+                <h3>Risk History</h3>
+                <div class="timeline-list">
+                    {% for label in data.charts.risk_labels|reverse %}
+                    <div class="timeline-item"><b>{{ label }}</b> · Risk score {{ data.charts.risk_values[loop.revindex0] }}</div>
+                    {% else %}<div class="muted">No risk history yet.</div>{% endfor %}
+                </div>
+            </div>
+            <div class="card">
                 <h3>Alert History</h3>
                 <div class="timeline-list">
                     {% for alert in data.alerts %}
@@ -6813,8 +6246,6 @@ def member_profile(member_id):
             </div>
         </div>
 
-        </div>
-
         <script>
         const memberProfileData = {{ data.charts|tojson }};
         function memberProfilePalette(){return (window.getThemePalette?window.getThemePalette():{ok:'#22c55e',warn:'#f59e0b',danger:'#ef4444',a:'#6366f1',b:'#22d3ee',c:'#a855f7',text:'#cbd5e1',grid:'rgba(148,163,184,.18)'});}
@@ -6823,6 +6254,7 @@ def member_profile(member_id):
             const p=memberProfilePalette();
             new Chart(document.getElementById('memberScoreChart'),{type:'line',data:{labels:memberProfileData.labels,datasets:[{label:'Score',data:memberProfileData.score,borderColor:p.a,backgroundColor:p.a,fill:false,tension:.42}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,max:100,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
             new Chart(document.getElementById('memberDurationChart'),{type:'bar',data:{labels:memberProfileData.labels,datasets:[{label:'Duration minutes',data:memberProfileData.duration,backgroundColor:p.b,borderColor:p.b}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
+            new Chart(document.getElementById('memberStatusChart'),{type:'doughnut',data:{labels:memberProfileData.status_distribution.labels,datasets:[{data:memberProfileData.status_distribution.values,backgroundColor:[p.ok,p.warn,p.danger,p.c]}]},options:{responsive:true,maintainAspectRatio:false}});
             new Chart(document.getElementById('memberLateChart'),{type:'bar',data:{labels:memberProfileData.late_pattern.map(x=>x.label),datasets:[{label:'Late count',data:memberProfileData.late_pattern.map(x=>x.count),backgroundColor:p.warn,borderColor:p.warn}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
         }
         document.addEventListener('DOMContentLoaded',()=>setTimeout(makeMemberProfileCharts,100));
@@ -6877,16 +6309,12 @@ def users():
                     row = cur.fetchone()
                     if row:
                         if row["username"] == session.get("username"):
-                            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                                return jsonify({"ok": False, "error": "You cannot disable your own active session."}), 400
                             flash("You cannot disable your own active session.", "error")
                             return redirect(url_for("users"))
                         next_val = db_false_value(conn, "users", "is_active") if is_truthy(row["is_active"]) else db_true_value(conn, "users", "is_active")
                         cur.execute("UPDATE users SET is_active=%s WHERE id=%s", (next_val, user_id))
                 conn.commit()
             log_activity("user_toggle", str(user_id))
-            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                return jsonify({"ok": True, "type": "user", "id": user_id})
             flash("User status updated.", "success")
 
         elif action == "password":
@@ -6989,7 +6417,7 @@ def users():
                         <td>
                             <div class='row'>
                                 <a class='btn secondary small' href='{{ url_for("users", edit_id=u.id) }}'>Edit</a>
-                                <form method='post' class='toggle-form'>
+                                <form method='post'>
                                     <input type='hidden' name='action' value='toggle'>
                                     <input type='hidden' name='user_id' value='{{ u.id }}'>
                                     <button type='submit' class='status-toggle-btn {% if u.is_active|string in ['1', 'True', 'true', 't'] %}is-active{% endif %}' aria-label='Toggle user status'>
@@ -8507,7 +7935,7 @@ def attendance_register_data():
 def attendance_register_export_excel():
     data = attendance_register_payload(request.args.get("year"), request.args.get("month"), request.args.get("search", ""), all_rows=True)
     output = io.StringIO()
-    output.write("""<html><head><meta charset='utf-8'></head><body><table border='1'>""")
+    output.write("""<html><head><meta charset='utf-8'>""")</head><body><table border='1'>")
     output.write(f"<tr><th colspan='{len(data['days']) + 7}'>Attendance Register - {data['month_name']} {data['year']}</th></tr>")
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
     for row in data["rows"]:
@@ -9585,7 +9013,7 @@ def _ai_parse_threshold(query, default=AI_LEVEL3_LOW_ATTENDANCE_DEFAULT):
 def _ai_parse_days(query, default=None):
     import re
     q = (query or '').lower()
-    m = re.search(r'last\\s+(\d{1,3})\\s+(?:day|days)', q)
+    m = re.search(r'last\s+(\d{1,3})\s+(?:day|days)', q)
     if m:
         return max(1, min(365, int(m.group(1))))
     if 'last week' in q or 'past week' in q:
@@ -10690,23 +10118,5 @@ def api_alerts_run_now():
     result = run_smart_scheduler(force=True)
     return jsonify({"ok": True, **result})
 
-
-# SAFE_LIVE_POLLING_ROUTE_APPLIED
-@app.route("/api/live-snapshot")
-@login_required
-def api_live_snapshot():
-    return jsonify(build_live_payload())
-
-
-if socketio is not None:
-    @socketio.on("connect")
-    def _safe_socket_connect():
-        try:
-            emit_live_update("live_snapshot", build_live_payload())
-        except Exception as exc:
-            print(f"⚠️ Socket connect snapshot failed: {exc}")
-
-
 if __name__ == "__main__":
-    # SAFE_SOCKETIO_MAIN_RUN_APPLIED
-    (socketio.run if socketio is not None else app.run)(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
