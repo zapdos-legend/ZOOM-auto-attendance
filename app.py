@@ -631,6 +631,249 @@ body.za-socket-live-mode .live-fix-conn.bad{
     box-shadow:0 0 18px rgba(239,68,68,.18)!important;
 }
 
+
+/* ===== PHASE 2 ADVANCED REALTIME UI ===== */
+.za-realtime-dock{
+  position:fixed;
+  right:18px;
+  top:88px;
+  width:320px;
+  max-width:calc(100vw - 36px);
+  z-index:99998;
+  pointer-events:none;
+}
+.za-realtime-status{
+  pointer-events:auto;
+  border:1px solid rgba(148,163,184,.22);
+  background:rgba(15,23,42,.92);
+  backdrop-filter:blur(14px);
+  border-radius:18px;
+  padding:12px 14px;
+  box-shadow:0 18px 48px rgba(0,0,0,.35);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+}
+.za-realtime-status strong{
+  display:block;
+  font-size:13px;
+  color:#e5e7eb;
+}
+.za-realtime-status span{
+  font-size:11px;
+  font-weight:900;
+  color:#94a3b8;
+}
+.za-realtime-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  border-radius:999px;
+  padding:6px 9px;
+  font-size:11px;
+  font-weight:950;
+  border:1px solid rgba(148,163,184,.2);
+  background:rgba(30,41,59,.72);
+  color:#cbd5e1;
+}
+.za-realtime-pill::before{
+  content:"";
+  width:8px;
+  height:8px;
+  border-radius:999px;
+  background:#ef4444;
+  box-shadow:0 0 0 0 rgba(239,68,68,.55);
+  animation:zaSocketPulse 1.5s infinite;
+}
+body.za-socket-live-mode .za-realtime-pill{
+  color:#bbf7d0;
+  border-color:rgba(34,197,94,.35);
+  background:rgba(22,163,74,.12);
+}
+body.za-socket-live-mode .za-realtime-pill::before{
+  background:#22c55e;
+  box-shadow:0 0 0 0 rgba(34,197,94,.55);
+}
+@keyframes zaSocketPulse{
+  0%{transform:scale(1);box-shadow:0 0 0 0 currentColor;}
+  70%{transform:scale(1.25);box-shadow:0 0 0 10px rgba(34,197,94,0);}
+  100%{transform:scale(1);box-shadow:0 0 0 0 rgba(34,197,94,0);}
+}
+.za-realtime-feed{
+  pointer-events:auto;
+  max-height:280px;
+  overflow:auto;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.za-feed-item{
+  border:1px solid rgba(148,163,184,.18);
+  background:rgba(15,23,42,.86);
+  border-radius:16px;
+  padding:10px 12px;
+  box-shadow:0 16px 36px rgba(0,0,0,.28);
+  animation:zaFeedIn .38s cubic-bezier(.16,1,.3,1) both;
+}
+.za-feed-item.join{border-color:rgba(34,197,94,.34);}
+.za-feed-item.leave{border-color:rgba(245,158,11,.34);}
+.za-feed-item.alert{border-color:rgba(239,68,68,.42);animation:zaFeedIn .38s cubic-bezier(.16,1,.3,1) both, zaCritical 1.4s ease-in-out 2;}
+.za-feed-item strong{display:block;color:#e5e7eb;font-size:12px;margin-bottom:3px;}
+.za-feed-item small{display:block;color:#94a3b8;font-weight:800;font-size:10px;}
+@keyframes zaFeedIn{
+  from{opacity:0;transform:translateX(22px) scale(.98);}
+  to{opacity:1;transform:translateX(0) scale(1);}
+}
+.za-row-live-flash{
+  animation:zaRowFlash 1.05s ease both;
+}
+@keyframes zaRowFlash{
+  0%{background:rgba(34,197,94,.22);}
+  100%{background:transparent;}
+}
+.za-row-left-flash{
+  animation:zaRowLeftFlash 1.05s ease both;
+}
+@keyframes zaRowLeftFlash{
+  0%{background:rgba(245,158,11,.20);}
+  100%{background:transparent;}
+}
+.za-realtime-updated{
+  animation:zaRealtimeUpdated .75s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes zaRealtimeUpdated{
+  0%{transform:scale(1);filter:brightness(1);}
+  40%{transform:scale(1.035);filter:brightness(1.2);}
+  100%{transform:scale(1);filter:brightness(1);}
+}
+@media (max-width: 760px){
+  .za-realtime-dock{right:10px;left:10px;top:auto;bottom:12px;width:auto;}
+  .za-realtime-feed{max-height:190px;}
+}
+<script>
+(function(){
+  if(window.ZoomAttendanceAdvancedRealtimeUI){ return; }
+  window.ZoomAttendanceAdvancedRealtimeUI = {
+    maxFeed:8,
+    ensureDock:function(){
+      var dock = document.querySelector(".za-realtime-dock");
+      if(dock) return dock;
+      dock = document.createElement("div");
+      dock.className = "za-realtime-dock";
+      dock.innerHTML =
+        '<div class="za-realtime-status">' +
+          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Connecting socket...</span></div>' +
+          '<div class="za-realtime-pill" id="zaRealtimePill">Socket</div>' +
+        '</div>' +
+        '<div class="za-realtime-feed" id="zaRealtimeFeed"></div>';
+      document.body.appendChild(dock);
+      return dock;
+    },
+    setStatus:function(text, connected){
+      this.ensureDock();
+      var sub = document.getElementById("zaRealtimeSub");
+      var pill = document.getElementById("zaRealtimePill");
+      if(sub) sub.textContent = text || "";
+      if(pill) pill.textContent = connected ? "Live" : "Reconnect";
+    },
+    addFeed:function(type, title, detail){
+      this.ensureDock();
+      var feed = document.getElementById("zaRealtimeFeed");
+      if(!feed) return;
+      var item = document.createElement("div");
+      item.className = "za-feed-item " + (type || "info");
+      item.innerHTML = "<strong></strong><small></small>";
+      item.querySelector("strong").textContent = title || "Realtime update";
+      item.querySelector("small").textContent = detail || new Date().toLocaleTimeString();
+      feed.insertBefore(item, feed.firstChild);
+      while(feed.children.length > this.maxFeed){ feed.removeChild(feed.lastChild); }
+    },
+    flashMatchingRows:function(name, left){
+      if(!name) return;
+      var needle = String(name).toLowerCase();
+      document.querySelectorAll("tbody tr").forEach(function(row){
+        var txt = (row.textContent || "").toLowerCase();
+        if(txt.indexOf(needle) !== -1){
+          row.classList.remove("za-row-live-flash","za-row-left-flash");
+          void row.offsetWidth;
+          row.classList.add(left ? "za-row-left-flash" : "za-row-live-flash");
+        }
+      });
+    },
+    refreshRiskBadges:function(){
+      if(window.ZoomAttendanceMotionEngine && typeof window.ZoomAttendanceMotionEngine.initRiskBadges === "function"){
+        document.querySelectorAll("[data-za-risk-bound]").forEach(function(row){ row.dataset.zaRiskBound = ""; });
+        try{ window.ZoomAttendanceMotionEngine.initRiskBadges(); }catch(e){}
+      }
+    },
+    animateDashboardNumbers:function(){
+      document.querySelectorAll(".card strong,.mini-card strong,.analytics-card strong,.activity-clean-card strong,.stat-value,.metric-value,.kpi-value").forEach(function(el){
+        el.classList.remove("za-realtime-updated");
+        void el.offsetWidth;
+        el.classList.add("za-realtime-updated");
+      });
+    },
+    applySnapshot:function(payload){
+      payload = payload || {};
+      this.setStatus("Last socket update: " + new Date().toLocaleTimeString(), true);
+      this.animateDashboardNumbers();
+      this.refreshRiskBadges();
+      var summary = payload.summary || {};
+      if(payload.socket_reason){
+        this.addFeed("info", "Live snapshot refreshed", "Reason: " + payload.socket_reason);
+      }
+      if(summary.live_participants !== undefined){
+        var text = "Participants: " + summary.live_participants;
+        if(summary.members_live !== undefined) text += " | Members: " + summary.members_live;
+        this.setStatus(text, true);
+      }
+    },
+    bind:function(){
+      var self = this;
+      self.ensureDock();
+      window.addEventListener("za:socket-connected", function(){ self.setStatus("Socket connected", true); self.addFeed("join","Realtime connected","Socket channel ready"); });
+      window.addEventListener("za:socket-disconnected", function(){ self.setStatus("Socket reconnecting", false); self.addFeed("alert","Realtime reconnecting","Waiting for socket"); });
+      window.addEventListener("za:live-snapshot", function(e){ self.applySnapshot(e.detail || {}); });
+      window.addEventListener("za:realtime", function(e){
+        var detail = e.detail || {};
+        var evt = detail.event || "";
+        var payload = detail.payload || {};
+        var name = payload.name || payload.participant_name || payload.message || "Participant";
+        if(evt === "participant_join"){
+          self.addFeed("join", name + " joined", payload.time || new Date().toLocaleTimeString());
+          self.flashMatchingRows(name, false);
+        }else if(evt === "participant_leave"){
+          self.addFeed("leave", name + " left", payload.time || new Date().toLocaleTimeString());
+          self.flashMatchingRows(name, true);
+        }else if(evt === "meeting_finalized"){
+          self.addFeed("leave", "Meeting finalized", payload.ended_at || new Date().toLocaleTimeString());
+        }else if(evt === "smart_alert"){
+          self.addFeed("alert", payload.title || "Smart alert", payload.message || new Date().toLocaleTimeString());
+        }else if(evt === "risk_update"){
+          self.addFeed("info", "Risk intelligence updated", new Date().toLocaleTimeString());
+          self.refreshRiskBadges();
+        }
+      });
+      setTimeout(function(){
+        if(document.body.classList.contains("za-socket-live-mode")){
+          self.setStatus("Socket connected", true);
+        }else{
+          self.setStatus("Waiting for socket", false);
+        }
+      },900);
+    }
+  };
+  if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded", function(){ window.ZoomAttendanceAdvancedRealtimeUI.bind(); });
+  }else{
+    window.ZoomAttendanceAdvancedRealtimeUI.bind();
+  }
+})();
+</script>
+/* ===== END PHASE 2 ADVANCED REALTIME UI ===== */
+
 </style>
 '''
 # ===== END THEME =====
@@ -720,6 +963,10 @@ except Exception:
 ALERT_AUTOMATION_BG_RUNNING = globals().get("ALERT_AUTOMATION_BG_RUNNING", False)
 ALERT_AUTOMATION_LAST_RUN_TS = globals().get("ALERT_AUTOMATION_LAST_RUN_TS", 0)
 ALERT_AUTOMATION_RUN_EVERY_SECONDS = int(os.getenv("ALERT_AUTOMATION_RUN_EVERY_SECONDS", "60") or "60")
+
+
+# ===== ADVANCED REALTIME UI ALERT DEFAULTS =====
+ALERT_AUTOMATION_RUN_EVERY_SECONDS = globals().get("ALERT_AUTOMATION_RUN_EVERY_SECONDS", int(os.getenv("ALERT_AUTOMATION_RUN_EVERY_SECONDS", "60") or "60"))
 
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
@@ -10764,6 +11011,19 @@ def emit_live_snapshot(reason="update", meeting_uuid=None, target_sid=None):
     except Exception as exc:
         print(f"⚠️ live snapshot socket emit skipped: {exc}")
 
+
+def emit_smart_alert_realtime(title, message, alert_type="smart_alert", entity_id="system"):
+    try:
+        emit_realtime("smart_alert", {
+            "title": title,
+            "message": message,
+            "alert_type": alert_type,
+            "entity_id": str(entity_id),
+            "ts": time.time(),
+        })
+    except Exception as exc:
+        print(f"⚠️ realtime smart alert skipped: {exc}")
+
 def calculate_member_score(attendance, consistency, duration):
     try:
         attendance = max(0, min(100, float(attendance or 0)))
@@ -10910,6 +11170,21 @@ if socketio:
     except Exception as exc:
         print(f"⚠️ socket event registration skipped: {exc}")
 # ========================================================================
+
+
+@app.route("/api/realtime-test")
+@login_required
+def api_realtime_test():
+    emit_realtime("smart_alert", {
+        "title": "Realtime test",
+        "message": "Socket alert stream is working.",
+        "alert_type": "test",
+        "entity_id": "manual",
+        "ts": time.time(),
+    })
+    emit_live_snapshot("manual_test")
+    return jsonify({"ok": True, "message": "Realtime test emitted"})
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
