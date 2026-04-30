@@ -489,9 +489,29 @@ button:active,.btn:active,a.btn:active{
           socket.on("connect", function(){
             self.toast("Realtime connected");
             document.body.classList.add("za-realtime-connected");
+            document.body.classList.add("za-socket-live-mode");
+            try{ socket.emit("request_live_snapshot", {source:"connect", path:location.pathname}); }catch(e){}
+            window.dispatchEvent(new CustomEvent("za:socket-connected", {detail:{connected:true}}));
           });
           socket.on("disconnect", function(){
             document.body.classList.remove("za-realtime-connected");
+            document.body.classList.remove("za-socket-live-mode");
+            window.dispatchEvent(new CustomEvent("za:socket-disconnected", {detail:{connected:false}}));
+          });
+          socket.on("live_snapshot", function(payload){
+            payload = payload || {};
+            window.__zaLastSocketSnapshot = payload;
+            window.dispatchEvent(new CustomEvent("za:live-snapshot", {detail:payload}));
+            if(typeof window.zaApplyLiveSnapshot === "function"){
+              try{ window.zaApplyLiveSnapshot(payload); }catch(e){}
+            }
+          });
+          socket.on("live_summary", function(payload){
+            payload = payload || {};
+            window.dispatchEvent(new CustomEvent("za:live-summary", {detail:payload}));
+            if(typeof window.zaApplyLiveSummary === "function"){
+              try{ window.zaApplyLiveSummary(payload); }catch(e){}
+            }
           });
           ["live_update","participant_join","participant_leave","meeting_finalized","smart_alert","risk_update"].forEach(function(evt){
             socket.on(evt, function(payload){
@@ -502,7 +522,9 @@ button:active,.btn:active,a.btn:active{
               else if(evt === "smart_alert") self.toast("Alert: " + label);
               else if(evt === "risk_update") self.toast("Risk updated");
               window.dispatchEvent(new CustomEvent("za:realtime", {detail:{event:evt, payload:payload}}));
-              if(typeof window.zaLiveRefresh === "function"){
+              if(window.zaSocket && window.zaSocket.connected){
+                try{ window.zaSocket.emit("request_live_snapshot", {source:"event", event:evt}); }catch(e){}
+              } else if(typeof window.zaLiveRefresh === "function"){
                 try{ window.zaLiveRefresh(true); }catch(e){}
               }
             });
@@ -598,6 +620,17 @@ button:active,.btn:active,a.btn:active{
 body.za-realtime-connected .za-live-dot{animation-duration:1s!important;}
 .badge.warn{background:rgba(245,158,11,.16)!important;color:#fde68a!important;border-color:rgba(245,158,11,.35)!important;}
 
+
+/* ===== PHASE 2 TRUE SOCKET LIVE MODE ===== */
+body.za-socket-live-mode .live-fix-conn.ok{
+    border-color:rgba(34,197,94,.45)!important;
+    box-shadow:0 0 18px rgba(34,197,94,.20)!important;
+}
+body.za-socket-live-mode .live-fix-conn.bad{
+    border-color:rgba(239,68,68,.45)!important;
+    box-shadow:0 0 18px rgba(239,68,68,.18)!important;
+}
+
 </style>
 '''
 # ===== END THEME =====
@@ -686,6 +719,7 @@ except Exception:
 # Prevents after_request warning when older DB/runtime loads before alert automation state exists.
 ALERT_AUTOMATION_BG_RUNNING = globals().get("ALERT_AUTOMATION_BG_RUNNING", False)
 ALERT_AUTOMATION_LAST_RUN_TS = globals().get("ALERT_AUTOMATION_LAST_RUN_TS", 0)
+ALERT_AUTOMATION_RUN_EVERY_SECONDS = int(os.getenv("ALERT_AUTOMATION_RUN_EVERY_SECONDS", "60") or "60")
 
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
@@ -2128,6 +2162,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
             },
         )
         emit_realtime("live_update", {"meeting_uuid": meeting_uuid, "reason": event_type, "ts": time.time()})
+        emit_live_snapshot(event_type, meeting_uuid)
     except Exception as exc:
         print(f"⚠️ realtime participant emit skipped: {exc}")
 
@@ -2275,6 +2310,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
             },
         )
         emit_realtime("live_update", {"meeting_uuid": meeting_uuid, "reason": "meeting_finalized", "ts": time.time()})
+        emit_live_snapshot("meeting_finalized", meeting_uuid)
     except Exception as exc:
         print(f"⚠️ realtime finalize emit skipped: {exc}")
     return updated
@@ -5563,27 +5599,19 @@ button:active {
     window.setupAppearanceEngineV8=setupAppearanceEngineV8;
 
 
-    function updateGlobalLiveNavState(){
+    function updateGlobalLiveNavState(data){
         const liveNav = document.getElementById('globalLiveNavLink');
         if(!liveNav) return;
-        fetch('/api/live-summary?t=' + Date.now(), {cache:'no-store'})
-            .then(r => r.json())
-            .then(data => {
-                const isLive = !!(data && data.has_live);
-                liveNav.classList.toggle('live-status-live', isLive);
-                liveNav.classList.toggle('live-status-idle', !isLive);
-                const icon = liveNav.querySelector('.nav-icon');
-                if(icon) icon.textContent = isLive ? '🟢' : '🔴';
-                liveNav.title = isLive ? 'Live meeting is running' : 'No live meeting running';
-            })
-            .catch(() => {
-                liveNav.classList.remove('live-status-live');
-                liveNav.classList.add('live-status-idle');
-                const icon = liveNav.querySelector('.nav-icon');
-                if(icon) icon.textContent = '🔴';
-                liveNav.title = 'Live status unavailable';
-            });
+        const isLive = !!(data && data.has_live);
+        liveNav.classList.toggle('live-status-live', isLive);
+        liveNav.classList.toggle('live-status-idle', !isLive);
+        const icon = liveNav.querySelector('.nav-icon');
+        if(icon) icon.textContent = isLive ? '🟢' : '🔴';
+        liveNav.title = isLive ? 'Live meeting is running' : 'No live meeting running';
     }
+    window.zaApplyLiveSummary = function(data){ updateGlobalLiveNavState(data); };
+    window.addEventListener('za:live-snapshot', function(e){ updateGlobalLiveNavState(e.detail || {}); });
+    window.addEventListener('za:live-summary', function(e){ updateGlobalLiveNavState(e.detail || {}); });
 
 
 
@@ -5647,8 +5675,7 @@ button:active {
         setupChartDefaults();
         polishLayoutSpacing();
         enhanceWowEffects();
-        updateGlobalLiveNavState();
-        setInterval(updateGlobalLiveNavState, 6000);
+        updateGlobalLiveNavState(window.__zaLastSocketSnapshot || null);
     });
 })();
 </script>
@@ -6479,6 +6506,7 @@ def api_live_snapshot():
 def api_live_summary():
     payload = build_live_snapshot_payload(include_feed=False)
     return jsonify({
+        "transport": "debug_api_socket_primary",
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
         "server_now": payload.get("server_now"),
@@ -6633,11 +6661,29 @@ def live():
                 document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
                 document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
             }
-            async function poll(skipSchedule){
-                try{let r=await fetch('{{ url_for("api_live_snapshot") }}?t='+Date.now(),{cache:'no-store',credentials:'same-origin'});let d=await r.json();document.getElementById('lfConn').className='live-fix-conn ok';document.getElementById('lfConn').textContent='● Updated '+new Date().toLocaleTimeString();render(d);}catch(e){document.getElementById('lfConn').className='live-fix-conn bad';document.getElementById('lfConn').textContent='● Poll retrying';}
-                if(!skipSchedule){setTimeout(poll,2000);}
+            function applySocketPayload(data){
+                try{
+                    if(!data) return;
+                    document.getElementById('lfConn').className='live-fix-conn ok';
+                    document.getElementById('lfConn').textContent='● Socket updated '+new Date().toLocaleTimeString();
+                    render(data);
+                }catch(e){
+                    document.getElementById('lfConn').className='live-fix-conn bad';
+                    document.getElementById('lfConn').textContent='● Socket render retrying';
+                }
             }
-            window.zaLiveRefresh=function(){ return poll(true); };
+            window.zaApplyLiveSnapshot=function(data){ applySocketPayload(data); };
+            window.zaLiveRefresh=function(){
+                if(window.zaSocket && window.zaSocket.connected){
+                    window.zaSocket.emit('request_live_snapshot', {source:'live_page'});
+                    return true;
+                }
+                document.getElementById('lfConn').className='live-fix-conn bad';
+                document.getElementById('lfConn').textContent='● Socket reconnecting';
+                return false;
+            };
+            window.addEventListener('za:live-snapshot', function(e){ applySocketPayload(e.detail); });
+            window.addEventListener('za:socket-connected', function(){ window.zaLiveRefresh(); });
             setInterval(function(){
                 const nowMs=Date.now();
                 document.querySelectorAll('.live-fix-duration').forEach(function(el){
@@ -6654,7 +6700,7 @@ def live():
                 }
                 sortLiveRowsByDuration();
             },1000);
-            render(lastPayload); poll();
+            render(lastPayload); setTimeout(function(){ if(window.zaLiveRefresh) window.zaLiveRefresh(); }, 600);
         })();
         </script>
         """,
@@ -10665,10 +10711,19 @@ def api_alerts_run_now():
 
 
 
+
 # ================== PHASE 2 SAFE REALTIME + INTELLIGENCE ==================
 try:
     from flask_socketio import SocketIO
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading", logger=False, engineio_logger=False)
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins="*",
+        async_mode="threading",
+        logger=False,
+        engineio_logger=False,
+        ping_timeout=25,
+        ping_interval=10,
+    )
 except Exception as _socketio_error:
     socketio = None
     print(f"⚠️ SocketIO disabled: {_socketio_error}")
@@ -10678,8 +10733,36 @@ def emit_realtime(event, data=None):
     try:
         if socketio:
             socketio.emit(event, data or {}, namespace="/")
+            print(f"📡 SOCKET EMIT: {event}")
     except Exception as exc:
         print(f"⚠️ realtime emit skipped for {event}: {exc}")
+
+def build_live_summary_from_snapshot(payload):
+    return {
+        "ok": payload.get("ok"),
+        "has_live": payload.get("has_live"),
+        "server_now": payload.get("server_now"),
+        "meeting": payload.get("meeting"),
+        "summary": payload.get("summary"),
+    }
+
+def emit_live_snapshot(reason="update", meeting_uuid=None, target_sid=None):
+    """Push the complete live dashboard payload through Socket.IO only."""
+    try:
+        if not socketio:
+            return
+        payload = build_live_snapshot_payload(include_feed=True)
+        payload["socket_reason"] = reason
+        payload["socket_meeting_uuid"] = meeting_uuid
+        if target_sid:
+            socketio.emit("live_snapshot", payload, to=target_sid, namespace="/")
+            socketio.emit("live_summary", build_live_summary_from_snapshot(payload), to=target_sid, namespace="/")
+        else:
+            socketio.emit("live_snapshot", payload, namespace="/")
+            socketio.emit("live_summary", build_live_summary_from_snapshot(payload), namespace="/")
+        print(f"📡 SOCKET LIVE SNAPSHOT: {reason}")
+    except Exception as exc:
+        print(f"⚠️ live snapshot socket emit skipped: {exc}")
 
 def calculate_member_score(attendance, consistency, duration):
     try:
@@ -10787,13 +10870,43 @@ def api_member_risk_summary():
         return jsonify({"ok": False, "error": str(exc), "members": []}), 200
 
 if socketio:
-    def _za_socket_connect():
-        emit_realtime("server_ready", {"message": "Realtime connected"})
+    def _za_socket_connect(auth=None):
+        try:
+            sid = request.sid
+        except Exception:
+            sid = None
+        print(f"📡 SOCKET CONNECTED: {sid}")
+        try:
+            emit_realtime("server_ready", {"message": "Realtime connected", "sid": sid, "ts": time.time()})
+            emit_live_snapshot("connect", target_sid=sid)
+        except Exception as exc:
+            print(f"⚠️ socket connect emit skipped: {exc}")
+
+    def _za_socket_disconnect():
+        try:
+            sid = request.sid
+        except Exception:
+            sid = None
+        print(f"📡 SOCKET DISCONNECTED: {sid}")
+
     def _za_socket_ping(data=None):
-        emit_realtime("server_pong", {"ok": True, "ts": time.time()})
+        try:
+            emit_realtime("server_pong", {"ok": True, "ts": time.time()})
+        except Exception:
+            pass
+
+    def _za_socket_request_live_snapshot(data=None):
+        try:
+            sid = request.sid
+        except Exception:
+            sid = None
+        emit_live_snapshot("client_request", target_sid=sid)
+
     try:
         socketio.on_event("connect", _za_socket_connect, namespace="/")
+        socketio.on_event("disconnect", _za_socket_disconnect, namespace="/")
         socketio.on_event("za_ping", _za_socket_ping, namespace="/")
+        socketio.on_event("request_live_snapshot", _za_socket_request_live_snapshot, namespace="/")
     except Exception as exc:
         print(f"⚠️ socket event registration skipped: {exc}")
 # ========================================================================
