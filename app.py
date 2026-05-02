@@ -12279,6 +12279,350 @@ def api_live_insights():
         return jsonify({"ok": False, "error": str(exc)}), 200
 
 
+
+# ===== GUARANTEED LAYOUT TOOLBAR INJECTION - SAFE FRONTEND ONLY =====
+ZA_LAYOUT_TOOLBAR_ASSET = r"""
+<style id="za-layout-toolbar-style">
+:root{--za-page-transition-ms:360ms;}
+html.za-page-transitioning body{opacity:.15;transform:translateX(12px);}
+body{
+  transition:opacity var(--za-page-transition-ms) cubic-bezier(.16,1,.3,1),
+             transform var(--za-page-transition-ms) cubic-bezier(.16,1,.3,1);
+}
+body.za-page-enter{animation:zaPageEnter .38s cubic-bezier(.16,1,.3,1) both;}
+@keyframes zaPageEnter{from{opacity:0;transform:translateX(16px);}to{opacity:1;transform:translateX(0);}}
+
+.za-layout-toolbar{
+  position:fixed!important;
+  left:210px!important;
+  top:88px!important;
+  z-index:2147483647!important;
+  display:flex!important;
+  align-items:center!important;
+  gap:8px!important;
+  padding:9px!important;
+  border-radius:18px!important;
+  background:rgba(15,23,42,.98)!important;
+  border:1px solid rgba(196,181,253,.38)!important;
+  box-shadow:0 18px 52px rgba(0,0,0,.55), 0 0 22px rgba(139,92,246,.24)!important;
+  backdrop-filter:blur(16px)!important;
+  font-family:Inter,system-ui,sans-serif!important;
+}
+.za-layout-toolbar button{
+  border:1px solid rgba(255,255,255,.18)!important;
+  border-radius:999px!important;
+  padding:8px 12px!important;
+  font-size:11px!important;
+  font-weight:950!important;
+  line-height:1!important;
+  background:linear-gradient(90deg,#4338ca,#7c3aed)!important;
+  color:#fff!important;
+  cursor:pointer!important;
+  box-shadow:0 10px 22px rgba(79,70,229,.22)!important;
+}
+.za-layout-toolbar button:hover{filter:brightness(1.12)!important;transform:translateY(-1px)!important;}
+.za-layout-toolbar button.active{
+  background:linear-gradient(90deg,#22c55e,#10b981)!important;
+  box-shadow:0 0 24px rgba(34,197,94,.28)!important;
+}
+.za-layout-toolbar .za-layout-note{
+  color:#c4b5fd!important;
+  font-size:10px!important;
+  font-weight:900!important;
+  white-space:nowrap!important;
+}
+.za-layout-control-active .card,
+.za-layout-control-active .mini-card,
+.za-layout-control-active .analytics-card,
+.za-layout-control-active .glass-panel,
+.za-layout-control-active .panel,
+.za-layout-control-active .activity-clean-card,
+.za-layout-control-active [class*="card"],
+.za-layout-control-active [class*="panel"]{
+  position:relative!important;
+  resize:both!important;
+  overflow:auto!important;
+  min-width:180px!important;
+  min-height:90px!important;
+  cursor:grab!important;
+}
+.za-layout-control-active .za-draggable-card{user-select:none!important;}
+.za-layout-control-active .za-dragging{
+  opacity:.78!important;
+  cursor:grabbing!important;
+  transform:scale(1.015)!important;
+  box-shadow:0 30px 80px rgba(0,0,0,.55)!important;
+  z-index:2147483000!important;
+}
+.za-layout-control-active .za-drop-target{
+  outline:2px dashed rgba(196,181,253,.78)!important;
+  outline-offset:4px!important;
+  background:rgba(139,92,246,.10)!important;
+}
+.za-layout-control-active .za-draggable-card::before{
+  content:"⋮⋮ Drag / resize"!important;
+  position:absolute!important;
+  left:10px!important;
+  top:8px!important;
+  z-index:20!important;
+  font-size:10px!important;
+  font-weight:950!important;
+  color:#f5f3ff!important;
+  background:rgba(88,28,135,.72)!important;
+  border:1px solid rgba(196,181,253,.35)!important;
+  padding:4px 8px!important;
+  border-radius:999px!important;
+  pointer-events:none!important;
+}
+.za-resize-hint{
+  position:absolute!important;
+  right:8px!important;
+  bottom:6px!important;
+  z-index:20!important;
+  font-size:14px!important;
+  color:#ddd6fe!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
+.za-layout-control-active .za-resize-hint{opacity:1!important;}
+@media(max-width:760px){
+  .za-layout-toolbar{left:10px!important;right:10px!important;top:auto!important;bottom:74px!important;justify-content:center!important;}
+  .za-layout-toolbar .za-layout-note{display:none!important;}
+}
+</style>
+
+<div class="za-layout-toolbar" id="zaLayoutToolbar">
+  <button type="button" id="zaLayoutToggle">Layout Edit</button>
+  <button type="button" id="zaLayoutReset">Reset Layout</button>
+  <span class="za-layout-note">Drag cards + resize corners</span>
+</div>
+
+<script id="za-layout-toolbar-script">
+(function(){
+  if(window.__ZA_LAYOUT_TOOLBAR_FORCE_FIXED_V3__) return;
+  window.__ZA_LAYOUT_TOOLBAR_FORCE_FIXED_V3__ = true;
+
+  var SELECTOR = ".card,.mini-card,.analytics-card,.glass-panel,.panel,.activity-clean-card,[class*='card'],[class*='panel']";
+  var STORAGE_KEY = "zaLayoutControlV3";
+  var enabled = false;
+  var dragging = null;
+
+  function pageKey(){
+    return "layout::" + location.pathname.replace(/[^a-z0-9_/-]/gi,"_");
+  }
+  function loadState(){
+    try{return JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}");}catch(e){return{};}
+  }
+  function saveState(state){
+    try{localStorage.setItem(STORAGE_KEY, JSON.stringify(state||{}));}catch(e){}
+  }
+  function toast(msg){
+    if(window.ZoomAttendanceMotionEngine && window.ZoomAttendanceMotionEngine.toast){
+      try{window.ZoomAttendanceMotionEngine.toast(msg);return;}catch(e){}
+    }
+    console.log(msg);
+  }
+  function cardKey(el,idx){
+    var heading = el.querySelector("h1,h2,h3,h4,strong,b");
+    var raw = ((heading && heading.textContent) || el.getAttribute("data-za-tooltip") || el.textContent || "card").replace(/\s+/g," ").trim().slice(0,48);
+    return "card::" + idx + "::" + raw;
+  }
+  function cards(){
+    return Array.prototype.slice.call(document.querySelectorAll(SELECTOR)).filter(function(el){
+      if(!el || !el.parentNode) return false;
+      if(el.closest(".za-layout-toolbar")) return false;
+      var rect = el.getBoundingClientRect();
+      return rect.width > 50 && rect.height > 30;
+    });
+  }
+  function prepareCards(){
+    cards().forEach(function(el,idx){
+      if(!el.dataset.zaLayoutKey){
+        el.dataset.zaLayoutKey = cardKey(el,idx);
+      }
+      el.dataset.zaLayoutPrepared = "1";
+      el.classList.add("za-draggable-card");
+      el.setAttribute("draggable","true");
+      if(!el.querySelector(":scope > .za-resize-hint")){
+        var hint=document.createElement("span");
+        hint.className="za-resize-hint";
+        hint.textContent="↘";
+        el.appendChild(hint);
+      }
+    });
+  }
+  function applySaved(){
+    var state = loadState();
+    var page = state[pageKey()] || {};
+    cards().forEach(function(el){
+      var s = page[el.dataset.zaLayoutKey];
+      if(!s) return;
+      if(s.width) el.style.width = s.width;
+      if(s.height) el.style.height = s.height;
+      if(s.order) el.style.order = s.order;
+    });
+  }
+  function persist(){
+    var state = loadState();
+    var key = pageKey();
+    state[key] = state[key] || {};
+    cards().forEach(function(el,idx){
+      if(!el.dataset.zaLayoutKey) return;
+      state[key][el.dataset.zaLayoutKey] = {
+        width: el.style.width || "",
+        height: el.style.height || "",
+        order: el.style.order || String(idx)
+      };
+    });
+    saveState(state);
+  }
+  function enable(){
+    enabled = true;
+    prepareCards();
+    document.body.classList.add("za-layout-control-active");
+    var btn=document.getElementById("zaLayoutToggle");
+    if(btn){btn.classList.add("active");btn.textContent="Layout ON";}
+    toast("Layout edit enabled");
+  }
+  function disable(){
+    enabled = false;
+    document.body.classList.remove("za-layout-control-active");
+    var btn=document.getElementById("zaLayoutToggle");
+    if(btn){btn.classList.remove("active");btn.textContent="Layout Edit";}
+    persist();
+    toast("Layout saved");
+  }
+  function reset(){
+    var state = loadState();
+    delete state[pageKey()];
+    saveState(state);
+    cards().forEach(function(el){
+      el.style.width="";
+      el.style.height="";
+      el.style.order="";
+    });
+    toast("Layout reset");
+  }
+  function toggle(){ enabled ? disable() : enable(); }
+
+  function bind(){
+    var toggleBtn=document.getElementById("zaLayoutToggle");
+    var resetBtn=document.getElementById("zaLayoutReset");
+    if(toggleBtn && !toggleBtn.dataset.bound){
+      toggleBtn.dataset.bound="1";
+      toggleBtn.addEventListener("click",toggle);
+    }
+    if(resetBtn && !resetBtn.dataset.bound){
+      resetBtn.dataset.bound="1";
+      resetBtn.addEventListener("click",reset);
+    }
+
+    document.addEventListener("dragstart",function(e){
+      if(!enabled) return;
+      var card=e.target.closest(SELECTOR);
+      if(!card || card.closest(".za-layout-toolbar")) return;
+      dragging=card;
+      card.classList.add("za-dragging");
+      try{e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",card.dataset.zaLayoutKey||"card");}catch(err){}
+    },true);
+
+    document.addEventListener("dragover",function(e){
+      if(!enabled || !dragging) return;
+      var target=e.target.closest(SELECTOR);
+      if(!target || target===dragging || target.closest(".za-layout-toolbar")) return;
+      e.preventDefault();
+      target.classList.add("za-drop-target");
+    },true);
+
+    document.addEventListener("dragleave",function(e){
+      var target=e.target.closest(SELECTOR);
+      if(target) target.classList.remove("za-drop-target");
+    },true);
+
+    document.addEventListener("drop",function(e){
+      if(!enabled || !dragging) return;
+      var target=e.target.closest(SELECTOR);
+      if(!target || target===dragging || target.closest(".za-layout-toolbar")) return;
+      e.preventDefault();
+      target.classList.remove("za-drop-target");
+      var parent=target.parentNode;
+      if(parent && dragging.parentNode===parent){
+        var children=Array.prototype.slice.call(parent.children);
+        var di=children.indexOf(dragging);
+        var ti=children.indexOf(target);
+        if(di<ti) parent.insertBefore(dragging,target.nextSibling);
+        else parent.insertBefore(dragging,target);
+        Array.prototype.slice.call(parent.children).forEach(function(el,idx){
+          if(el.matches && el.matches(SELECTOR)) el.style.order=String(idx);
+        });
+        persist();
+      }
+    },true);
+
+    document.addEventListener("dragend",function(){
+      if(dragging) dragging.classList.remove("za-dragging");
+      document.querySelectorAll(".za-drop-target").forEach(function(x){x.classList.remove("za-drop-target");});
+      dragging=null;
+      if(enabled) persist();
+    },true);
+
+    document.addEventListener("mouseup",function(){if(enabled) persist();},true);
+    document.addEventListener("touchend",function(){if(enabled) persist();},true);
+
+    document.addEventListener("click",function(e){
+      var a=e.target.closest("a[href]");
+      if(!a) return;
+      var href=a.getAttribute("href")||"";
+      if(!href || href.startsWith("#") || href.startsWith("javascript:") || a.target==="_blank") return;
+      try{
+        var url=new URL(href, location.href);
+        if(url.origin!==location.origin) return;
+      }catch(err){return;}
+      document.documentElement.classList.add("za-page-transitioning");
+    },true);
+    window.addEventListener("pageshow",function(){document.documentElement.classList.remove("za-page-transitioning");});
+  }
+
+  function init(){
+    prepareCards();
+    applySaved();
+    bind();
+    document.body.classList.add("za-page-enter");
+    setTimeout(function(){document.body.classList.remove("za-page-enter");},520);
+    console.log("✅ Forced Layout Toolbar loaded");
+  }
+
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init);
+  else init();
+  window.addEventListener("load",init);
+})();
+</script>
+"""
+
+@app.after_request
+def za_layout_toolbar_force_inject(response):
+    """Frontend-only layout toolbar injector.
+    Does not touch DB/routes/webhook logic. Injects only into HTML responses.
+    """
+    try:
+        content_type = response.headers.get("Content-Type", "")
+        if "text/html" not in content_type.lower():
+            return response
+        html = response.get_data(as_text=True)
+        if not html or "za-layout-toolbar-script" in html:
+            return response
+        if "</body>" in html:
+            html = html.replace("</body>", ZA_LAYOUT_TOOLBAR_ASSET + "\n</body>", 1)
+        else:
+            html = html + ZA_LAYOUT_TOOLBAR_ASSET
+        response.set_data(html)
+        response.headers["Content-Length"] = str(len(response.get_data()))
+    except Exception as exc:
+        print(f"⚠️ layout toolbar injection skipped: {exc}")
+    return response
+# ===== END GUARANTEED LAYOUT TOOLBAR INJECTION =====
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     if socketio:
