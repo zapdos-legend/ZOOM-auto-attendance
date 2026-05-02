@@ -1273,6 +1273,327 @@ tbody tr:hover{
 </script>
 /* ===== END PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
 
+
+/* ===== OPTION B SELECTIVE: LAYOUT CONTROL + PAGE TRANSITIONS ===== */
+:root{
+  --za-page-transition-ms: 360ms;
+}
+html.za-page-transitioning body{
+  opacity:0;
+  transform:translateX(14px);
+}
+body{
+  transition: opacity var(--za-page-transition-ms) cubic-bezier(.16,1,.3,1),
+              transform var(--za-page-transition-ms) cubic-bezier(.16,1,.3,1);
+}
+body.za-page-enter{
+  animation:zaPageEnter .42s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes zaPageEnter{
+  from{opacity:0;transform:translateX(18px);}
+  to{opacity:1;transform:translateX(0);}
+}
+.za-layout-control-active .card,
+.za-layout-control-active .mini-card,
+.za-layout-control-active .analytics-card,
+.za-layout-control-active .glass-panel,
+.za-layout-control-active .panel,
+.za-layout-control-active .activity-clean-card{
+  position:relative;
+  resize:both;
+  overflow:auto;
+  min-width:220px;
+  min-height:110px;
+  cursor:grab;
+}
+.za-layout-control-active .za-draggable-card{
+  user-select:none;
+}
+.za-layout-control-active .za-dragging{
+  opacity:.82;
+  cursor:grabbing!important;
+  transform:scale(1.015)!important;
+  box-shadow:0 28px 70px rgba(0,0,0,.48)!important;
+  z-index:9998!important;
+}
+.za-layout-control-active .za-drop-target{
+  outline:2px dashed rgba(139,92,246,.62)!important;
+  outline-offset:4px;
+}
+.za-layout-toolbar{
+  position:fixed;
+  left:18px;
+  top:86px;
+  z-index:99999;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  padding:9px;
+  border-radius:18px;
+  background:rgba(15,23,42,.92);
+  border:1px solid rgba(148,163,184,.22);
+  box-shadow:0 18px 48px rgba(0,0,0,.35);
+  backdrop-filter:blur(16px);
+}
+.za-layout-toolbar button{
+  border:1px solid rgba(255,255,255,.12)!important;
+  border-radius:999px!important;
+  padding:8px 11px!important;
+  font-size:11px!important;
+  font-weight:950!important;
+  background:rgba(99,102,241,.18)!important;
+  color:#e5e7eb!important;
+}
+.za-layout-toolbar button.active{
+  background:linear-gradient(90deg,#7c3aed,#2563eb)!important;
+  color:white!important;
+}
+.za-resize-hint{
+  position:absolute;
+  right:8px;
+  bottom:6px;
+  font-size:13px;
+  color:rgba(196,181,253,.78);
+  pointer-events:none;
+  opacity:0;
+  transition:opacity .2s ease;
+}
+.za-layout-control-active .za-resize-hint{opacity:1;}
+.za-layout-control-active .za-draggable-card::before{
+  content:"⋮⋮ Drag";
+  position:absolute;
+  left:10px;
+  top:8px;
+  z-index:6;
+  font-size:10px;
+  font-weight:950;
+  color:#c4b5fd;
+  background:rgba(88,28,135,.28);
+  border:1px solid rgba(196,181,253,.18);
+  padding:4px 7px;
+  border-radius:999px;
+  opacity:.92;
+  pointer-events:none;
+}
+@media (max-width:760px){
+  .za-layout-toolbar{left:10px;right:10px;top:auto;bottom:74px;justify-content:center;}
+  .za-layout-control-active .card,
+  .za-layout-control-active .mini-card,
+  .za-layout-control-active .analytics-card,
+  .za-layout-control-active .glass-panel,
+  .za-layout-control-active .panel,
+  .za-layout-control-active .activity-clean-card{
+    resize:vertical;
+  }
+}
+<script>
+/* ===== OPTION B SELECTIVE ENGINE: DRAG/RESIZE + PAGE TRANSITIONS ===== */
+(function(){
+  if(window.ZoomAttendanceLayoutControlV1) return;
+  window.ZoomAttendanceLayoutControlV1 = {
+    enabled:false,
+    selector:".card,.mini-card,.analytics-card,.glass-panel,.panel,.activity-clean-card",
+    storageKey:"zaLayoutControlV1",
+    getPageKey:function(){
+      return "layout::" + location.pathname.replace(/[^a-z0-9_/-]/gi,"_");
+    },
+    loadState:function(){
+      try{return JSON.parse(localStorage.getItem(this.storageKey)||"{}");}catch(e){return{};}
+    },
+    saveState:function(state){
+      try{localStorage.setItem(this.storageKey, JSON.stringify(state||{}));}catch(e){}
+    },
+    cardKey:function(el,idx){
+      var heading=el.querySelector("h1,h2,h3,h4,strong,b");
+      var raw=((heading&&heading.textContent)||el.getAttribute("data-za-tooltip")||el.textContent||"card").replace(/\s+/g," ").trim().slice(0,48);
+      return "card::"+idx+"::"+raw;
+    },
+    ensureToolbar:function(){
+      var bar=document.querySelector(".za-layout-toolbar");
+      if(bar) return bar;
+      bar=document.createElement("div");
+      bar.className="za-layout-toolbar";
+      bar.innerHTML='<button type="button" id="zaLayoutToggle">Layout Edit</button><button type="button" id="zaLayoutReset">Reset Layout</button>';
+      document.body.appendChild(bar);
+      var self=this;
+      document.getElementById("zaLayoutToggle").addEventListener("click",function(){
+        self.toggle();
+      });
+      document.getElementById("zaLayoutReset").addEventListener("click",function(){
+        self.reset();
+      });
+      return bar;
+    },
+    prepareCards:function(){
+      var self=this;
+      document.querySelectorAll(this.selector).forEach(function(el,idx){
+        if(el.dataset.zaLayoutPrepared==="1") return;
+        el.dataset.zaLayoutPrepared="1";
+        el.dataset.zaLayoutKey=self.cardKey(el,idx);
+        el.classList.add("za-draggable-card");
+        if(!el.querySelector(".za-resize-hint")){
+          var hint=document.createElement("span");
+          hint.className="za-resize-hint";
+          hint.textContent="↘";
+          el.appendChild(hint);
+        }
+      });
+    },
+    applySaved:function(){
+      var state=this.loadState();
+      var page=state[this.getPageKey()]||{};
+      document.querySelectorAll(this.selector).forEach(function(el){
+        var k=el.dataset.zaLayoutKey;
+        var s=page[k];
+        if(!s) return;
+        if(s.width) el.style.width=s.width;
+        if(s.height) el.style.height=s.height;
+        if(s.order) el.style.order=s.order;
+      });
+    },
+    persist:function(){
+      var state=this.loadState();
+      var pageKey=this.getPageKey();
+      state[pageKey]=state[pageKey]||{};
+      document.querySelectorAll(this.selector).forEach(function(el,idx){
+        var k=el.dataset.zaLayoutKey;
+        if(!k) return;
+        state[pageKey][k]={
+          width:el.style.width||"",
+          height:el.style.height||"",
+          order:el.style.order||String(idx)
+        };
+      });
+      this.saveState(state);
+    },
+    enable:function(){
+      this.enabled=true;
+      document.body.classList.add("za-layout-control-active");
+      var btn=document.getElementById("zaLayoutToggle");
+      if(btn){btn.classList.add("active");btn.textContent="Layout ON";}
+      this.prepareCards();
+      this.bindDrag();
+      this.bindResizeSave();
+      if(window.ZoomAttendanceMotionEngine && window.ZoomAttendanceMotionEngine.toast){
+        window.ZoomAttendanceMotionEngine.toast("Layout edit enabled");
+      }
+    },
+    disable:function(){
+      this.enabled=false;
+      document.body.classList.remove("za-layout-control-active");
+      var btn=document.getElementById("zaLayoutToggle");
+      if(btn){btn.classList.remove("active");btn.textContent="Layout Edit";}
+      this.persist();
+      if(window.ZoomAttendanceMotionEngine && window.ZoomAttendanceMotionEngine.toast){
+        window.ZoomAttendanceMotionEngine.toast("Layout saved");
+      }
+    },
+    toggle:function(){ this.enabled?this.disable():this.enable(); },
+    reset:function(){
+      var state=this.loadState();
+      delete state[this.getPageKey()];
+      this.saveState(state);
+      document.querySelectorAll(this.selector).forEach(function(el){
+        el.style.width="";
+        el.style.height="";
+        el.style.order="";
+      });
+      if(window.ZoomAttendanceMotionEngine && window.ZoomAttendanceMotionEngine.toast){
+        window.ZoomAttendanceMotionEngine.toast("Layout reset");
+      }
+    },
+    bindResizeSave:function(){
+      var self=this;
+      if(window.__zaResizeSaveBound) return;
+      window.__zaResizeSaveBound=true;
+      document.addEventListener("mouseup",function(){ if(self.enabled) self.persist(); },true);
+      document.addEventListener("touchend",function(){ if(self.enabled) self.persist(); },true);
+    },
+    bindDrag:function(){
+      var self=this;
+      if(window.__zaDragBound) return;
+      window.__zaDragBound=true;
+      var dragging=null;
+      document.addEventListener("dragstart",function(e){
+        if(!self.enabled) return;
+        var card=e.target.closest(self.selector);
+        if(!card) return;
+        dragging=card;
+        card.classList.add("za-dragging");
+        e.dataTransfer.effectAllowed="move";
+        try{e.dataTransfer.setData("text/plain",card.dataset.zaLayoutKey||"card");}catch(err){}
+      },true);
+      document.addEventListener("dragover",function(e){
+        if(!self.enabled || !dragging) return;
+        var target=e.target.closest(self.selector);
+        if(!target || target===dragging) return;
+        e.preventDefault();
+        target.classList.add("za-drop-target");
+      },true);
+      document.addEventListener("dragleave",function(e){
+        var target=e.target.closest(self.selector);
+        if(target) target.classList.remove("za-drop-target");
+      },true);
+      document.addEventListener("drop",function(e){
+        if(!self.enabled || !dragging) return;
+        var target=e.target.closest(self.selector);
+        if(!target || target===dragging) return;
+        e.preventDefault();
+        target.classList.remove("za-drop-target");
+        var parent=target.parentNode;
+        if(parent && dragging.parentNode===parent){
+          var cards=Array.from(parent.children);
+          var dragIndex=cards.indexOf(dragging);
+          var targetIndex=cards.indexOf(target);
+          if(dragIndex<targetIndex) parent.insertBefore(dragging,target.nextSibling);
+          else parent.insertBefore(dragging,target);
+          Array.from(parent.children).forEach(function(el,idx){
+            if(el.matches && el.matches(self.selector)) el.style.order=String(idx);
+          });
+          self.persist();
+        }
+      },true);
+      document.addEventListener("dragend",function(){
+        if(dragging) dragging.classList.remove("za-dragging");
+        document.querySelectorAll(".za-drop-target").forEach(function(x){x.classList.remove("za-drop-target");});
+        dragging=null;
+      },true);
+      document.querySelectorAll(self.selector).forEach(function(el){el.setAttribute("draggable","true");});
+    },
+    initPageTransitions:function(){
+      document.body.classList.add("za-page-enter");
+      setTimeout(function(){document.body.classList.remove("za-page-enter");},520);
+      document.addEventListener("click",function(e){
+        var a=e.target.closest("a[href]");
+        if(!a) return;
+        var href=a.getAttribute("href")||"";
+        if(!href || href.startsWith("#") || href.startsWith("javascript:") || a.target==="_blank") return;
+        try{
+          var url=new URL(href, location.href);
+          if(url.origin!==location.origin) return;
+        }catch(err){return;}
+        document.documentElement.classList.add("za-page-transitioning");
+      },true);
+      window.addEventListener("pageshow",function(){document.documentElement.classList.remove("za-page-transitioning");});
+    },
+    init:function(){
+      this.ensureToolbar();
+      this.prepareCards();
+      this.applySaved();
+      this.bindDrag();
+      this.bindResizeSave();
+      this.initPageTransitions();
+    }
+  };
+  if(document.readyState==="loading"){
+    document.addEventListener("DOMContentLoaded",function(){window.ZoomAttendanceLayoutControlV1.init();});
+  }else{
+    window.ZoomAttendanceLayoutControlV1.init();
+  }
+})();
+</script>
+/* ===== END OPTION B SELECTIVE ENGINE ===== */
+
 </style>
 '''
 # ===== END THEME =====
