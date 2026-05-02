@@ -12337,6 +12337,424 @@ def za_final_dynamic_trend_ui_inject(response):
 # ===== END FINAL ACCURATE DYNAMIC TREND UI INJECTION =====
 
 
+
+# ===== PREMIUM TREND UI INJECTION - SAFE FRONTEND ONLY =====
+ZA_PREMIUM_UI_ASSET = r"""
+<style id="za-premium-ui-style">
+/* ===== PREMIUM SAAS UI LAYER - SAFE FRONTEND ONLY ===== */
+:root{
+  --za-premium-bg:#07111f;
+  --za-premium-card:rgba(15,23,42,.76);
+  --za-premium-line:rgba(148,163,184,.18);
+  --za-premium-glow:rgba(56,189,248,.22);
+  --za-premium-purple:rgba(139,92,246,.32);
+}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:-1;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(56,189,248,.14), transparent 30%),
+    radial-gradient(circle at 82% 22%, rgba(139,92,246,.16), transparent 28%),
+    radial-gradient(circle at 68% 82%, rgba(34,197,94,.08), transparent 22%);
+  animation:zaPremiumBgFloat 16s ease-in-out infinite alternate;
+}
+@keyframes zaPremiumBgFloat{
+  from{filter:hue-rotate(0deg) brightness(1); transform:scale(1);}
+  to{filter:hue-rotate(10deg) brightness(1.08); transform:scale(1.035);}
+}
+.card,.panel,.glass-panel,.mini-card,.analytics-card,.activity-clean-card{
+  border:1px solid var(--za-premium-line)!important;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.026)),
+    rgba(15,23,42,.72)!important;
+  box-shadow:0 18px 48px rgba(0,0,0,.30)!important;
+}
+.card:hover,.panel:hover,.glass-panel:hover,.mini-card:hover,.analytics-card:hover{
+  border-color:rgba(56,189,248,.34)!important;
+  box-shadow:0 22px 64px rgba(0,0,0,.38), 0 0 28px rgba(56,189,248,.08)!important;
+}
+
+/* Premium member profile hero */
+body:has(#zaPremiumTrendHero) .hero,
+body:has(#zaPremiumTrendHero) .profile-hero,
+body:has(#zaPremiumTrendHero) .member-hero{
+  min-height:190px!important;
+  border-radius:28px!important;
+  border:1px solid rgba(148,163,184,.20)!important;
+  background:
+    radial-gradient(circle at 82% 18%, rgba(56,189,248,.20), transparent 24%),
+    linear-gradient(135deg, rgba(15,23,42,.90), rgba(30,41,59,.72))!important;
+}
+
+/* Hide older trend panel once premium hero exists */
+body:has(#zaPremiumTrendHero) #zaMemberTrendSinglePanel{
+  display:none!important;
+}
+
+#zaPremiumTrendHero{
+  margin:18px 0 20px!important;
+  border-radius:30px!important;
+  overflow:hidden!important;
+  border:1px solid rgba(125,211,252,.26)!important;
+  background:
+    radial-gradient(circle at 78% 0%, rgba(34,197,94,.22), transparent 28%),
+    radial-gradient(circle at 12% 20%, rgba(56,189,248,.15), transparent 28%),
+    linear-gradient(135deg, rgba(15,23,42,.94), rgba(30,41,59,.78))!important;
+  box-shadow:0 28px 80px rgba(0,0,0,.42), 0 0 54px rgba(56,189,248,.10)!important;
+  padding:22px!important;
+  position:relative!important;
+}
+#zaPremiumTrendHero::before{
+  content:"";
+  position:absolute;
+  inset:-1px;
+  pointer-events:none;
+  background:linear-gradient(120deg, transparent, rgba(255,255,255,.08), transparent);
+  transform:translateX(-100%);
+  animation:zaPremiumShine 4.8s ease-in-out infinite;
+}
+@keyframes zaPremiumShine{
+  0%,55%{transform:translateX(-100%);}
+  100%{transform:translateX(100%);}
+}
+.za-premium-trend-grid{
+  display:grid!important;
+  grid-template-columns:minmax(240px,1.1fr) minmax(320px,1.7fr)!important;
+  gap:18px!important;
+  align-items:stretch!important;
+}
+.za-premium-trend-left{
+  display:flex!important;
+  flex-direction:column!important;
+  justify-content:space-between!important;
+  gap:14px!important;
+}
+.za-premium-kicker{
+  color:#7dd3fc!important;
+  font-size:11px!important;
+  font-weight:950!important;
+  letter-spacing:.12em!important;
+  text-transform:uppercase!important;
+}
+.za-premium-title{
+  margin:6px 0!important;
+  color:#f8fafc!important;
+  font-size:28px!important;
+  line-height:1.05!important;
+  font-weight:1000!important;
+}
+.za-premium-sub{
+  color:#a8b3c7!important;
+  font-size:13px!important;
+  font-weight:750!important;
+  line-height:1.45!important;
+  margin:0!important;
+}
+.za-premium-score-wrap{
+  display:flex!important;
+  gap:10px!important;
+  flex-wrap:wrap!important;
+  align-items:center!important;
+}
+.za-premium-score{
+  display:inline-flex!important;
+  align-items:center!important;
+  gap:8px!important;
+  border-radius:999px!important;
+  padding:10px 14px!important;
+  font-size:15px!important;
+  font-weight:1000!important;
+  border:1px solid rgba(56,189,248,.30)!important;
+  background:rgba(56,189,248,.12)!important;
+  color:#e0f2fe!important;
+  box-shadow:0 0 24px rgba(56,189,248,.10)!important;
+}
+.za-premium-avg{
+  display:block!important;
+  color:#cbd5e1!important;
+  font-size:12px!important;
+  font-weight:900!important;
+  margin-top:8px!important;
+}
+.za-premium-badge{
+  display:inline-flex!important;
+  align-items:center!important;
+  gap:8px!important;
+  border-radius:999px!important;
+  padding:10px 14px!important;
+  font-size:13px!important;
+  font-weight:1000!important;
+  border:1px solid rgba(148,163,184,.22)!important;
+}
+.za-premium-badge.improving{
+  color:#bbf7d0!important;
+  background:rgba(34,197,94,.15)!important;
+  border-color:rgba(34,197,94,.36)!important;
+  box-shadow:0 0 24px rgba(34,197,94,.14)!important;
+}
+.za-premium-badge.declining{
+  color:#fecaca!important;
+  background:rgba(239,68,68,.16)!important;
+  border-color:rgba(239,68,68,.38)!important;
+  box-shadow:0 0 24px rgba(239,68,68,.16)!important;
+}
+.za-premium-badge.stable{
+  color:#dbeafe!important;
+  background:rgba(148,163,184,.14)!important;
+  border-color:rgba(148,163,184,.30)!important;
+}
+.za-premium-chart-card{
+  border-radius:24px!important;
+  background:rgba(2,6,23,.35)!important;
+  border:1px solid rgba(148,163,184,.16)!important;
+  padding:16px!important;
+}
+.za-premium-chart-head{
+  display:flex!important;
+  justify-content:space-between!important;
+  align-items:center!important;
+  gap:12px!important;
+  margin-bottom:12px!important;
+}
+.za-premium-chart-head strong{
+  color:#f8fafc!important;
+  font-size:14px!important;
+  font-weight:1000!important;
+}
+.za-premium-chart-head small{
+  color:#94a3b8!important;
+  font-size:11px!important;
+  font-weight:850!important;
+}
+.za-premium-bars{
+  display:flex!important;
+  align-items:flex-end!important;
+  gap:10px!important;
+  height:140px!important;
+  padding:12px!important;
+  border-radius:18px!important;
+  background:linear-gradient(180deg,rgba(15,23,42,.55),rgba(2,6,23,.38))!important;
+  border:1px solid rgba(148,163,184,.12)!important;
+}
+.za-premium-bar{
+  flex:1!important;
+  min-width:18px!important;
+  border-radius:999px 999px 8px 8px!important;
+  position:relative!important;
+  height:var(--h)!important;
+  background:linear-gradient(180deg,#38bdf8,#6366f1)!important;
+  box-shadow:0 0 22px rgba(56,189,248,.16)!important;
+  animation:zaPremiumBarGrow .92s cubic-bezier(.16,1,.3,1) both;
+}
+.za-premium-bar.good{background:linear-gradient(180deg,#22c55e,#0ea5e9)!important;}
+.za-premium-bar.warn{background:linear-gradient(180deg,#f59e0b,#6366f1)!important;}
+.za-premium-bar.bad{background:linear-gradient(180deg,#ef4444,#7c3aed)!important;}
+@keyframes zaPremiumBarGrow{
+  from{height:8px;opacity:.28;transform:translateY(8px);}
+  to{height:var(--h);opacity:1;transform:translateY(0);}
+}
+.za-premium-bar:hover{
+  filter:brightness(1.18)!important;
+  transform:translateY(-3px)!important;
+}
+.za-premium-bar:hover::after{
+  content:attr(data-tip);
+  position:absolute!important;
+  left:50%!important;
+  bottom:calc(100% + 10px)!important;
+  transform:translateX(-50%)!important;
+  z-index:99999!important;
+  min-width:178px!important;
+  padding:9px 10px!important;
+  border-radius:14px!important;
+  background:rgba(15,23,42,.98)!important;
+  color:#e5e7eb!important;
+  border:1px solid rgba(148,163,184,.24)!important;
+  box-shadow:0 18px 42px rgba(0,0,0,.38)!important;
+  font-size:11px!important;
+  font-weight:850!important;
+  text-align:center!important;
+}
+.za-premium-insight-row{
+  margin-top:12px!important;
+  display:grid!important;
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important;
+  gap:10px!important;
+}
+.za-premium-mini{
+  border-radius:16px!important;
+  padding:10px 12px!important;
+  background:rgba(15,23,42,.42)!important;
+  border:1px solid rgba(148,163,184,.12)!important;
+}
+.za-premium-mini small{
+  display:block!important;
+  color:#94a3b8!important;
+  font-size:10px!important;
+  font-weight:950!important;
+  text-transform:uppercase!important;
+  letter-spacing:.08em!important;
+}
+.za-premium-mini strong{
+  display:block!important;
+  margin-top:4px!important;
+  color:#f8fafc!important;
+  font-size:18px!important;
+  font-weight:1000!important;
+}
+@media(max-width:900px){
+  .za-premium-trend-grid{grid-template-columns:1fr!important;}
+  .za-premium-title{font-size:23px!important;}
+  .za-premium-bars{height:110px!important;}
+}
+/* ===== END PREMIUM SAAS UI LAYER ===== */
+</style>
+<script id="za-premium-ui-script">
+(function(){
+  if(window.__ZA_PREMIUM_UI_LAYER_V1__) return;
+  window.__ZA_PREMIUM_UI_LAYER_V1__ = true;
+
+  var details = null;
+
+  function norm(t){
+    t = String(t || "").toLowerCase();
+    if(t.indexOf("improv") !== -1 || t.indexOf("consistent") !== -1) return "Improving";
+    if(t.indexOf("declin") !== -1 || t.indexOf("drop") !== -1 || t.indexOf("critical") !== -1) return "Declining";
+    return "Stable";
+  }
+  function cls(t){
+    t = norm(t);
+    return t === "Improving" ? "improving" : (t === "Declining" ? "declining" : "stable");
+  }
+  function icon(t){
+    t = norm(t);
+    return t === "Improving" ? "📈" : (t === "Declining" ? "📉" : "➖");
+  }
+  function reason(t){
+    t = norm(t);
+    if(t === "Improving") return "Recent attendance performance is stronger than earlier meetings.";
+    if(t === "Declining") return "Recent attendance performance has dropped and needs attention.";
+    return "Recent attendance performance is mostly consistent.";
+  }
+  function memberId(){
+    var m = location.pathname.match(/\/member\/(\d+)\/profile/i);
+    return m ? m[1] : "";
+  }
+  function anchor(){
+    var hero = document.querySelector(".hero,.profile-hero,.member-hero");
+    if(hero && hero.parentNode) return hero;
+    var cards = Array.from(document.querySelectorAll(".card,.panel,.glass-panel")).filter(function(el){
+      var txt=(el.textContent||"").toLowerCase();
+      return txt.indexOf("member profile")!==-1 || txt.indexOf("deep insights")!==-1 || txt.indexOf("last seen")!==-1;
+    });
+    return cards[0] || document.querySelector("main,.content,.container");
+  }
+  function barClass(score){
+    score = Number(score || 0);
+    if(score >= 70) return "good";
+    if(score >= 45) return "warn";
+    return "bad";
+  }
+  function barsHtml(){
+    var pts = details && Array.isArray(details.points) ? details.points : [];
+    if(!pts.length){
+      pts = [{score:30,label:"No data",status:"-"},{score:45,label:"No data",status:"-"},{score:60,label:"No data",status:"-"},{score:75,label:"No data",status:"-"}];
+    }
+    return pts.map(function(p,i){
+      var score = Math.max(8, Math.min(100, Number(p.score || 0)));
+      var tip = (p.label || ("Meeting "+(i+1)))+" | Score "+Math.round(score)+"% | "+(p.status || "-")+" | "+(p.minutes || 0)+" min";
+      return '<span class="za-premium-bar '+barClass(score)+'" style="--h:'+score+'%;animation-delay:'+(i*80)+'ms" data-tip="'+tip.replace(/"/g,"&quot;")+'"></span>';
+    }).join("");
+  }
+  function scoreText(v){
+    v = Number(v || 0);
+    var sign = v > 0 ? "+" : "";
+    return sign + v.toFixed(0) + "%";
+  }
+  function render(){
+    if(!/\/member\/\d+\/profile/i.test(location.pathname)) return;
+
+    document.querySelectorAll("#zaPremiumTrendHero").forEach(function(x){x.remove();});
+
+    var trend = details && details.trend ? details.trend : "Stable";
+    var trendScore = details ? Number(details.trend_score || 0) : 0;
+    var older = details ? Number(details.older_avg || 0) : 0;
+    var recent = details ? Number(details.recent_avg || 0) : 0;
+    var basis = (details && details.basis) || "Based on last 7 meetings";
+
+    var panel = document.createElement("section");
+    panel.id = "zaPremiumTrendHero";
+    panel.innerHTML =
+      '<div class="za-premium-trend-grid">'+
+        '<div class="za-premium-trend-left">'+
+          '<div>'+
+            '<div class="za-premium-kicker">Member Intelligence</div>'+
+            '<h2 class="za-premium-title">'+icon(trend)+' '+norm(trend)+' Trend</h2>'+
+            '<p class="za-premium-sub">'+reason(trend)+' '+basis+'.</p>'+
+          '</div>'+
+          '<div>'+
+            '<div class="za-premium-score-wrap">'+
+              '<span class="za-premium-badge '+cls(trend)+'">'+icon(trend)+' '+norm(trend)+'</span>'+
+              '<span class="za-premium-score">'+scoreText(trendScore)+' Trend Score</span>'+
+            '</div>'+
+            '<span class="za-premium-avg">Older avg: '+older.toFixed(0)+'% → Recent avg: '+recent.toFixed(0)+'%</span>'+
+          '</div>'+
+        '</div>'+
+        '<div class="za-premium-chart-card">'+
+          '<div class="za-premium-chart-head"><div><strong>Recent Meeting Performance</strong><br><small>Left = older meetings, right = recent meetings</small></div><small>'+basis+'</small></div>'+
+          '<div class="za-premium-bars">'+barsHtml()+'</div>'+
+          '<div class="za-premium-insight-row">'+
+            '<div class="za-premium-mini"><small>Direction</small><strong>'+norm(trend)+'</strong></div>'+
+            '<div class="za-premium-mini"><small>Change</small><strong>'+scoreText(trendScore)+'</strong></div>'+
+            '<div class="za-premium-mini"><small>Recent Avg</small><strong>'+recent.toFixed(0)+'%</strong></div>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+
+    var a = anchor();
+    if(a && a.parentNode) a.parentNode.insertBefore(panel, a.nextSibling);
+    else document.body.insertBefore(panel, document.body.firstChild);
+  }
+  function load(){
+    var id = memberId();
+    if(!id) return;
+    fetch("/api/member-trend-details/"+id+"?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
+      .then(function(r){return r.ok ? r.json() : null;})
+      .then(function(data){ if(data && data.ok) details = data; render(); })
+      .catch(function(){ render(); });
+  }
+  document.addEventListener("DOMContentLoaded", function(){load(); setTimeout(load,900);});
+  window.addEventListener("za:live-snapshot", load);
+  window.addEventListener("za:realtime", load);
+})();
+</script>
+"""
+
+@app.after_request
+def za_premium_ui_layer_inject(response):
+    """Inject premium SaaS UI layer into HTML pages only. Frontend-only; no DB/routes/webhook changes."""
+    try:
+        ctype = response.headers.get("Content-Type", "")
+        if "text/html" not in ctype.lower():
+            return response
+        html = response.get_data(as_text=True)
+        if not html or "za-premium-ui-script" in html:
+            return response
+        if "</body>" in html:
+            html = html.replace("</body>", ZA_PREMIUM_UI_ASSET + "\n</body>", 1)
+        else:
+            html = html + ZA_PREMIUM_UI_ASSET
+        response.set_data(html)
+        response.headers["Content-Length"] = str(len(response.get_data()))
+    except Exception as exc:
+        print(f"⚠️ premium UI injection skipped: {exc}")
+    return response
+# ===== END PREMIUM TREND UI INJECTION =====
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     if socketio:
