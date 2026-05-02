@@ -11963,67 +11963,121 @@ def api_live_insights():
 
 
 
-# ===== VISIBLE TREND UI INJECTION - SAFE FRONTEND ONLY =====
-ZA_VISIBLE_TREND_ASSET = r"""
-<style id="za-visible-trend-style">
-/* ===== VISIBLE MEMBER TREND UI ===== */
+
+
+
+# ===== FINAL TREND UI INJECTION - SAFE FRONTEND ONLY =====
+ZA_FINAL_TREND_ASSET = r"""
+<style id="za-final-trend-style">
+/* ===== FINAL MEMBER TREND UI - CLEAN PRODUCTION VERSION ===== */
 .za-trend-badge{
   display:inline-flex!important;
   align-items:center!important;
-  gap:6px!important;
-  padding:6px 10px!important;
+  justify-content:center!important;
+  gap:7px!important;
+  min-width:104px!important;
+  padding:7px 11px!important;
   border-radius:999px!important;
   font-size:11px!important;
   font-weight:950!important;
   line-height:1!important;
   white-space:nowrap!important;
   border:1px solid rgba(148,163,184,.22)!important;
-  margin-left:8px!important;
   vertical-align:middle!important;
+  letter-spacing:.01em!important;
 }
 .za-trend-badge.improving{
   color:#bbf7d0!important;
-  background:rgba(34,197,94,.14)!important;
-  border-color:rgba(34,197,94,.32)!important;
-  animation:zaTrendUp .75s cubic-bezier(.16,1,.3,1) both;
+  background:linear-gradient(135deg,rgba(34,197,94,.22),rgba(16,185,129,.10))!important;
+  border-color:rgba(34,197,94,.42)!important;
+  box-shadow:0 0 18px rgba(34,197,94,.16)!important;
+  animation:zaTrendRiseFinal .9s cubic-bezier(.16,1,.3,1) both;
 }
 .za-trend-badge.declining{
   color:#fecaca!important;
-  background:rgba(239,68,68,.14)!important;
-  border-color:rgba(239,68,68,.34)!important;
-  animation:zaTrendDown .75s cubic-bezier(.16,1,.3,1) both;
+  background:linear-gradient(135deg,rgba(239,68,68,.24),rgba(244,63,94,.10))!important;
+  border-color:rgba(239,68,68,.44)!important;
+  box-shadow:0 0 18px rgba(239,68,68,.18)!important;
+  animation:zaTrendDropFinal .9s cubic-bezier(.16,1,.3,1) both, zaTrendDangerPulse 1.9s ease-in-out infinite;
 }
 .za-trend-badge.stable{
-  color:#cbd5e1!important;
-  background:rgba(148,163,184,.12)!important;
-  border-color:rgba(148,163,184,.26)!important;
-  animation:zaTrendStable 1.5s ease-in-out infinite;
+  color:#dbeafe!important;
+  background:linear-gradient(135deg,rgba(148,163,184,.18),rgba(99,102,241,.08))!important;
+  border-color:rgba(148,163,184,.34)!important;
+  box-shadow:0 0 14px rgba(148,163,184,.10)!important;
 }
-@keyframes zaTrendStable{
-  0%,100%{filter:brightness(1);}
-  50%{filter:brightness(1.18);}
+@keyframes zaTrendRiseFinal{from{opacity:.35;transform:translateY(8px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes zaTrendDropFinal{from{opacity:.35;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes zaTrendDangerPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.2)}}
+.za-trend-profile-final{
+  margin:16px 0 18px!important;
+  border:1px solid rgba(148,163,184,.20)!important;
+  background:linear-gradient(135deg,rgba(15,23,42,.86),rgba(30,41,59,.60))!important;
+  border-radius:24px!important;
+  padding:18px!important;
+  box-shadow:0 22px 58px rgba(0,0,0,.28)!important;
 }
-.za-trend-column-head{
-  min-width:130px!important;
+.za-trend-profile-final .trend-top{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  gap:14px!important;
+  flex-wrap:wrap!important;
 }
-.za-member-trend-card{
-  border:1px solid rgba(148,163,184,.18)!important;
-  background:rgba(15,23,42,.72)!important;
-  border-radius:18px!important;
-  padding:14px!important;
-  box-shadow:0 18px 42px rgba(0,0,0,.24)!important;
+.za-trend-profile-final h3{
+  margin:0!important;
+  color:#f8fafc!important;
+  font-size:18px!important;
+  font-weight:950!important;
 }
-.za-member-trend-panel{
-  margin:14px 0!important;
-  display:grid!important;
-  grid-template-columns:repeat(auto-fit,minmax(190px,1fr))!important;
-  gap:12px!important;
+.za-trend-profile-final p{
+  margin:8px 0 0!important;
+  color:#94a3b8!important;
+  font-size:12px!important;
+  font-weight:750!important;
+  line-height:1.45!important;
+}
+.za-trend-mini-bars{
+  display:flex!important;
+  align-items:flex-end!important;
+  gap:7px!important;
+  height:54px!important;
+  margin-top:14px!important;
+  padding:10px!important;
+  border-radius:16px!important;
+  background:rgba(2,6,23,.35)!important;
+  border:1px solid rgba(148,163,184,.14)!important;
+}
+.za-trend-mini-bars span{
+  flex:1!important;
+  min-width:12px!important;
+  border-radius:999px 999px 4px 4px!important;
+  background:linear-gradient(180deg,#38bdf8,#6366f1)!important;
+  opacity:.9!important;
+  animation:zaTrendBarIn .55s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes zaTrendBarIn{from{height:4px;opacity:.25}to{opacity:.95}}
+.za-trend-table-col{
+  text-align:center!important;
+  min-width:132px!important;
+}
+td.za-trend-table-col{
+  white-space:nowrap!important;
+}
+.za-trend-explain{
+  display:block!important;
+  margin-top:5px!important;
+  font-size:10px!important;
+  color:#94a3b8!important;
+  font-weight:800!important;
 }
 </style>
-<script id="za-visible-trend-script">
+<script id="za-final-trend-script">
 (function(){
-  if(window.__ZA_VISIBLE_TREND_UI_V1__) return;
-  window.__ZA_VISIBLE_TREND_UI_V1__ = true;
+  if(window.__ZA_FINAL_TREND_UI_V2__) return;
+  window.__ZA_FINAL_TREND_UI_V2__ = true;
+
+  var membersCache = [];
 
   function normalizeTrend(t){
     t = String(t || "").toLowerCase();
@@ -12031,13 +12085,13 @@ ZA_VISIBLE_TREND_ASSET = r"""
     if(t.indexOf("declin") !== -1 || t.indexOf("drop") !== -1 || t.indexOf("critical") !== -1) return "Declining";
     return "Stable";
   }
-  function trendClass(t){
+  function cls(t){
     t = normalizeTrend(t);
     if(t === "Improving") return "improving";
     if(t === "Declining") return "declining";
     return "stable";
   }
-  function trendIcon(t){
+  function icon(t){
     t = normalizeTrend(t);
     if(t === "Improving") return "📈";
     if(t === "Declining") return "📉";
@@ -12045,131 +12099,191 @@ ZA_VISIBLE_TREND_ASSET = r"""
   }
   function badge(t){
     var n = normalizeTrend(t);
-    return '<span class="za-trend-badge '+trendClass(n)+'" title="Based on last few meetings and attendance pattern">'+trendIcon(n)+' '+n+'</span>';
+    return '<span class="za-trend-badge '+cls(n)+'" title="Based on recent meetings and attendance pattern">'+icon(n)+' '+n+'</span>';
+  }
+  function reason(t){
+    var n = normalizeTrend(t);
+    if(n === "Improving") return "Attendance pattern is improving in recent meetings.";
+    if(n === "Declining") return "Attendance pattern is dropping and needs follow-up.";
+    return "Attendance pattern is mostly consistent.";
   }
   function rowText(row){
     return (row && row.textContent || "").toLowerCase().replace(/\s+/g," ").trim();
   }
-  function findNameCell(row){
-    if(!row) return null;
-    var cells = row.querySelectorAll("td");
-    if(!cells.length) return null;
-    for(var i=0;i<Math.min(cells.length,3);i++){
-      var txt=(cells[i].textContent||"").trim();
-      if(txt && txt.length>1 && !/^\d+$/.test(txt)) return cells[i];
-    }
-    return cells[0];
+  function memberName(m){
+    return String(m.name || m.full_name || m.display_name || "").trim();
   }
-  function applyTrendToRows(members){
-    if(!Array.isArray(members) || !members.length) return;
-    var rows = document.querySelectorAll("tbody tr");
-    members.forEach(function(m){
-      var name = String(m.name || m.full_name || m.display_name || "").trim();
-      if(!name) return;
-      var trend = normalizeTrend(m.trend || m.member_trend || m.attendance_trend || "Stable");
-      rows.forEach(function(row){
-        if(row.dataset.zaTrendVisible === "1" && row.dataset.zaTrendName === name) return;
-        var txt = rowText(row);
-        if(txt.indexOf(name.toLowerCase()) === -1) return;
-        var cell = findNameCell(row);
-        if(!cell) return;
-        if(cell.querySelector(".za-trend-badge")) return;
-        cell.insertAdjacentHTML("beforeend", badge(trend));
-        row.dataset.zaTrendVisible = "1";
-        row.dataset.zaTrendName = name;
-      });
+  function findMemberForRow(row){
+    var txt = rowText(row);
+    return membersCache.find(function(m){
+      var n = memberName(m).toLowerCase();
+      return n && txt.indexOf(n) !== -1;
     });
   }
-  function addTrendColumnIfMembersTable(members){
-    if(!Array.isArray(members) || !members.length) return;
+
+  function removeDuplicateProfileCards(){
+    var cards = Array.from(document.querySelectorAll(".za-member-trend-panel,.za-member-trend-card"));
+    cards.forEach(function(el){ el.remove(); });
+
+    // Remove earlier duplicate generic trend cards if they were inserted as normal cards.
+    document.querySelectorAll(".card,.panel,.glass-panel,.mini-card,.analytics-card").forEach(function(el){
+      var txt = (el.textContent || "").replace(/\s+/g," ").trim().toLowerCase();
+      if(txt.indexOf("member trend") !== -1 && txt.indexOf("based on recent meetings attendance pattern") !== -1){
+        if(!el.classList.contains("za-trend-profile-final")){
+          el.remove();
+        }
+      }
+    });
+  }
+
+  function renderProfileTrend(){
+    if(!/\/member\/\d+\/profile|profile/i.test(location.pathname)) return;
+    removeDuplicateProfileCards();
+
+    var riskBoxText = document.body.textContent || "";
+    var currentTrend = "Stable";
+    if(/improving/i.test(riskBoxText)) currentTrend = "Improving";
+    else if(/declining/i.test(riskBoxText)) currentTrend = "Declining";
+
+    // Use page name match if available.
+    var h1 = document.querySelector("h1,.hero h1,.page-title");
+    var pageName = h1 ? h1.textContent.trim() : "";
+    var matched = membersCache.find(function(m){
+      return pageName && pageName.toLowerCase().indexOf(memberName(m).toLowerCase()) !== -1;
+    });
+    if(matched && matched.trend) currentTrend = matched.trend;
+
+    var panel = document.createElement("div");
+    panel.className = "za-trend-profile-final";
+    panel.innerHTML =
+      '<div class="trend-top">'+
+        '<div><h3>Member Trend Detection</h3><p>'+reason(currentTrend)+' This is based on the last few meetings and attendance pattern.</p></div>'+
+        badge(currentTrend)+
+      '</div>'+
+      '<div class="za-trend-mini-bars">'+
+        '<span style="height:26%;animation-delay:0ms"></span>'+
+        '<span style="height:38%;animation-delay:80ms"></span>'+
+        '<span style="height:52%;animation-delay:160ms"></span>'+
+        '<span style="height:'+(normalizeTrend(currentTrend)==="Declining" ? "34" : normalizeTrend(currentTrend)==="Improving" ? "78" : "54")+'%;animation-delay:240ms"></span>'+
+      '</div>';
+
+    var anchor = document.querySelector(".hero,.card,.panel,.glass-panel,main");
+    if(anchor && anchor.parentNode){
+      anchor.parentNode.insertBefore(panel, anchor.nextSibling);
+    }else{
+      document.body.insertBefore(panel, document.body.firstChild);
+    }
+  }
+
+  function addOrFixMembersTableTrendColumn(){
+    if(!membersCache.length) return;
+
     document.querySelectorAll("table").forEach(function(table){
-      if(table.dataset.zaTrendColumnDone === "1") return;
+      var text = table.textContent.toLowerCase();
+      if(text.indexOf("name") === -1 && text.indexOf("email") === -1 && text.indexOf("member") === -1) return;
+      if(text.indexOf("view profile") === -1 && text.indexOf("attendance") === -1 && text.indexOf("active") === -1) return;
+
+      // Remove old trend column if badly duplicated by earlier patch.
       var headers = Array.from(table.querySelectorAll("thead th, tr:first-child th"));
-      var bodyRows = Array.from(table.querySelectorAll("tbody tr"));
-      if(!bodyRows.length) return;
-      var tableText = table.textContent.toLowerCase();
-      var likelyMembers = tableText.indexOf("attendance") !== -1 || tableText.indexOf("member") !== -1 || tableText.indexOf("email") !== -1;
-      if(!likelyMembers) return;
-      if(headers.some(function(h){return /trend/i.test(h.textContent||"");})) return;
+      var trendHeaders = headers.filter(function(h){ return /trend/i.test(h.textContent || ""); });
+      if(trendHeaders.length > 1){
+        trendHeaders.slice(1).forEach(function(h){
+          var idx = Array.from(h.parentNode.children).indexOf(h);
+          h.remove();
+          table.querySelectorAll("tbody tr").forEach(function(r){
+            if(r.children[idx]) r.children[idx].remove();
+          });
+        });
+      }
+
+      headers = Array.from(table.querySelectorAll("thead th, tr:first-child th"));
+      var hasTrend = headers.some(function(h){ return /trend/i.test(h.textContent || ""); });
       var headRow = table.querySelector("thead tr") || table.querySelector("tr");
-      if(headRow && headRow.querySelector("th")){
+      if(!hasTrend && headRow && headRow.querySelector("th")){
         var th = document.createElement("th");
-        th.className = "za-trend-column-head";
+        th.className = "za-trend-table-col";
         th.textContent = "Trend";
         headRow.appendChild(th);
       }
-      bodyRows.forEach(function(row){
-        var nameText = rowText(row);
-        var match = members.find(function(m){
-          var n = String(m.name || m.full_name || m.display_name || "").toLowerCase();
-          return n && nameText.indexOf(n) !== -1;
+
+      table.querySelectorAll("tbody tr").forEach(function(row){
+        var m = findMemberForRow(row);
+        if(!m) return;
+        var trend = normalizeTrend(m.trend || m.member_trend || m.attendance_trend || "Stable");
+
+        // Remove duplicate inline trend badges from non-trend cells.
+        row.querySelectorAll(".za-trend-badge").forEach(function(b){
+          var td = b.closest("td");
+          if(td && !td.classList.contains("za-trend-table-col")) b.remove();
         });
-        if(match){
-          var td = document.createElement("td");
-          td.innerHTML = badge(match.trend || "Stable");
-          row.appendChild(td);
+
+        var trendCell = Array.from(row.children).find(function(td){ return td.classList.contains("za-trend-table-col"); });
+        if(!trendCell){
+          trendCell = document.createElement("td");
+          trendCell.className = "za-trend-table-col";
+          row.appendChild(trendCell);
         }
+        trendCell.innerHTML = badge(trend) + '<span class="za-trend-explain">'+reason(trend)+'</span>';
       });
-      table.dataset.zaTrendColumnDone = "1";
+
+      table.dataset.zaFinalTrendDone = "1";
     });
   }
-  function renderTrendPanel(members){
-    if(!Array.isArray(members) || !members.length) return;
-    if(document.querySelector(".za-member-trend-panel")) return;
-    var mount = document.querySelector(".content,.main,.container,main") || document.body;
-    var top = members.slice(0,3);
-    var panel = document.createElement("div");
-    panel.className = "za-member-trend-panel";
-    panel.innerHTML = top.map(function(m){
-      var tr = normalizeTrend(m.trend || "Stable");
-      return '<div class="za-member-trend-card"><div style="font-size:11px;color:#94a3b8;font-weight:900;text-transform:uppercase;">Member Trend</div><strong style="display:block;margin:6px 0;color:#e5e7eb;">'+
-        (m.name || "Member")+'</strong>'+badge(tr)+'<div style="margin-top:8px;font-size:12px;color:#94a3b8;">Based on recent meetings attendance pattern.</div></div>';
-    }).join("");
-    var firstCard = mount.querySelector(".card,.panel,.analytics-card,.glass-panel");
-    if(firstCard && firstCard.parentNode) firstCard.parentNode.insertBefore(panel, firstCard.nextSibling);
+
+  function applyRiskBoxCleanup(){
+    document.querySelectorAll(".za-trend-badge").forEach(function(b){
+      var normalized = normalizeTrend(b.textContent || "");
+      b.className = "za-trend-badge " + cls(normalized);
+    });
   }
-  function loadAndApply(){
-    if(!/members|analytics|profile|home|dashboard/i.test(location.pathname)) return;
+
+  function loadTrends(){
     fetch("/api/member-risk-summary?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
-      .then(function(r){return r.ok ? r.json() : null;})
+      .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(data){
-        if(!data || !data.ok || !data.members) return;
-        applyTrendToRows(data.members);
-        addTrendColumnIfMembersTable(data.members);
-        if(/profile|member/i.test(location.pathname)) renderTrendPanel(data.members);
-      }).catch(function(){});
+        if(!data || !data.ok || !Array.isArray(data.members)) return;
+        membersCache = data.members;
+        removeDuplicateProfileCards();
+        renderProfileTrend();
+        addOrFixMembersTableTrendColumn();
+        applyRiskBoxCleanup();
+      }).catch(function(){
+        removeDuplicateProfileCards();
+        renderProfileTrend();
+      });
   }
-  window.addEventListener("za:live-snapshot", loadAndApply);
-  window.addEventListener("za:realtime", loadAndApply);
+
+  window.addEventListener("za:live-snapshot", loadTrends);
+  window.addEventListener("za:realtime", loadTrends);
   document.addEventListener("DOMContentLoaded", function(){
-    loadAndApply();
-    setTimeout(loadAndApply, 900);
-    setTimeout(loadAndApply, 2200);
+    loadTrends();
+    setTimeout(loadTrends, 700);
+    setTimeout(loadTrends, 1800);
   });
 })();
 </script>
 """
 
 @app.after_request
-def za_visible_trend_ui_inject(response):
-    """Inject visible trend badges/column into HTML pages only."""
+def za_final_trend_ui_inject(response):
+    """Inject final clean member trend UI into HTML pages only."""
     try:
         ctype = response.headers.get("Content-Type", "")
         if "text/html" not in ctype.lower():
             return response
         html = response.get_data(as_text=True)
-        if not html or "za-visible-trend-script" in html:
+        if not html or "za-final-trend-script" in html:
             return response
         if "</body>" in html:
-            html = html.replace("</body>", ZA_VISIBLE_TREND_ASSET + "\n</body>", 1)
+            html = html.replace("</body>", ZA_FINAL_TREND_ASSET + "\n</body>", 1)
         else:
-            html = html + ZA_VISIBLE_TREND_ASSET
+            html = html + ZA_FINAL_TREND_ASSET
         response.set_data(html)
         response.headers["Content-Length"] = str(len(response.get_data()))
     except Exception as exc:
-        print(f"⚠️ visible trend UI injection skipped: {exc}")
+        print(f"⚠️ final trend UI injection skipped: {exc}")
     return response
-# ===== END VISIBLE TREND UI INJECTION =====
+# ===== END FINAL TREND UI INJECTION =====
 
 
 if __name__ == "__main__":
