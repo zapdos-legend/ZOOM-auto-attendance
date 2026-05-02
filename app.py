@@ -363,26 +363,56 @@ button:active,.btn:active,a.btn:active{
     },
     initDurations:function(){
       var self = this;
+
+      function safeInit(el){
+        if(!el) return;
+        el.classList.add("za-duration-stable");
+
+        var parsed = self.secondsFromText(el.textContent);
+        if(parsed === null) return;
+
+        var oldVal = parseInt(el.dataset.zaDurationSeconds || "-1", 10);
+        if(isNaN(oldVal) || parsed > oldVal){
+          el.dataset.zaDurationSeconds = String(parsed);
+        }
+        el.dataset.zaDurationLocked = "1";
+      }
+
       var cells = Array.from(document.querySelectorAll("td,span,div")).filter(function(el){
         var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
         var text = (el.textContent || "").trim();
         return (label.indexOf("duration") !== -1 || /^\\d{1,3}:\\d{2}(:\\d{2})?$/.test(text)) && self.secondsFromText(text) !== null;
-      }).slice(0,120);
-      cells.forEach(function(el){
-        if(!el.dataset.zaDurationSeconds){
-          var sec = self.secondsFromText(el.textContent);
-          if(sec !== null) el.dataset.zaDurationSeconds = String(sec);
-        }
-      });
-      if(window.__zaDurationTimer) clearInterval(window.__zaDurationTimer);
+      }).slice(0,160);
+
+      cells.forEach(safeInit);
+
+      if(window.__zaDurationTimer) return;
+
       window.__zaDurationTimer = setInterval(function(){
         document.querySelectorAll("[data-za-duration-seconds]").forEach(function(el){
           var row = el.closest("tr");
-          var statusText = row ? row.textContent.toLowerCase() : "";
-          if(statusText.indexOf("joined") === -1 && statusText.indexOf("live") === -1 && statusText.indexOf("active") === -1) return;
-          var sec = parseInt(el.dataset.zaDurationSeconds || "0",10) + 1;
+          if(!row) return;
+
+          if(row.classList.contains("za-row-left-persistent")) return;
+
+          var statusText = row.textContent.toLowerCase();
+          var isLiveRow = statusText.indexOf("joined") !== -1 ||
+                          statusText.indexOf("live") !== -1 ||
+                          statusText.indexOf("active") !== -1 ||
+                          statusText.indexOf("present") !== -1 ||
+                          statusText.indexOf("host") !== -1;
+
+          if(!isLiveRow) return;
+
+          var sec = parseInt(el.dataset.zaDurationSeconds || "0",10);
+          if(isNaN(sec)) sec = 0;
+          sec += 1;
+
           el.dataset.zaDurationSeconds = String(sec);
           el.textContent = self.formatSeconds(sec);
+          el.classList.remove("za-duration-tick");
+          void el.offsetWidth;
+          el.classList.add("za-duration-tick");
         });
       },1000);
     },
@@ -793,12 +823,20 @@ body.za-socket-live-mode .za-realtime-pill::before{
     flashMatchingRows:function(name, left){
       if(!name) return;
       var needle = String(name).toLowerCase();
+
       document.querySelectorAll("tbody tr").forEach(function(row){
         var txt = (row.textContent || "").toLowerCase();
+
         if(txt.indexOf(needle) !== -1){
           row.classList.remove("za-row-live-flash","za-row-left-flash");
-          void row.offsetWidth;
-          row.classList.add(left ? "za-row-left-flash" : "za-row-live-flash");
+
+          if(left){
+            row.classList.add("za-row-left-persistent");
+            row.classList.add("za-row-left-flash");
+          }else{
+            row.classList.remove("za-row-left-persistent");
+            row.classList.add("za-row-live-flash");
+          }
         }
       });
     },
@@ -873,6 +911,32 @@ body.za-socket-live-mode .za-realtime-pill::before{
 })();
 </script>
 /* ===== END PHASE 2 ADVANCED REALTIME UI ===== */
+
+
+/* ===== LIVE UX FIX: NO DURATION FLICKER + PERSISTENT LEFT ROW ===== */
+.za-row-left-persistent,
+tr.za-row-left-persistent,
+tbody tr.za-row-left-persistent{
+    background: rgba(239,68,68,0.18) !important;
+    border-left: 4px solid #ef4444 !important;
+    box-shadow: inset 0 0 0 1px rgba(239,68,68,.14) !important;
+    transition: background .42s ease, border-left-color .42s ease, box-shadow .42s ease !important;
+}
+.za-row-left-persistent td{
+    background: rgba(239,68,68,0.10) !important;
+}
+.za-duration-stable{
+    transition: opacity .18s ease, transform .18s ease;
+    font-variant-numeric: tabular-nums;
+}
+.za-duration-stable.za-duration-tick{
+    animation: zaDurationTick .22s ease both;
+}
+@keyframes zaDurationTick{
+    0%{transform:translateY(0);opacity:1;}
+    50%{transform:translateY(-1px);opacity:.92;}
+    100%{transform:translateY(0);opacity:1;}
+}
 
 </style>
 '''
@@ -5927,6 +5991,164 @@ button:active {
 })();
 </script>
 
+
+
+<script>
+/* ===== LIVE SMOOTH PATCH: PRESERVE DURATION + LEFT ROW STATE ===== */
+(function(){
+  if(window.__ZA_LIVE_SMOOTH_PATCH_V1__) return;
+  window.__ZA_LIVE_SMOOTH_PATCH_V1__ = true;
+
+  var durationMemory = {};
+  var leftMemory = {};
+
+  function rowKey(row){
+    if(!row) return "";
+    var txt = (row.textContent || "").toLowerCase().replace(/\s+/g," ").trim();
+    var email = txt.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
+    if(email) return "email::" + email[0];
+    var cells = row.querySelectorAll("td");
+    var key = "";
+    for(var i=0;i<Math.min(cells.length,2);i++){
+      key += " " + (cells[i].textContent || "").trim().toLowerCase();
+    }
+    return key.replace(/\s+/g," ").trim();
+  }
+
+  function secondsFromText(text){
+    text = String(text || "").trim();
+    var parts = text.split(":").map(function(x){ return parseInt(x,10); });
+    if(parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0]*60+parts[1];
+    if(parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) return parts[0]*3600+parts[1]*60+parts[2];
+    var m = text.match(/(\d+)\s*(min|mins|minute|minutes)/i);
+    if(m) return parseInt(m[1],10)*60;
+    return null;
+  }
+
+  function formatSeconds(sec){
+    sec = Math.max(0, parseInt(sec || 0, 10));
+    var h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+    if(h > 0) return h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
+    return m + ":" + String(s).padStart(2,"0");
+  }
+
+  function rememberState(){
+    document.querySelectorAll("tbody tr").forEach(function(row){
+      var key = rowKey(row);
+      if(!key) return;
+
+      if(row.classList.contains("za-row-left-persistent")){
+        leftMemory[key] = true;
+      }
+
+      row.querySelectorAll("td,span,div").forEach(function(el){
+        var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
+        var text = (el.textContent || "").trim();
+        var sec = secondsFromText(text);
+        if(sec !== null && (label.indexOf("duration") !== -1 || /^\d{1,3}:\d{2}(:\d{2})?$/.test(text))){
+          var memKey = key + "::duration";
+          var old = durationMemory[memKey] || 0;
+          if(sec > old) durationMemory[memKey] = sec;
+        }
+      });
+    });
+  }
+
+  function restoreState(){
+    document.querySelectorAll("tbody tr").forEach(function(row){
+      var key = rowKey(row);
+      if(!key) return;
+
+      if(leftMemory[key]){
+        row.classList.add("za-row-left-persistent");
+      }
+
+      row.querySelectorAll("td,span,div").forEach(function(el){
+        var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
+        var text = (el.textContent || "").trim();
+        var sec = secondsFromText(text);
+        if(sec !== null && (label.indexOf("duration") !== -1 || /^\d{1,3}:\d{2}(:\d{2})?$/.test(text))){
+          var memKey = key + "::duration";
+          var remembered = durationMemory[memKey] || 0;
+          if(remembered > sec){
+            el.textContent = formatSeconds(remembered);
+            el.dataset.zaDurationSeconds = String(remembered);
+          }else{
+            durationMemory[memKey] = sec;
+            el.dataset.zaDurationSeconds = String(sec);
+          }
+          el.classList.add("za-duration-stable");
+        }
+      });
+    });
+
+    if(window.ZoomAttendanceMotionEngine && typeof window.ZoomAttendanceMotionEngine.initDurations === "function"){
+      try{ window.ZoomAttendanceMotionEngine.initDurations(); }catch(e){}
+    }
+  }
+
+  function markLeftByName(name){
+    if(!name) return;
+    var needle = String(name).toLowerCase();
+    document.querySelectorAll("tbody tr").forEach(function(row){
+      if((row.textContent || "").toLowerCase().indexOf(needle) !== -1){
+        row.classList.add("za-row-left-persistent");
+        leftMemory[rowKey(row)] = true;
+      }
+    });
+  }
+
+  function markJoinedByName(name){
+    if(!name) return;
+    var needle = String(name).toLowerCase();
+    document.querySelectorAll("tbody tr").forEach(function(row){
+      if((row.textContent || "").toLowerCase().indexOf(needle) !== -1){
+        row.classList.remove("za-row-left-persistent");
+        delete leftMemory[rowKey(row)];
+      }
+    });
+  }
+
+  window.addEventListener("za:realtime", function(e){
+    var detail = e.detail || {};
+    var evt = detail.event || "";
+    var payload = detail.payload || {};
+    var name = payload.name || payload.participant_name || payload.message || "";
+    if(evt === "participant_leave") markLeftByName(name);
+    if(evt === "participant_join") markJoinedByName(name);
+  });
+
+  window.addEventListener("za:live-snapshot", function(){
+    rememberState();
+    setTimeout(restoreState, 0);
+    setTimeout(restoreState, 80);
+  });
+
+  var nativeFetch = window.fetch;
+  window.fetch = function(){
+    var args = arguments;
+    var url = String(args[0] || "");
+    var isLiveSnapshot = url.indexOf("/api/live-snapshot") !== -1;
+    if(isLiveSnapshot) rememberState();
+    return nativeFetch.apply(this, args).then(function(resp){
+      if(isLiveSnapshot){
+        setTimeout(restoreState, 0);
+        setTimeout(restoreState, 120);
+      }
+      return resp;
+    });
+  };
+
+  document.addEventListener("DOMContentLoaded", function(){
+    rememberState();
+    restoreState();
+    setInterval(function(){
+      rememberState();
+      restoreState();
+    }, 1000);
+  });
+})();
+</script>
 
 <script>
 /* ===== LIVE AUTO REFRESH FIX: SOCKET-FIRST + SAFE FALLBACK ===== */
