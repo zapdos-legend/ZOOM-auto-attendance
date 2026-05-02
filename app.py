@@ -565,7 +565,7 @@ button:active,.btn:active,a.btn:active{
       if(!document.getElementById("za-socketio-client")){
         var s=document.createElement("script");
         s.id="za-socketio-client";
-        s.src="/socket.io/socket.io.js";
+        s.src="https://cdn.socket.io/4.7.5/socket.io.min.js";
         s.onload=bind;
         s.onerror=function(){ window.__zaSocketBound=false; };
         document.head.appendChild(s);
@@ -6601,7 +6601,7 @@ button:active {
     }
     var s = document.createElement("script");
     s.id = "za-socketio-client-global";
-    s.src = "/socket.io/socket.io.js";
+    s.src = "https://cdn.socket.io/4.7.5/socket.io.min.js";
     s.onload = bindSocket;
     s.onerror = function(){ socketStarted = false; };
     document.head.appendChild(s);
@@ -7988,6 +7988,64 @@ def member_profile(member_id):
     color: white;
 }
 
+
+
+/* ===== OPTION A PREMIUM FORCE UI - DIRECT PROFILE ROUTE ===== */
+#zaPremiumTrendHero{
+  margin:18px 0 22px!important;
+  border-radius:30px!important;
+  overflow:hidden!important;
+  border:1px solid rgba(125,211,252,.30)!important;
+  background:
+    radial-gradient(circle at 78% 0%, rgba(34,197,94,.22), transparent 28%),
+    radial-gradient(circle at 12% 20%, rgba(56,189,248,.15), transparent 28%),
+    linear-gradient(135deg, rgba(15,23,42,.96), rgba(30,41,59,.80))!important;
+  box-shadow:0 30px 90px rgba(0,0,0,.48), 0 0 60px rgba(56,189,248,.13)!important;
+  padding:24px!important;
+  position:relative!important;
+}
+#zaPremiumTrendHero::before{
+  content:"";
+  position:absolute;
+  inset:-1px;
+  pointer-events:none;
+  background:linear-gradient(120deg, transparent, rgba(255,255,255,.08), transparent);
+  transform:translateX(-100%);
+  animation:zaPremiumShineForce 4.8s ease-in-out infinite;
+}
+@keyframes zaPremiumShineForce{0%,55%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+.za-premium-trend-grid{display:grid!important;grid-template-columns:minmax(250px,1.1fr) minmax(330px,1.7fr)!important;gap:20px!important;align-items:stretch!important;}
+.za-premium-trend-left{display:flex!important;flex-direction:column!important;justify-content:space-between!important;gap:16px!important;}
+.za-premium-kicker{color:#7dd3fc!important;font-size:11px!important;font-weight:950!important;letter-spacing:.14em!important;text-transform:uppercase!important;}
+.za-premium-title{margin:8px 0!important;color:#f8fafc!important;font-size:31px!important;line-height:1.05!important;font-weight:1000!important;}
+.za-premium-sub{color:#a8b3c7!important;font-size:13px!important;font-weight:750!important;line-height:1.5!important;margin:0!important;}
+.za-premium-score-wrap{display:flex!important;gap:10px!important;flex-wrap:wrap!important;align-items:center!important;}
+.za-premium-score{display:inline-flex!important;align-items:center!important;gap:8px!important;border-radius:999px!important;padding:11px 15px!important;font-size:15px!important;font-weight:1000!important;border:1px solid rgba(56,189,248,.34)!important;background:rgba(56,189,248,.13)!important;color:#e0f2fe!important;box-shadow:0 0 24px rgba(56,189,248,.13)!important;}
+.za-premium-avg{display:block!important;color:#cbd5e1!important;font-size:12px!important;font-weight:900!important;margin-top:9px!important;}
+.za-premium-badge{display:inline-flex!important;align-items:center!important;gap:8px!important;border-radius:999px!important;padding:11px 15px!important;font-size:13px!important;font-weight:1000!important;border:1px solid rgba(148,163,184,.22)!important;}
+.za-premium-badge.improving{color:#bbf7d0!important;background:rgba(34,197,94,.16)!important;border-color:rgba(34,197,94,.40)!important;box-shadow:0 0 25px rgba(34,197,94,.16)!important;}
+.za-premium-badge.declining{color:#fecaca!important;background:rgba(239,68,68,.17)!important;border-color:rgba(239,68,68,.40)!important;box-shadow:0 0 25px rgba(239,68,68,.17)!important;}
+.za-premium-badge.stable{color:#dbeafe!important;background:rgba(148,163,184,.14)!important;border-color:rgba(148,163,184,.32)!important;}
+.za-premium-chart-card{border-radius:25px!important;background:rgba(2,6,23,.36)!important;border:1px solid rgba(148,163,184,.17)!important;padding:17px!important;}
+.za-premium-chart-head{display:flex!important;justify-content:space-between!important;align-items:center!important;gap:12px!important;margin-bottom:13px!important;}
+.za-premium-chart-head strong{color:#f8fafc!important;font-size:14px!important;font-weight:1000!important;}
+.za-premium-chart-head small{color:#94a3b8!important;font-size:11px!important;font-weight:850!important;}
+.za-premium-bars{display:flex!important;align-items:flex-end!important;gap:10px!important;height:145px!important;padding:12px!important;border-radius:18px!important;background:linear-gradient(180deg,rgba(15,23,42,.55),rgba(2,6,23,.38))!important;border:1px solid rgba(148,163,184,.12)!important;}
+.za-premium-bar{flex:1!important;min-width:18px!important;border-radius:999px 999px 8px 8px!important;position:relative!important;height:var(--h)!important;background:linear-gradient(180deg,#38bdf8,#6366f1)!important;box-shadow:0 0 22px rgba(56,189,248,.16)!important;animation:zaPremiumBarGrowForce .92s cubic-bezier(.16,1,.3,1) both;}
+.za-premium-bar.good{background:linear-gradient(180deg,#22c55e,#0ea5e9)!important;}
+.za-premium-bar.warn{background:linear-gradient(180deg,#f59e0b,#6366f1)!important;}
+.za-premium-bar.bad{background:linear-gradient(180deg,#ef4444,#7c3aed)!important;}
+@keyframes zaPremiumBarGrowForce{from{height:8px;opacity:.28;transform:translateY(8px)}to{height:var(--h);opacity:1;transform:translateY(0)}}
+.za-premium-bar:hover{filter:brightness(1.18)!important;transform:translateY(-3px)!important;}
+.za-premium-bar:hover::after{content:attr(data-tip);position:absolute!important;left:50%!important;bottom:calc(100% + 10px)!important;transform:translateX(-50%)!important;z-index:99999!important;min-width:178px!important;padding:9px 10px!important;border-radius:14px!important;background:rgba(15,23,42,.98)!important;color:#e5e7eb!important;border:1px solid rgba(148,163,184,.24)!important;box-shadow:0 18px 42px rgba(0,0,0,.38)!important;font-size:11px!important;font-weight:850!important;text-align:center!important;}
+.za-premium-insight-row{margin-top:12px!important;display:grid!important;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important;gap:10px!important;}
+.za-premium-mini{border-radius:16px!important;padding:10px 12px!important;background:rgba(15,23,42,.44)!important;border:1px solid rgba(148,163,184,.12)!important;}
+.za-premium-mini small{display:block!important;color:#94a3b8!important;font-size:10px!important;font-weight:950!important;text-transform:uppercase!important;letter-spacing:.08em!important;}
+.za-premium-mini strong{display:block!important;margin-top:4px!important;color:#f8fafc!important;font-size:18px!important;font-weight:1000!important;}
+#zaMemberTrendSinglePanel{display:none!important;}
+@media(max-width:900px){.za-premium-trend-grid{grid-template-columns:1fr!important}.za-premium-title{font-size:24px!important}.za-premium-bars{height:115px!important}}
+/* ===== END OPTION A PREMIUM FORCE UI - DIRECT PROFILE ROUTE ===== */
+
 </style>
         <div class="member-profile-layout-fix"><div class="member-profile-hero">
             <div class="hero">
@@ -8007,6 +8065,8 @@ def member_profile(member_id):
                 <p class="muted">Score combines attendance, consistency, duration participation, rejoins, and recent activity. Existing attendance logic is not changed.</p>
             </div>
         </div>
+
+        {{ premium_trend_html|safe }}
 
         <div class="profile-kpis">
             <div class="profile-kpi"><small>Attendance %</small><strong>{{ data.summary.attendance_percent }}%</strong></div>
@@ -8078,6 +8138,7 @@ def member_profile(member_id):
         </script>
         """,
         data=profile_data,
+        premium_trend_html=_za_premium_trend_html(member_id),
         member_display_name=member_display_name,
         fmt_dt=fmt_dt,
     )
@@ -11653,6 +11714,21 @@ _AI_FRONTEND_PATCH_V112 = """
 # Removed malformed ai_frontend_patch_v112 injected block to restore deployment.
 
 
+# ===== SAFE SMART SCHEDULER FALLBACK =====
+def run_smart_scheduler(force=False):
+    """Safe fallback to prevent scheduler worker crashes when alert scheduler logic is not installed.
+    Keeps existing pages stable and does not change attendance/webhook/database behavior.
+    """
+    return {
+        "ran": False,
+        "sent": 0,
+        "created": 0,
+        "skipped": True,
+        "reason": "Smart scheduler implementation not installed in this build",
+    }
+# ===== END SAFE SMART SCHEDULER FALLBACK =====
+
+
 def _smart_alert_scheduler_worker():
     """Render-safe background alert scheduler worker.
     Keeps alert automation from breaking any page request if scheduler logic fails.
@@ -12697,54 +12773,6 @@ def za_option_a_premium_force_css_inject(response):
 
 
 
-# ===== OPTION A PREMIUM PROFILE HERO DIRECT INJECTION =====
-@app.after_request
-def za_option_a_premium_profile_hero_inject(response):
-    """Directly inject server-rendered premium trend hero on member profile pages.
-    This is intentionally URL-scoped to /member/<id>/profile and frontend-safe.
-    """
-    try:
-        ctype = response.headers.get("Content-Type", "")
-        if "text/html" not in ctype.lower():
-            return response
-        match = re.search(r"/member/(\d+)/profile", request.path or "")
-        if not match:
-            return response
-        html = response.get_data(as_text=True)
-        if not html or "zaPremiumTrendHero" in html:
-            return response
-
-        member_id = int(match.group(1))
-        premium_html = _za_premium_trend_html(member_id)
-
-        # Prefer placing after the first large profile/header card.
-        insert_done = False
-        patterns = [
-            r'(</div>\s*<div[^>]*(?:class=["\'][^"\']*(?:Current Risk|risk|stats|metric)|id=["\'][^"\']*risk)[^>]*>)',
-            r'(</section>\s*)',
-            r'(</div>\s*<div[^>]*class=["\'][^"\']*(?:stats|metrics|card-grid|grid)[^"\']*["\'])',
-        ]
-        for pat in patterns:
-            m = re.search(pat, html, flags=re.IGNORECASE)
-            if m:
-                html = html[:m.start(1)] + premium_html + html[m.start(1):]
-                insert_done = True
-                break
-
-        if not insert_done:
-            if "</main>" in html:
-                html = html.replace("</main>", premium_html + "\n</main>", 1)
-            elif "</body>" in html:
-                html = html.replace("</body>", premium_html + "\n</body>", 1)
-            else:
-                html += premium_html
-
-        response.set_data(html)
-        response.headers["Content-Length"] = str(len(response.get_data()))
-    except Exception as exc:
-        print(f"⚠️ option A premium profile hero injection skipped: {exc}")
-    return response
-# ===== END OPTION A PREMIUM PROFILE HERO DIRECT INJECTION =====
 
 
 if __name__ == "__main__":
