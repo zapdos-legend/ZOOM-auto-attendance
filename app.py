@@ -1025,6 +1025,254 @@ tbody tr:hover{
   z-index:99999;
 }
 
+
+/* ===== PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
+.za-insights-panel{
+  position:fixed;
+  left:18px;
+  bottom:18px;
+  width:360px;
+  max-width:calc(100vw - 36px);
+  z-index:99998;
+  border:1px solid rgba(148,163,184,.22);
+  background:rgba(15,23,42,.93);
+  backdrop-filter:blur(16px);
+  border-radius:22px;
+  box-shadow:0 24px 62px rgba(0,0,0,.42);
+  overflow:hidden;
+  color:#e5e7eb;
+}
+.za-insights-head{
+  padding:14px 16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border-bottom:1px solid rgba(148,163,184,.16);
+  background:linear-gradient(135deg,rgba(99,102,241,.18),rgba(14,165,233,.10));
+}
+.za-insights-head strong{
+  font-size:14px;
+  font-weight:950;
+}
+.za-insights-head span{
+  font-size:11px;
+  color:#93c5fd;
+  font-weight:900;
+}
+.za-insights-body{
+  padding:14px 16px;
+  display:grid;
+  gap:10px;
+}
+.za-insight-row{
+  border:1px solid rgba(148,163,184,.16);
+  background:rgba(2,6,23,.38);
+  border-radius:16px;
+  padding:10px 12px;
+  animation:zaInsightIn .42s cubic-bezier(.16,1,.3,1) both;
+}
+.za-insight-row strong{
+  display:block;
+  font-size:12px;
+  margin-bottom:4px;
+}
+.za-insight-row small{
+  display:block;
+  color:#94a3b8;
+  line-height:1.4;
+  font-weight:750;
+}
+.za-insight-row.good{border-left:4px solid #22c55e;}
+.za-insight-row.warn{border-left:4px solid #f59e0b;}
+.za-insight-row.danger{border-left:4px solid #ef4444;}
+@keyframes zaInsightIn{
+  from{opacity:0;transform:translateY(8px) scale(.98);}
+  to{opacity:1;transform:translateY(0) scale(1);}
+}
+.za-mini-live-graph{
+  height:74px;
+  width:100%;
+  border-radius:16px;
+  background:rgba(15,23,42,.62);
+  border:1px solid rgba(148,163,184,.16);
+  overflow:hidden;
+  position:relative;
+}
+.za-mini-live-graph svg{
+  width:100%;
+  height:100%;
+  display:block;
+}
+.za-mini-live-graph path{
+  fill:none;
+  stroke:#38bdf8;
+  stroke-width:3;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  filter:drop-shadow(0 0 8px rgba(56,189,248,.38));
+  transition:d .45s cubic-bezier(.16,1,.3,1);
+}
+.za-mini-live-graph .area{
+  fill:rgba(56,189,248,.12);
+  stroke:none;
+}
+.za-alert-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  border-radius:999px;
+  padding:6px 10px;
+  font-size:11px;
+  font-weight:950;
+  border:1px solid rgba(148,163,184,.18);
+}
+.za-alert-chip.good{background:rgba(34,197,94,.12);color:#bbf7d0;}
+.za-alert-chip.warn{background:rgba(245,158,11,.12);color:#fde68a;}
+.za-alert-chip.danger{background:rgba(239,68,68,.12);color:#fecaca;animation:zaCritical 1.4s ease-in-out infinite;}
+@media (max-width:760px){
+  .za-insights-panel{left:10px;right:10px;bottom:12px;width:auto;max-height:42vh;overflow:auto;}
+}
+<script>
+(function(){
+  if(window.ZoomAttendancePhase22){ return; }
+  window.ZoomAttendancePhase22 = {
+    points:[],
+    lastRiskLevel:"good",
+    ensure:function(){
+      var panel=document.querySelector(".za-insights-panel");
+      if(panel) return panel;
+      panel=document.createElement("div");
+      panel.className="za-insights-panel";
+      panel.innerHTML=
+        '<div class="za-insights-head">'+
+          '<div><strong>AI-Style Live Insights</strong><br><span id="zaInsightSub">Watching meeting health</span></div>'+
+          '<div class="za-alert-chip good" id="zaInsightHealth">Healthy</div>'+
+        '</div>'+
+        '<div class="za-insights-body">'+
+          '<div class="za-mini-live-graph" id="zaMiniGraph"></div>'+
+          '<div id="zaInsightRows"></div>'+
+        '</div>';
+      document.body.appendChild(panel);
+      this.drawGraph();
+      return panel;
+    },
+    scoreSnapshot:function(payload){
+      payload=payload||{};
+      var summary=payload.summary||{};
+      var live=Number(summary.live_participants || summary.active_participants || summary.total_live || 0);
+      var members=Number(summary.members_live || summary.live_members || 0);
+      var unknown=Number(summary.unknown_live || summary.unknown_participants || 0);
+      var absent=Number(summary.absent_members || summary.absent || 0);
+      var score=80;
+      if(live<=0) score-=25;
+      if(unknown>0) score-=Math.min(25, unknown*8);
+      if(absent>0) score-=Math.min(20, absent*4);
+      if(members>0 && live>0) score+=8;
+      score=Math.max(0,Math.min(100,score));
+      return {score:score,live:live,members:members,unknown:unknown,absent:absent};
+    },
+    level:function(score){
+      if(score>=75) return "good";
+      if(score>=45) return "warn";
+      return "danger";
+    },
+    label:function(level){
+      return level==="good" ? "Healthy" : (level==="warn" ? "Warning" : "Critical");
+    },
+    addPoint:function(score){
+      this.points.push(score);
+      if(this.points.length>28) this.points.shift();
+      this.drawGraph();
+    },
+    drawGraph:function(){
+      this.ensure();
+      var box=document.getElementById("zaMiniGraph");
+      if(!box) return;
+      var pts=this.points.length?this.points:[80,80,80,80];
+      var w=340,h=74,pad=8;
+      var step=(w-pad*2)/Math.max(pts.length-1,1);
+      var path="";
+      var area="";
+      pts.forEach(function(v,i){
+        var x=pad+i*step;
+        var y=h-pad-(Math.max(0,Math.min(100,v))/100)*(h-pad*2);
+        path+=(i===0?"M":"L")+x.toFixed(1)+" "+y.toFixed(1)+" ";
+      });
+      area=path+"L "+(pad+(pts.length-1)*step).toFixed(1)+" "+(h-pad)+" L "+pad+" "+(h-pad)+" Z";
+      box.innerHTML='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none"><path class="area" d="'+area+'"></path><path d="'+path+'"></path></svg>';
+    },
+    renderInsights:function(payload){
+      this.ensure();
+      var s=this.scoreSnapshot(payload);
+      var lvl=this.level(s.score);
+      this.lastRiskLevel=lvl;
+      this.addPoint(s.score);
+
+      var chip=document.getElementById("zaInsightHealth");
+      if(chip){
+        chip.className="za-alert-chip "+lvl;
+        chip.textContent=this.label(lvl)+" "+Math.round(s.score);
+      }
+      var sub=document.getElementById("zaInsightSub");
+      if(sub) sub.textContent="Participants: "+s.live+" | Unknown: "+s.unknown;
+
+      var rows=[];
+      if(s.live<=0){
+        rows.push({level:"warn",title:"No active participant detected",body:"Live meeting appears idle. The dashboard is watching for the next join event."});
+      }else{
+        rows.push({level:"good",title:"Live participation active",body:s.live+" participant(s) are currently reflected in the live stream."});
+      }
+      if(s.unknown>0){
+        rows.push({level:"danger",title:"Unknown participant attention",body:s.unknown+" unknown participant(s) detected. Verify member mapping if needed."});
+      }
+      if(s.score<50){
+        rows.push({level:"danger",title:"Predictive warning",body:"Meeting health is low. Recommended action: check host presence and participant continuity."});
+      }else if(s.score<75){
+        rows.push({level:"warn",title:"Watch zone",body:"Attendance quality is acceptable but needs monitoring."});
+      }else{
+        rows.push({level:"good",title:"Stable meeting health",body:"No critical attendance risk detected right now."});
+      }
+
+      var container=document.getElementById("zaInsightRows");
+      if(container){
+        container.innerHTML=rows.slice(0,4).map(function(r){
+          return '<div class="za-insight-row '+r.level+'"><strong>'+r.title+'</strong><small>'+r.body+'</small></div>';
+        }).join("");
+      }
+
+      if(lvl==="danger" && window.ZoomAttendanceAdvancedRealtimeUI){
+        try{ window.ZoomAttendanceAdvancedRealtimeUI.addFeed("alert","Predictive alert","Meeting health dropped below safe level"); }catch(e){}
+      }
+    },
+    bind:function(){
+      var self=this;
+      self.ensure();
+      window.addEventListener("za:live-snapshot",function(e){ self.renderInsights(e.detail||{}); });
+      window.addEventListener("za:live-summary",function(e){ self.renderInsights(e.detail||{}); });
+      window.addEventListener("za:realtime",function(e){
+        var d=e.detail||{};
+        if(d.event==="participant_join" || d.event==="participant_leave" || d.event==="meeting_finalized"){
+          setTimeout(function(){
+            if(window.__zaLastSocketSnapshot) self.renderInsights(window.__zaLastSocketSnapshot);
+          },180);
+        }
+      });
+      setTimeout(function(){
+        if(window.__zaLastSocketSnapshot) self.renderInsights(window.__zaLastSocketSnapshot);
+        else self.renderInsights({summary:{live_participants:0,unknown_live:0}});
+      },900);
+    }
+  };
+  if(document.readyState==="loading"){
+    document.addEventListener("DOMContentLoaded",function(){ window.ZoomAttendancePhase22.bind(); });
+  }else{
+    window.ZoomAttendancePhase22.bind();
+  }
+})();
+</script>
+/* ===== END PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
+
 </style>
 '''
 # ===== END THEME =====
@@ -11680,6 +11928,32 @@ def api_realtime_test():
     })
     emit_live_snapshot("manual_test")
     return jsonify({"ok": True, "message": "Realtime test emitted"})
+
+
+
+@app.route("/api/live-insights")
+@login_required
+def api_live_insights():
+    try:
+        payload = build_live_snapshot_payload(include_feed=True)
+        summary = payload.get("summary") or {}
+        live = int(summary.get("live_participants") or summary.get("active_participants") or 0)
+        unknown = int(summary.get("unknown_live") or summary.get("unknown_participants") or 0)
+        score = 80
+        if live <= 0:
+            score -= 25
+        if unknown > 0:
+            score -= min(25, unknown * 8)
+        level = "Healthy" if score >= 75 else ("Warning" if score >= 45 else "Critical")
+        return jsonify({
+            "ok": True,
+            "score": max(0, min(100, score)),
+            "level": level,
+            "summary": summary,
+            "meeting": payload.get("meeting"),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 200
 
 
 if __name__ == "__main__":
