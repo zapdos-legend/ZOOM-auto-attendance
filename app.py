@@ -1284,6 +1284,7 @@ import hashlib
 import hmac
 import io
 import json
+import re
 import os
 import smtplib
 import tempfile
@@ -1299,6 +1300,7 @@ from functools import wraps
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 from xml.sax.saxutils import escape as xml_escape
+html_escape = xml_escape
 
 from dotenv import load_dotenv
 from flask import (
@@ -12338,73 +12340,293 @@ def za_final_dynamic_trend_ui_inject(response):
 
 
 
-# ===== PREMIUM TREND UI INJECTION - SAFE FRONTEND ONLY =====
-ZA_PREMIUM_UI_ASSET = r"""
-<style id="za-premium-ui-style">
-/* ===== PREMIUM SAAS UI LAYER - SAFE FRONTEND ONLY ===== */
-:root{
-  --za-premium-bg:#07111f;
-  --za-premium-card:rgba(15,23,42,.76);
-  --za-premium-line:rgba(148,163,184,.18);
-  --za-premium-glow:rgba(56,189,248,.22);
-  --za-premium-purple:rgba(139,92,246,.32);
-}
-body::before{
-  content:"";
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  z-index:-1;
-  background:
-    radial-gradient(circle at 22% 18%, rgba(56,189,248,.14), transparent 30%),
-    radial-gradient(circle at 82% 22%, rgba(139,92,246,.16), transparent 28%),
-    radial-gradient(circle at 68% 82%, rgba(34,197,94,.08), transparent 22%);
-  animation:zaPremiumBgFloat 16s ease-in-out infinite alternate;
-}
-@keyframes zaPremiumBgFloat{
-  from{filter:hue-rotate(0deg) brightness(1); transform:scale(1);}
-  to{filter:hue-rotate(10deg) brightness(1.08); transform:scale(1.035);}
-}
-.card,.panel,.glass-panel,.mini-card,.analytics-card,.activity-clean-card{
-  border:1px solid var(--za-premium-line)!important;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.026)),
-    rgba(15,23,42,.72)!important;
-  box-shadow:0 18px 48px rgba(0,0,0,.30)!important;
-}
-.card:hover,.panel:hover,.glass-panel:hover,.mini-card:hover,.analytics-card:hover{
-  border-color:rgba(56,189,248,.34)!important;
-  box-shadow:0 22px 64px rgba(0,0,0,.38), 0 0 28px rgba(56,189,248,.08)!important;
-}
 
-/* Premium member profile hero */
-body:has(#zaPremiumTrendHero) .hero,
-body:has(#zaPremiumTrendHero) .profile-hero,
-body:has(#zaPremiumTrendHero) .member-hero{
-  min-height:190px!important;
-  border-radius:28px!important;
-  border:1px solid rgba(148,163,184,.20)!important;
-  background:
-    radial-gradient(circle at 82% 18%, rgba(56,189,248,.20), transparent 24%),
-    linear-gradient(135deg, rgba(15,23,42,.90), rgba(30,41,59,.72))!important;
-}
 
-/* Hide older trend panel once premium hero exists */
-body:has(#zaPremiumTrendHero) #zaMemberTrendSinglePanel{
-  display:none!important;
-}
 
+# ===== PREMIUM MEMBER TREND DATA HELPERS - READ ONLY =====
+def _za_member_trend_details_payload(member_id):
+    """Read-only payload for premium member trend UI.
+    Supports old/new DB columns without schema changes.
+    """
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                name_sql = member_name_sql(conn)
+                cur.execute(f"SELECT id, {name_sql} AS display_name, email, phone FROM members WHERE id=%s", (member_id,))
+                member = cur.fetchone()
+                if not member:
+                    return {"ok": False, "error": "Member not found", "points": []}
+
+                has_total_seconds = column_exists(conn, "attendance", "total_seconds")
+                has_duration_seconds = column_exists(conn, "attendance", "duration_seconds")
+                has_duration = column_exists(conn, "attendance", "duration")
+                has_final_status = column_exists(conn, "attendance", "final_status")
+                has_status = column_exists(conn, "attendance", "status")
+                has_rejoins = column_exists(conn, "attendance", "rejoins")
+                has_updated_at = column_exists(conn, "attendance", "updated_at")
+                has_created_at = column_exists(conn, "attendance", "created_at")
+                has_participant_name = column_exists(conn, "attendance", "participant_name")
+                has_att_name = column_exists(conn, "attendance", "name")
+
+                if has_total_seconds:
+                    duration_expr = "COALESCE(a.total_seconds, 0)"
+                elif has_duration_seconds:
+                    duration_expr = "COALESCE(a.duration_seconds, 0)"
+                elif has_duration:
+                    duration_expr = "COALESCE(a.duration, 0)"
+                else:
+                    duration_expr = "0"
+
+                if has_final_status and has_status:
+                    status_expr = "COALESCE(a.final_status, a.status, 'ABSENT')"
+                elif has_final_status:
+                    status_expr = "COALESCE(a.final_status, 'ABSENT')"
+                elif has_status:
+                    status_expr = "COALESCE(a.status, 'ABSENT')"
+                else:
+                    status_expr = "'ABSENT'"
+
+                rejoins_expr = "COALESCE(a.rejoins, 0)" if has_rejoins else "0"
+                order_parts = ["mt.start_time"]
+                if has_updated_at:
+                    order_parts.append("a.updated_at")
+                if has_created_at:
+                    order_parts.append("a.created_at")
+                order_expr = "COALESCE(" + ", ".join(order_parts) + ")"
+
+                cur.execute(
+                    f"""
+                    SELECT
+                        {status_expr} AS status,
+                        {duration_expr} AS attended_seconds,
+                        {rejoins_expr} AS rejoins,
+                        mt.start_time,
+                        mt.end_time,
+                        mt.topic
+                    FROM attendance a
+                    LEFT JOIN meetings mt ON mt.meeting_uuid = a.meeting_uuid
+                    WHERE a.member_id=%s
+                    ORDER BY {order_expr} DESC NULLS LAST
+                    LIMIT 7
+                    """,
+                    (member_id,),
+                )
+                rows = list(cur.fetchall() or [])
+
+                if not rows and (has_participant_name or has_att_name):
+                    display_name = member_display_name(member)
+                    name_candidates = []
+                    if has_participant_name:
+                        name_candidates.append("a.participant_name")
+                    if has_att_name:
+                        name_candidates.append("a.name")
+                    name_expr = "COALESCE(" + ", ".join(name_candidates + ["''"]) + ")"
+                    cur.execute(
+                        f"""
+                        SELECT
+                            {status_expr} AS status,
+                            {duration_expr} AS attended_seconds,
+                            {rejoins_expr} AS rejoins,
+                            mt.start_time,
+                            mt.end_time,
+                            mt.topic
+                        FROM attendance a
+                        LEFT JOIN meetings mt ON mt.meeting_uuid = a.meeting_uuid
+                        WHERE LOWER({name_expr}) = LOWER(%s)
+                        ORDER BY {order_expr} DESC NULLS LAST
+                        LIMIT 7
+                        """,
+                        (display_name,),
+                    )
+                    rows = list(cur.fetchall() or [])
+
+                rows = list(reversed(rows))
+                points = []
+                for idx, row in enumerate(rows):
+                    status = str(row.get("status") or "ABSENT").upper().strip()
+                    try:
+                        attended_seconds = int(float(row.get("attended_seconds") or 0))
+                    except Exception:
+                        attended_seconds = 0
+                    try:
+                        rejoins = int(float(row.get("rejoins") or 0))
+                    except Exception:
+                        rejoins = 0
+
+                    st = parse_dt(row.get("start_time"))
+                    et = parse_dt(row.get("end_time"))
+                    meeting_seconds = 0
+                    if st and et and et >= st:
+                        meeting_seconds = max(int((et - st).total_seconds()), 1)
+
+                    duration_pct = min(100, max(0, (attended_seconds / meeting_seconds) * 100)) if meeting_seconds else 0
+
+                    if status in ("PRESENT", "HOST"):
+                        status_score = 100
+                    elif status == "LATE":
+                        status_score = 62
+                    elif status in ("JOINED", "LEFT", "LIVE"):
+                        status_score = 45
+                    elif status in ("UNKNOWN", "UNMAPPED"):
+                        status_score = 35
+                    else:
+                        status_score = 0
+
+                    score = (status_score * 0.65) + (duration_pct * 0.35)
+                    if rejoins > 3:
+                        score -= min(12, (rejoins - 3) * 2)
+                    score = round(max(0, min(100, score)), 2)
+
+                    label = fmt_date(row.get("start_time"))
+                    if not label or label == "-":
+                        label = f"M{idx + 1}"
+
+                    points.append({
+                        "label": label,
+                        "topic": row.get("topic") or "",
+                        "status": status,
+                        "score": score,
+                        "duration_pct": round(duration_pct, 2),
+                        "minutes": round(attended_seconds / 60, 2),
+                        "rejoins": rejoins,
+                    })
+
+                trend = "Stable"
+                trend_score = 0.0
+                older_avg = 0.0
+                recent_avg = 0.0
+
+                if len(points) >= 4:
+                    split = len(points) // 2
+                    older = points[:split]
+                    recent = points[split:]
+                    older_avg = sum(p["score"] for p in older) / max(len(older), 1)
+                    recent_avg = sum(p["score"] for p in recent) / max(len(recent), 1)
+                    trend_score = round(recent_avg - older_avg, 2)
+                    if trend_score >= 5:
+                        trend = "Improving"
+                    elif trend_score <= -5:
+                        trend = "Declining"
+                elif len(points) >= 2:
+                    older_avg = points[0]["score"]
+                    recent_avg = points[-1]["score"]
+                    trend_score = round(recent_avg - older_avg, 2)
+                    if trend_score >= 5:
+                        trend = "Improving"
+                    elif trend_score <= -5:
+                        trend = "Declining"
+                elif len(points) == 1:
+                    older_avg = recent_avg = points[0]["score"]
+
+                return {
+                    "ok": True,
+                    "member_id": member_id,
+                    "name": member_display_name(member),
+                    "trend": trend,
+                    "trend_score": trend_score,
+                    "older_avg": round(older_avg, 2),
+                    "recent_avg": round(recent_avg, 2),
+                    "points": points,
+                    "basis": f"Based on last {len(points)} meeting{'s' if len(points) != 1 else ''}",
+                }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "points": []}
+
+
+def _za_premium_trend_html(member_id):
+    data = _za_member_trend_details_payload(member_id)
+    if not data.get("ok"):
+        data = {"trend": "Stable", "trend_score": 0, "older_avg": 0, "recent_avg": 0, "points": [], "basis": "Based on last 7 meetings"}
+
+    trend = str(data.get("trend") or "Stable")
+    trend_lower = trend.lower()
+    icon = "📈" if "improv" in trend_lower else "📉" if "declin" in trend_lower else "➖"
+    cls = "improving" if "improv" in trend_lower else "declining" if "declin" in trend_lower else "stable"
+    trend_score = float(data.get("trend_score") or 0)
+    sign = "+" if trend_score > 0 else ""
+    older_avg = float(data.get("older_avg") or 0)
+    recent_avg = float(data.get("recent_avg") or 0)
+    basis = str(data.get("basis") or "Based on last 7 meetings")
+    reason = (
+        "Recent attendance performance is stronger than earlier meetings."
+        if cls == "improving" else
+        "Recent attendance performance has dropped and needs attention."
+        if cls == "declining" else
+        "Recent attendance performance is mostly consistent."
+    )
+
+    points = data.get("points") or []
+    if not points:
+        points = [
+            {"score": 30, "label": "No data", "status": "-", "minutes": 0},
+            {"score": 45, "label": "No data", "status": "-", "minutes": 0},
+            {"score": 60, "label": "No data", "status": "-", "minutes": 0},
+            {"score": 75, "label": "No data", "status": "-", "minutes": 0},
+        ]
+
+    bars = []
+    for idx, p in enumerate(points):
+        try:
+            score = max(8, min(100, float(p.get("score") or 0)))
+        except Exception:
+            score = 8
+        bar_cls = "good" if score >= 70 else "warn" if score >= 45 else "bad"
+        tip = f"{p.get('label','Meeting')} | Score {round(score)}% | {p.get('status','-')} | {p.get('minutes',0)} min"
+        bars.append(
+            f"<span class='za-premium-bar {bar_cls}' style='--h:{score}%;animation-delay:{idx*80}ms' data-tip='{html_escape(str(tip))}'></span>"
+        )
+
+    return f"""
+    <section id="zaPremiumTrendHero" class="za-premium-force">
+      <div class="za-premium-trend-grid">
+        <div class="za-premium-trend-left">
+          <div>
+            <div class="za-premium-kicker">Member Intelligence</div>
+            <h2 class="za-premium-title">{icon} {html_escape(trend)} Trend</h2>
+            <p class="za-premium-sub">{html_escape(reason)} {html_escape(basis)}.</p>
+          </div>
+          <div>
+            <div class="za-premium-score-wrap">
+              <span class="za-premium-badge {cls}">{icon} {html_escape(trend)}</span>
+              <span class="za-premium-score">{sign}{trend_score:.0f}% Trend Score</span>
+            </div>
+            <span class="za-premium-avg">Older avg: {older_avg:.0f}% → Recent avg: {recent_avg:.0f}%</span>
+          </div>
+        </div>
+        <div class="za-premium-chart-card">
+          <div class="za-premium-chart-head">
+            <div><strong>Recent Meeting Performance</strong><br><small>Left = older meetings, right = recent meetings</small></div>
+            <small>{html_escape(basis)}</small>
+          </div>
+          <div class="za-premium-bars">{''.join(bars)}</div>
+          <div class="za-premium-insight-row">
+            <div class="za-premium-mini"><small>Direction</small><strong>{html_escape(trend)}</strong></div>
+            <div class="za-premium-mini"><small>Change</small><strong>{sign}{trend_score:.0f}%</strong></div>
+            <div class="za-premium-mini"><small>Recent Avg</small><strong>{recent_avg:.0f}%</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    """
+# ===== END PREMIUM MEMBER TREND DATA HELPERS =====
+
+
+
+# ===== OPTION A PREMIUM CSS INJECTION - SAFE FRONTEND ONLY =====
+ZA_OPTION_A_PREMIUM_CSS = r"""
+<style id="za-premium-force-style">
+/* ===== OPTION A PREMIUM FORCE UI ===== */
 #zaPremiumTrendHero{
-  margin:18px 0 20px!important;
+  margin:18px 0 22px!important;
   border-radius:30px!important;
   overflow:hidden!important;
-  border:1px solid rgba(125,211,252,.26)!important;
+  border:1px solid rgba(125,211,252,.30)!important;
   background:
     radial-gradient(circle at 78% 0%, rgba(34,197,94,.22), transparent 28%),
     radial-gradient(circle at 12% 20%, rgba(56,189,248,.15), transparent 28%),
-    linear-gradient(135deg, rgba(15,23,42,.94), rgba(30,41,59,.78))!important;
-  box-shadow:0 28px 80px rgba(0,0,0,.42), 0 0 54px rgba(56,189,248,.10)!important;
-  padding:22px!important;
+    linear-gradient(135deg, rgba(15,23,42,.96), rgba(30,41,59,.80))!important;
+  box-shadow:0 30px 90px rgba(0,0,0,.48), 0 0 60px rgba(56,189,248,.13)!important;
+  padding:24px!important;
   position:relative!important;
 }
 #zaPremiumTrendHero::before{
@@ -12414,345 +12636,115 @@ body:has(#zaPremiumTrendHero) #zaMemberTrendSinglePanel{
   pointer-events:none;
   background:linear-gradient(120deg, transparent, rgba(255,255,255,.08), transparent);
   transform:translateX(-100%);
-  animation:zaPremiumShine 4.8s ease-in-out infinite;
+  animation:zaPremiumShineForce 4.8s ease-in-out infinite;
 }
-@keyframes zaPremiumShine{
-  0%,55%{transform:translateX(-100%);}
-  100%{transform:translateX(100%);}
-}
-.za-premium-trend-grid{
-  display:grid!important;
-  grid-template-columns:minmax(240px,1.1fr) minmax(320px,1.7fr)!important;
-  gap:18px!important;
-  align-items:stretch!important;
-}
-.za-premium-trend-left{
-  display:flex!important;
-  flex-direction:column!important;
-  justify-content:space-between!important;
-  gap:14px!important;
-}
-.za-premium-kicker{
-  color:#7dd3fc!important;
-  font-size:11px!important;
-  font-weight:950!important;
-  letter-spacing:.12em!important;
-  text-transform:uppercase!important;
-}
-.za-premium-title{
-  margin:6px 0!important;
-  color:#f8fafc!important;
-  font-size:28px!important;
-  line-height:1.05!important;
-  font-weight:1000!important;
-}
-.za-premium-sub{
-  color:#a8b3c7!important;
-  font-size:13px!important;
-  font-weight:750!important;
-  line-height:1.45!important;
-  margin:0!important;
-}
-.za-premium-score-wrap{
-  display:flex!important;
-  gap:10px!important;
-  flex-wrap:wrap!important;
-  align-items:center!important;
-}
-.za-premium-score{
-  display:inline-flex!important;
-  align-items:center!important;
-  gap:8px!important;
-  border-radius:999px!important;
-  padding:10px 14px!important;
-  font-size:15px!important;
-  font-weight:1000!important;
-  border:1px solid rgba(56,189,248,.30)!important;
-  background:rgba(56,189,248,.12)!important;
-  color:#e0f2fe!important;
-  box-shadow:0 0 24px rgba(56,189,248,.10)!important;
-}
-.za-premium-avg{
-  display:block!important;
-  color:#cbd5e1!important;
-  font-size:12px!important;
-  font-weight:900!important;
-  margin-top:8px!important;
-}
-.za-premium-badge{
-  display:inline-flex!important;
-  align-items:center!important;
-  gap:8px!important;
-  border-radius:999px!important;
-  padding:10px 14px!important;
-  font-size:13px!important;
-  font-weight:1000!important;
-  border:1px solid rgba(148,163,184,.22)!important;
-}
-.za-premium-badge.improving{
-  color:#bbf7d0!important;
-  background:rgba(34,197,94,.15)!important;
-  border-color:rgba(34,197,94,.36)!important;
-  box-shadow:0 0 24px rgba(34,197,94,.14)!important;
-}
-.za-premium-badge.declining{
-  color:#fecaca!important;
-  background:rgba(239,68,68,.16)!important;
-  border-color:rgba(239,68,68,.38)!important;
-  box-shadow:0 0 24px rgba(239,68,68,.16)!important;
-}
-.za-premium-badge.stable{
-  color:#dbeafe!important;
-  background:rgba(148,163,184,.14)!important;
-  border-color:rgba(148,163,184,.30)!important;
-}
-.za-premium-chart-card{
-  border-radius:24px!important;
-  background:rgba(2,6,23,.35)!important;
-  border:1px solid rgba(148,163,184,.16)!important;
-  padding:16px!important;
-}
-.za-premium-chart-head{
-  display:flex!important;
-  justify-content:space-between!important;
-  align-items:center!important;
-  gap:12px!important;
-  margin-bottom:12px!important;
-}
-.za-premium-chart-head strong{
-  color:#f8fafc!important;
-  font-size:14px!important;
-  font-weight:1000!important;
-}
-.za-premium-chart-head small{
-  color:#94a3b8!important;
-  font-size:11px!important;
-  font-weight:850!important;
-}
-.za-premium-bars{
-  display:flex!important;
-  align-items:flex-end!important;
-  gap:10px!important;
-  height:140px!important;
-  padding:12px!important;
-  border-radius:18px!important;
-  background:linear-gradient(180deg,rgba(15,23,42,.55),rgba(2,6,23,.38))!important;
-  border:1px solid rgba(148,163,184,.12)!important;
-}
-.za-premium-bar{
-  flex:1!important;
-  min-width:18px!important;
-  border-radius:999px 999px 8px 8px!important;
-  position:relative!important;
-  height:var(--h)!important;
-  background:linear-gradient(180deg,#38bdf8,#6366f1)!important;
-  box-shadow:0 0 22px rgba(56,189,248,.16)!important;
-  animation:zaPremiumBarGrow .92s cubic-bezier(.16,1,.3,1) both;
-}
+@keyframes zaPremiumShineForce{0%,55%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+.za-premium-trend-grid{display:grid!important;grid-template-columns:minmax(250px,1.1fr) minmax(330px,1.7fr)!important;gap:20px!important;align-items:stretch!important;}
+.za-premium-trend-left{display:flex!important;flex-direction:column!important;justify-content:space-between!important;gap:16px!important;}
+.za-premium-kicker{color:#7dd3fc!important;font-size:11px!important;font-weight:950!important;letter-spacing:.14em!important;text-transform:uppercase!important;}
+.za-premium-title{margin:8px 0!important;color:#f8fafc!important;font-size:31px!important;line-height:1.05!important;font-weight:1000!important;}
+.za-premium-sub{color:#a8b3c7!important;font-size:13px!important;font-weight:750!important;line-height:1.5!important;margin:0!important;}
+.za-premium-score-wrap{display:flex!important;gap:10px!important;flex-wrap:wrap!important;align-items:center!important;}
+.za-premium-score{display:inline-flex!important;align-items:center!important;gap:8px!important;border-radius:999px!important;padding:11px 15px!important;font-size:15px!important;font-weight:1000!important;border:1px solid rgba(56,189,248,.34)!important;background:rgba(56,189,248,.13)!important;color:#e0f2fe!important;box-shadow:0 0 24px rgba(56,189,248,.13)!important;}
+.za-premium-avg{display:block!important;color:#cbd5e1!important;font-size:12px!important;font-weight:900!important;margin-top:9px!important;}
+.za-premium-badge{display:inline-flex!important;align-items:center!important;gap:8px!important;border-radius:999px!important;padding:11px 15px!important;font-size:13px!important;font-weight:1000!important;border:1px solid rgba(148,163,184,.22)!important;}
+.za-premium-badge.improving{color:#bbf7d0!important;background:rgba(34,197,94,.16)!important;border-color:rgba(34,197,94,.40)!important;box-shadow:0 0 25px rgba(34,197,94,.16)!important;}
+.za-premium-badge.declining{color:#fecaca!important;background:rgba(239,68,68,.17)!important;border-color:rgba(239,68,68,.40)!important;box-shadow:0 0 25px rgba(239,68,68,.17)!important;}
+.za-premium-badge.stable{color:#dbeafe!important;background:rgba(148,163,184,.14)!important;border-color:rgba(148,163,184,.32)!important;}
+.za-premium-chart-card{border-radius:25px!important;background:rgba(2,6,23,.36)!important;border:1px solid rgba(148,163,184,.17)!important;padding:17px!important;}
+.za-premium-chart-head{display:flex!important;justify-content:space-between!important;align-items:center!important;gap:12px!important;margin-bottom:13px!important;}
+.za-premium-chart-head strong{color:#f8fafc!important;font-size:14px!important;font-weight:1000!important;}
+.za-premium-chart-head small{color:#94a3b8!important;font-size:11px!important;font-weight:850!important;}
+.za-premium-bars{display:flex!important;align-items:flex-end!important;gap:10px!important;height:145px!important;padding:12px!important;border-radius:18px!important;background:linear-gradient(180deg,rgba(15,23,42,.55),rgba(2,6,23,.38))!important;border:1px solid rgba(148,163,184,.12)!important;}
+.za-premium-bar{flex:1!important;min-width:18px!important;border-radius:999px 999px 8px 8px!important;position:relative!important;height:var(--h)!important;background:linear-gradient(180deg,#38bdf8,#6366f1)!important;box-shadow:0 0 22px rgba(56,189,248,.16)!important;animation:zaPremiumBarGrowForce .92s cubic-bezier(.16,1,.3,1) both;}
 .za-premium-bar.good{background:linear-gradient(180deg,#22c55e,#0ea5e9)!important;}
 .za-premium-bar.warn{background:linear-gradient(180deg,#f59e0b,#6366f1)!important;}
 .za-premium-bar.bad{background:linear-gradient(180deg,#ef4444,#7c3aed)!important;}
-@keyframes zaPremiumBarGrow{
-  from{height:8px;opacity:.28;transform:translateY(8px);}
-  to{height:var(--h);opacity:1;transform:translateY(0);}
-}
-.za-premium-bar:hover{
-  filter:brightness(1.18)!important;
-  transform:translateY(-3px)!important;
-}
-.za-premium-bar:hover::after{
-  content:attr(data-tip);
-  position:absolute!important;
-  left:50%!important;
-  bottom:calc(100% + 10px)!important;
-  transform:translateX(-50%)!important;
-  z-index:99999!important;
-  min-width:178px!important;
-  padding:9px 10px!important;
-  border-radius:14px!important;
-  background:rgba(15,23,42,.98)!important;
-  color:#e5e7eb!important;
-  border:1px solid rgba(148,163,184,.24)!important;
-  box-shadow:0 18px 42px rgba(0,0,0,.38)!important;
-  font-size:11px!important;
-  font-weight:850!important;
-  text-align:center!important;
-}
-.za-premium-insight-row{
-  margin-top:12px!important;
-  display:grid!important;
-  grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important;
-  gap:10px!important;
-}
-.za-premium-mini{
-  border-radius:16px!important;
-  padding:10px 12px!important;
-  background:rgba(15,23,42,.42)!important;
-  border:1px solid rgba(148,163,184,.12)!important;
-}
-.za-premium-mini small{
-  display:block!important;
-  color:#94a3b8!important;
-  font-size:10px!important;
-  font-weight:950!important;
-  text-transform:uppercase!important;
-  letter-spacing:.08em!important;
-}
-.za-premium-mini strong{
-  display:block!important;
-  margin-top:4px!important;
-  color:#f8fafc!important;
-  font-size:18px!important;
-  font-weight:1000!important;
-}
-@media(max-width:900px){
-  .za-premium-trend-grid{grid-template-columns:1fr!important;}
-  .za-premium-title{font-size:23px!important;}
-  .za-premium-bars{height:110px!important;}
-}
-/* ===== END PREMIUM SAAS UI LAYER ===== */
+@keyframes zaPremiumBarGrowForce{from{height:8px;opacity:.28;transform:translateY(8px)}to{height:var(--h);opacity:1;transform:translateY(0)}}
+.za-premium-bar:hover{filter:brightness(1.18)!important;transform:translateY(-3px)!important;}
+.za-premium-bar:hover::after{content:attr(data-tip);position:absolute!important;left:50%!important;bottom:calc(100% + 10px)!important;transform:translateX(-50%)!important;z-index:99999!important;min-width:178px!important;padding:9px 10px!important;border-radius:14px!important;background:rgba(15,23,42,.98)!important;color:#e5e7eb!important;border:1px solid rgba(148,163,184,.24)!important;box-shadow:0 18px 42px rgba(0,0,0,.38)!important;font-size:11px!important;font-weight:850!important;text-align:center!important;}
+.za-premium-insight-row{margin-top:12px!important;display:grid!important;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important;gap:10px!important;}
+.za-premium-mini{border-radius:16px!important;padding:10px 12px!important;background:rgba(15,23,42,.44)!important;border:1px solid rgba(148,163,184,.12)!important;}
+.za-premium-mini small{display:block!important;color:#94a3b8!important;font-size:10px!important;font-weight:950!important;text-transform:uppercase!important;letter-spacing:.08em!important;}
+.za-premium-mini strong{display:block!important;margin-top:4px!important;color:#f8fafc!important;font-size:18px!important;font-weight:1000!important;}
+#zaMemberTrendSinglePanel{display:none!important;}
+@media(max-width:900px){.za-premium-trend-grid{grid-template-columns:1fr!important}.za-premium-title{font-size:24px!important}.za-premium-bars{height:115px!important}}
+/* ===== END OPTION A PREMIUM FORCE UI ===== */
 </style>
-<script id="za-premium-ui-script">
-(function(){
-  if(window.__ZA_PREMIUM_UI_LAYER_V1__) return;
-  window.__ZA_PREMIUM_UI_LAYER_V1__ = true;
-
-  var details = null;
-
-  function norm(t){
-    t = String(t || "").toLowerCase();
-    if(t.indexOf("improv") !== -1 || t.indexOf("consistent") !== -1) return "Improving";
-    if(t.indexOf("declin") !== -1 || t.indexOf("drop") !== -1 || t.indexOf("critical") !== -1) return "Declining";
-    return "Stable";
-  }
-  function cls(t){
-    t = norm(t);
-    return t === "Improving" ? "improving" : (t === "Declining" ? "declining" : "stable");
-  }
-  function icon(t){
-    t = norm(t);
-    return t === "Improving" ? "📈" : (t === "Declining" ? "📉" : "➖");
-  }
-  function reason(t){
-    t = norm(t);
-    if(t === "Improving") return "Recent attendance performance is stronger than earlier meetings.";
-    if(t === "Declining") return "Recent attendance performance has dropped and needs attention.";
-    return "Recent attendance performance is mostly consistent.";
-  }
-  function memberId(){
-    var m = location.pathname.match(/\/member\/(\d+)\/profile/i);
-    return m ? m[1] : "";
-  }
-  function anchor(){
-    var hero = document.querySelector(".hero,.profile-hero,.member-hero");
-    if(hero && hero.parentNode) return hero;
-    var cards = Array.from(document.querySelectorAll(".card,.panel,.glass-panel")).filter(function(el){
-      var txt=(el.textContent||"").toLowerCase();
-      return txt.indexOf("member profile")!==-1 || txt.indexOf("deep insights")!==-1 || txt.indexOf("last seen")!==-1;
-    });
-    return cards[0] || document.querySelector("main,.content,.container");
-  }
-  function barClass(score){
-    score = Number(score || 0);
-    if(score >= 70) return "good";
-    if(score >= 45) return "warn";
-    return "bad";
-  }
-  function barsHtml(){
-    var pts = details && Array.isArray(details.points) ? details.points : [];
-    if(!pts.length){
-      pts = [{score:30,label:"No data",status:"-"},{score:45,label:"No data",status:"-"},{score:60,label:"No data",status:"-"},{score:75,label:"No data",status:"-"}];
-    }
-    return pts.map(function(p,i){
-      var score = Math.max(8, Math.min(100, Number(p.score || 0)));
-      var tip = (p.label || ("Meeting "+(i+1)))+" | Score "+Math.round(score)+"% | "+(p.status || "-")+" | "+(p.minutes || 0)+" min";
-      return '<span class="za-premium-bar '+barClass(score)+'" style="--h:'+score+'%;animation-delay:'+(i*80)+'ms" data-tip="'+tip.replace(/"/g,"&quot;")+'"></span>';
-    }).join("");
-  }
-  function scoreText(v){
-    v = Number(v || 0);
-    var sign = v > 0 ? "+" : "";
-    return sign + v.toFixed(0) + "%";
-  }
-  function render(){
-    if(!/\/member\/\d+\/profile/i.test(location.pathname)) return;
-
-    document.querySelectorAll("#zaPremiumTrendHero").forEach(function(x){x.remove();});
-
-    var trend = details && details.trend ? details.trend : "Stable";
-    var trendScore = details ? Number(details.trend_score || 0) : 0;
-    var older = details ? Number(details.older_avg || 0) : 0;
-    var recent = details ? Number(details.recent_avg || 0) : 0;
-    var basis = (details && details.basis) || "Based on last 7 meetings";
-
-    var panel = document.createElement("section");
-    panel.id = "zaPremiumTrendHero";
-    panel.innerHTML =
-      '<div class="za-premium-trend-grid">'+
-        '<div class="za-premium-trend-left">'+
-          '<div>'+
-            '<div class="za-premium-kicker">Member Intelligence</div>'+
-            '<h2 class="za-premium-title">'+icon(trend)+' '+norm(trend)+' Trend</h2>'+
-            '<p class="za-premium-sub">'+reason(trend)+' '+basis+'.</p>'+
-          '</div>'+
-          '<div>'+
-            '<div class="za-premium-score-wrap">'+
-              '<span class="za-premium-badge '+cls(trend)+'">'+icon(trend)+' '+norm(trend)+'</span>'+
-              '<span class="za-premium-score">'+scoreText(trendScore)+' Trend Score</span>'+
-            '</div>'+
-            '<span class="za-premium-avg">Older avg: '+older.toFixed(0)+'% → Recent avg: '+recent.toFixed(0)+'%</span>'+
-          '</div>'+
-        '</div>'+
-        '<div class="za-premium-chart-card">'+
-          '<div class="za-premium-chart-head"><div><strong>Recent Meeting Performance</strong><br><small>Left = older meetings, right = recent meetings</small></div><small>'+basis+'</small></div>'+
-          '<div class="za-premium-bars">'+barsHtml()+'</div>'+
-          '<div class="za-premium-insight-row">'+
-            '<div class="za-premium-mini"><small>Direction</small><strong>'+norm(trend)+'</strong></div>'+
-            '<div class="za-premium-mini"><small>Change</small><strong>'+scoreText(trendScore)+'</strong></div>'+
-            '<div class="za-premium-mini"><small>Recent Avg</small><strong>'+recent.toFixed(0)+'%</strong></div>'+
-          '</div>'+
-        '</div>'+
-      '</div>';
-
-    var a = anchor();
-    if(a && a.parentNode) a.parentNode.insertBefore(panel, a.nextSibling);
-    else document.body.insertBefore(panel, document.body.firstChild);
-  }
-  function load(){
-    var id = memberId();
-    if(!id) return;
-    fetch("/api/member-trend-details/"+id+"?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
-      .then(function(r){return r.ok ? r.json() : null;})
-      .then(function(data){ if(data && data.ok) details = data; render(); })
-      .catch(function(){ render(); });
-  }
-  document.addEventListener("DOMContentLoaded", function(){load(); setTimeout(load,900);});
-  window.addEventListener("za:live-snapshot", load);
-  window.addEventListener("za:realtime", load);
-})();
-</script>
 """
 
 @app.after_request
-def za_premium_ui_layer_inject(response):
-    """Inject premium SaaS UI layer into HTML pages only. Frontend-only; no DB/routes/webhook changes."""
+def za_option_a_premium_force_css_inject(response):
     try:
         ctype = response.headers.get("Content-Type", "")
         if "text/html" not in ctype.lower():
             return response
         html = response.get_data(as_text=True)
-        if not html or "za-premium-ui-script" in html:
+        if not html or "za-premium-force-style" in html:
             return response
-        if "</body>" in html:
-            html = html.replace("</body>", ZA_PREMIUM_UI_ASSET + "\n</body>", 1)
+        if "</head>" in html:
+            html = html.replace("</head>", ZA_OPTION_A_PREMIUM_CSS + "\n</head>", 1)
+        elif "</body>" in html:
+            html = html.replace("</body>", ZA_OPTION_A_PREMIUM_CSS + "\n</body>", 1)
         else:
-            html = html + ZA_PREMIUM_UI_ASSET
+            html = html + ZA_OPTION_A_PREMIUM_CSS
         response.set_data(html)
         response.headers["Content-Length"] = str(len(response.get_data()))
     except Exception as exc:
-        print(f"⚠️ premium UI injection skipped: {exc}")
+        print(f"⚠️ option A premium css injection skipped: {exc}")
     return response
-# ===== END PREMIUM TREND UI INJECTION =====
+# ===== END OPTION A PREMIUM CSS INJECTION =====
+
+
+
+# ===== OPTION A PREMIUM PROFILE HERO DIRECT INJECTION =====
+@app.after_request
+def za_option_a_premium_profile_hero_inject(response):
+    """Directly inject server-rendered premium trend hero on member profile pages.
+    This is intentionally URL-scoped to /member/<id>/profile and frontend-safe.
+    """
+    try:
+        ctype = response.headers.get("Content-Type", "")
+        if "text/html" not in ctype.lower():
+            return response
+        match = re.search(r"/member/(\d+)/profile", request.path or "")
+        if not match:
+            return response
+        html = response.get_data(as_text=True)
+        if not html or "zaPremiumTrendHero" in html:
+            return response
+
+        member_id = int(match.group(1))
+        premium_html = _za_premium_trend_html(member_id)
+
+        # Prefer placing after the first large profile/header card.
+        insert_done = False
+        patterns = [
+            r'(</div>\s*<div[^>]*(?:class=["\'][^"\']*(?:Current Risk|risk|stats|metric)|id=["\'][^"\']*risk)[^>]*>)',
+            r'(</section>\s*)',
+            r'(</div>\s*<div[^>]*class=["\'][^"\']*(?:stats|metrics|card-grid|grid)[^"\']*["\'])',
+        ]
+        for pat in patterns:
+            m = re.search(pat, html, flags=re.IGNORECASE)
+            if m:
+                html = html[:m.start(1)] + premium_html + html[m.start(1):]
+                insert_done = True
+                break
+
+        if not insert_done:
+            if "</main>" in html:
+                html = html.replace("</main>", premium_html + "\n</main>", 1)
+            elif "</body>" in html:
+                html = html.replace("</body>", premium_html + "\n</body>", 1)
+            else:
+                html += premium_html
+
+        response.set_data(html)
+        response.headers["Content-Length"] = str(len(response.get_data()))
+    except Exception as exc:
+        print(f"⚠️ option A premium profile hero injection skipped: {exc}")
+    return response
+# ===== END OPTION A PREMIUM PROFILE HERO DIRECT INJECTION =====
 
 
 if __name__ == "__main__":
