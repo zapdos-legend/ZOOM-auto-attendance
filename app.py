@@ -938,6 +938,93 @@ tbody tr.za-row-left-persistent{
     100%{transform:translateY(0);opacity:1;}
 }
 
+
+/* ===== PHASE 2.1 UI POLISH ===== */
+
+/* Realtime panel visibility fix */
+.za-realtime-dock{
+  position:fixed;
+  top:80px;
+  right:20px;
+  width:320px;
+  z-index:99999;
+}
+
+/* Make panel clearly visible */
+.za-realtime-status{
+  background:linear-gradient(135deg,#0f172a,#1e293b);
+  border:1px solid rgba(255,255,255,0.1);
+  box-shadow:0 20px 50px rgba(0,0,0,0.5);
+}
+
+/* Feed items stronger */
+.za-feed-item{
+  background:#020617;
+  border-radius:14px;
+  padding:10px;
+  font-size:12px;
+}
+
+/* Join = green */
+.za-feed-item.join{
+  border-left:4px solid #22c55e;
+}
+
+/* Leave = orange/red */
+.za-feed-item.leave{
+  border-left:4px solid #f97316;
+}
+
+/* Alert = red */
+.za-feed-item.alert{
+  border-left:4px solid #ef4444;
+}
+
+/* Improve table readability */
+table{
+  border-collapse:separate !important;
+  border-spacing:0 6px !important;
+}
+
+tbody tr{
+  transition:all 0.3s ease;
+}
+
+/* Hover effect */
+tbody tr:hover{
+  transform:scale(1.01);
+  box-shadow:0 4px 15px rgba(0,0,0,0.2);
+}
+
+/* Improve row flash visibility */
+.za-row-live-flash{
+  animation:liveFlash 0.6s ease;
+}
+
+@keyframes liveFlash{
+  0%{background:rgba(34,197,94,0.4);}
+  100%{background:transparent;}
+}
+
+/* Improve left row persistent */
+.za-row-left-persistent{
+  background:rgba(239,68,68,0.2) !important;
+}
+
+/* Status badge */
+.live-status-badge{
+  position:fixed;
+  top:20px;
+  right:20px;
+  background:#22c55e;
+  color:white;
+  padding:6px 12px;
+  border-radius:20px;
+  font-size:12px;
+  font-weight:bold;
+  z-index:99999;
+}
+
 </style>
 '''
 # ===== END THEME =====
