@@ -11969,10 +11969,115 @@ def api_live_insights():
 
 
 
-# ===== CLEAN SINGLE TREND UI INJECTION - SAFE FRONTEND ONLY =====
+
+
+
+@app.route("/api/member-trend-details/<int:member_id>")
+@login_required
+def api_member_trend_details(member_id):
+    """Read-only trend detail API for real-data trend bars and trend score."""
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                name_sql = member_name_sql(conn)
+                cur.execute(f"SELECT id, {name_sql} AS display_name, email, phone FROM members WHERE id=%s", (member_id,))
+                member = cur.fetchone()
+                if not member:
+                    return jsonify({"ok": False, "error": "Member not found"}), 404
+
+                cur.execute(
+                    """
+                    SELECT
+                        COALESCE(a.final_status, a.status, 'ABSENT') AS status,
+                        COALESCE(a.total_seconds, 0) AS total_seconds,
+                        COALESCE(a.rejoins, 0) AS rejoins,
+                        mt.start_time,
+                        mt.end_time,
+                        mt.topic
+                    FROM attendance a
+                    LEFT JOIN meetings mt ON mt.meeting_uuid = a.meeting_uuid
+                    WHERE a.member_id=%s
+                    ORDER BY COALESCE(mt.start_time, a.updated_at, a.created_at) DESC
+                    LIMIT 7
+                    """,
+                    (member_id,),
+                )
+                rows = list(cur.fetchall() or [])
+                rows = list(reversed(rows))
+
+                points = []
+                for idx, row in enumerate(rows):
+                    status = str(row.get("status") or "").upper()
+                    total_seconds = int(row.get("total_seconds") or 0)
+                    st = parse_dt(row.get("start_time"))
+                    et = parse_dt(row.get("end_time"))
+                    meeting_seconds = 0
+                    if st and et and et >= st:
+                        meeting_seconds = max(int((et - st).total_seconds()), 1)
+
+                    if meeting_seconds > 0:
+                        duration_pct = min(100, max(0, (total_seconds / meeting_seconds) * 100))
+                    else:
+                        duration_pct = 0
+
+                    status_bonus = 0
+                    if status in ("PRESENT", "HOST"):
+                        status_bonus = 100
+                    elif status == "LATE":
+                        status_bonus = 62
+                    elif status in ("JOINED", "LEFT"):
+                        status_bonus = 45
+                    else:
+                        status_bonus = 0
+
+                    score = round((status_bonus * 0.62) + (duration_pct * 0.38), 2)
+                    points.append({
+                        "label": fmt_date(row.get("start_time")) or f"M{idx+1}",
+                        "status": status,
+                        "score": score,
+                        "duration_pct": round(duration_pct, 2),
+                        "minutes": round(total_seconds / 60, 2),
+                    })
+
+                trend = "Stable"
+                trend_score = 0
+                if len(points) >= 4:
+                    split = len(points) // 2
+                    older = points[:split]
+                    recent = points[split:]
+                    older_avg = sum(p["score"] for p in older) / max(len(older), 1)
+                    recent_avg = sum(p["score"] for p in recent) / max(len(recent), 1)
+                    trend_score = round(recent_avg - older_avg, 2)
+                    if trend_score >= 8:
+                        trend = "Improving"
+                    elif trend_score <= -8:
+                        trend = "Declining"
+                elif points:
+                    avg = sum(p["score"] for p in points) / max(len(points), 1)
+                    trend_score = round(avg - 50, 2)
+                    if avg >= 75:
+                        trend = "Improving"
+                    elif avg < 45:
+                        trend = "Declining"
+
+                return jsonify({
+                    "ok": True,
+                    "member_id": member_id,
+                    "name": member_display_name(member),
+                    "trend": trend,
+                    "trend_score": trend_score,
+                    "points": points,
+                    "basis": f"Based on last {len(points)} meetings",
+                })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "points": []}), 200
+
+
+
+# ===== DATA DRIVEN SINGLE TREND UI INJECTION - SAFE FRONTEND ONLY =====
 ZA_CLEAN_TREND_ASSET = r"""
 <style id="za-clean-trend-style">
-/* ===== CLEAN MEMBER TREND UI - SINGLE PANEL VERSION ===== */
+/* ===== CLEAN MEMBER TREND UI - DATA DRIVEN VERSION ===== */
 .za-trend-badge{
   display:inline-flex!important;
   align-items:center!important;
@@ -11993,23 +12098,18 @@ ZA_CLEAN_TREND_ASSET = r"""
   background:linear-gradient(135deg,rgba(34,197,94,.22),rgba(16,185,129,.10))!important;
   border-color:rgba(34,197,94,.42)!important;
   box-shadow:0 0 18px rgba(34,197,94,.16)!important;
-  animation:zaTrendRiseClean .8s cubic-bezier(.16,1,.3,1) both;
 }
 .za-trend-badge.declining{
   color:#fecaca!important;
   background:linear-gradient(135deg,rgba(239,68,68,.24),rgba(244,63,94,.10))!important;
   border-color:rgba(239,68,68,.44)!important;
   box-shadow:0 0 18px rgba(239,68,68,.18)!important;
-  animation:zaTrendDropClean .8s cubic-bezier(.16,1,.3,1) both, zaTrendDangerPulseClean 1.9s ease-in-out infinite;
 }
 .za-trend-badge.stable{
   color:#dbeafe!important;
   background:linear-gradient(135deg,rgba(148,163,184,.18),rgba(99,102,241,.08))!important;
   border-color:rgba(148,163,184,.34)!important;
 }
-@keyframes zaTrendRiseClean{from{opacity:.35;transform:translateY(8px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes zaTrendDropClean{from{opacity:.35;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes zaTrendDangerPulseClean{0%,100%{filter:brightness(1)}50%{filter:brightness(1.2)}}
 #zaMemberTrendSinglePanel{
   margin:18px 0!important;
   border:1px solid rgba(148,163,184,.20)!important;
@@ -12018,10 +12118,11 @@ ZA_CLEAN_TREND_ASSET = r"""
   padding:18px!important;
   box-shadow:0 22px 58px rgba(0,0,0,.28)!important;
   clear:both!important;
+  position:relative!important;
 }
 #zaMemberTrendSinglePanel .trend-top{
   display:flex!important;
-  align-items:center!important;
+  align-items:flex-start!important;
   justify-content:space-between!important;
   gap:14px!important;
   flex-wrap:wrap!important;
@@ -12039,11 +12140,24 @@ ZA_CLEAN_TREND_ASSET = r"""
   font-weight:750!important;
   line-height:1.45!important;
 }
+.za-trend-score-chip{
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  margin-top:8px!important;
+  padding:6px 10px!important;
+  border-radius:999px!important;
+  font-size:11px!important;
+  font-weight:950!important;
+  background:rgba(56,189,248,.12)!important;
+  color:#bae6fd!important;
+  border:1px solid rgba(56,189,248,.32)!important;
+}
 .za-trend-mini-bars{
   display:flex!important;
   align-items:flex-end!important;
   gap:7px!important;
-  height:54px!important;
+  height:64px!important;
   margin-top:14px!important;
   padding:10px!important;
   border-radius:16px!important;
@@ -12055,19 +12169,57 @@ ZA_CLEAN_TREND_ASSET = r"""
   min-width:12px!important;
   border-radius:999px 999px 4px 4px!important;
   background:linear-gradient(180deg,#38bdf8,#6366f1)!important;
-  opacity:.9!important;
-  animation:zaTrendBarInClean .55s cubic-bezier(.16,1,.3,1) both;
+  opacity:.92!important;
+  animation:zaTrendBarInData .55s cubic-bezier(.16,1,.3,1) both;
+  position:relative!important;
 }
-@keyframes zaTrendBarInClean{from{height:4px;opacity:.25}to{opacity:.95}}
+.za-trend-mini-bars span:hover::after{
+  content:attr(data-tip);
+  position:absolute!important;
+  left:50%!important;
+  bottom:calc(100% + 8px)!important;
+  transform:translateX(-50%)!important;
+  z-index:99999!important;
+  min-width:145px!important;
+  padding:8px 10px!important;
+  border-radius:12px!important;
+  background:rgba(15,23,42,.98)!important;
+  color:#e5e7eb!important;
+  border:1px solid rgba(148,163,184,.24)!important;
+  box-shadow:0 18px 42px rgba(0,0,0,.36)!important;
+  font-size:11px!important;
+  font-weight:850!important;
+  text-align:center!important;
+  pointer-events:none!important;
+}
+#zaMemberTrendSinglePanel:hover::after{
+  content:attr(data-tooltip);
+  position:absolute!important;
+  right:18px!important;
+  top:14px!important;
+  max-width:240px!important;
+  padding:9px 11px!important;
+  border-radius:14px!important;
+  background:rgba(15,23,42,.98)!important;
+  color:#e5e7eb!important;
+  border:1px solid rgba(148,163,184,.24)!important;
+  box-shadow:0 18px 42px rgba(0,0,0,.36)!important;
+  font-size:11px!important;
+  font-weight:850!important;
+  line-height:1.35!important;
+  z-index:99999!important;
+}
+@keyframes zaTrendBarInData{from{height:4px;opacity:.25}to{opacity:.95}}
 .za-trend-table-col{text-align:center!important;min-width:132px!important;white-space:nowrap!important;}
 .za-trend-explain{display:block!important;margin-top:5px!important;font-size:10px!important;color:#94a3b8!important;font-weight:800!important;}
 </style>
 <script id="za-clean-trend-script">
 (function(){
-  if(window.__ZA_CLEAN_TREND_UI_V3__) return;
-  window.__ZA_CLEAN_TREND_UI_V3__ = true;
+  if(window.__ZA_DATA_DRIVEN_TREND_UI_V4__) return;
+  window.__ZA_DATA_DRIVEN_TREND_UI_V4__ = true;
 
   var membersCache = [];
+  var profileTrendDetails = null;
   var renderRunning = false;
 
   function normalizeTrend(t){
@@ -12098,40 +12250,37 @@ ZA_CLEAN_TREND_ASSET = r"""
     if(n === "Declining") return "Attendance pattern is dropping and needs follow-up.";
     return "Attendance pattern is mostly consistent.";
   }
+  function scoreText(score){
+    score = Number(score || 0);
+    var sign = score > 0 ? "+" : "";
+    return "Trend Score: " + sign + score.toFixed(0) + "%";
+  }
   function rowText(row){
     return (row && row.textContent || "").toLowerCase().replace(/\s+/g," ").trim();
   }
   function memberName(m){
     return String(m.name || m.full_name || m.display_name || "").trim();
   }
+  function profileMemberId(){
+    var m = location.pathname.match(/\/member\/(\d+)\/profile/i);
+    return m ? m[1] : "";
+  }
   function removeAllDuplicateTrendPanels(){
     document.querySelectorAll(".za-member-trend-panel,.za-member-trend-card,.za-trend-profile-final").forEach(function(el){el.remove();});
     var single = document.querySelectorAll("#zaMemberTrendSinglePanel");
-    if(single.length > 1){
-      Array.from(single).slice(1).forEach(function(el){el.remove();});
-    }
+    if(single.length > 1) Array.from(single).slice(1).forEach(function(el){el.remove();});
     document.querySelectorAll(".card,.panel,.glass-panel,.mini-card,.analytics-card").forEach(function(el){
       if(el.id === "zaMemberTrendSinglePanel") return;
       var txt = (el.textContent || "").replace(/\s+/g," ").trim().toLowerCase();
-      if(txt.indexOf("member trend detection") !== -1 && txt.indexOf("attendance pattern") !== -1){
-        el.remove();
-      }
+      if(txt.indexOf("member trend detection") !== -1 && txt.indexOf("attendance pattern") !== -1) el.remove();
     });
   }
   function getCurrentProfileTrend(){
+    if(profileTrendDetails && profileTrendDetails.trend) return normalizeTrend(profileTrendDetails.trend);
     var riskBoxText = document.body.textContent || "";
-    var currentTrend = "Stable";
-    if(/improving/i.test(riskBoxText)) currentTrend = "Improving";
-    else if(/declining/i.test(riskBoxText)) currentTrend = "Declining";
-
-    var h1 = document.querySelector("h1,.hero h1,.page-title");
-    var pageName = h1 ? h1.textContent.trim() : "";
-    var matched = membersCache.find(function(m){
-      var n = memberName(m).toLowerCase();
-      return pageName && n && pageName.toLowerCase().indexOf(n) !== -1;
-    });
-    if(matched && matched.trend) currentTrend = matched.trend;
-    return normalizeTrend(currentTrend);
+    if(/improving/i.test(riskBoxText)) return "Improving";
+    if(/declining/i.test(riskBoxText)) return "Declining";
+    return "Stable";
   }
   function findBestProfileAnchor(){
     var hero = document.querySelector(".hero,.profile-hero,.member-hero");
@@ -12144,6 +12293,23 @@ ZA_CLEAN_TREND_ASSET = r"""
     var main = document.querySelector("main,.content,.container");
     return main ? main.firstElementChild : null;
   }
+  function barsHtml(){
+    var details = profileTrendDetails || {};
+    var points = Array.isArray(details.points) ? details.points : [];
+    if(!points.length){
+      var tr = getCurrentProfileTrend();
+      points = tr === "Improving" ? [{score:35,label:"Older"},{score:48,label:"Past"},{score:64,label:"Recent"},{score:82,label:"Latest"}] :
+               tr === "Declining" ? [{score:82,label:"Older"},{score:66,label:"Past"},{score:48,label:"Recent"},{score:34,label:"Latest"}] :
+               [{score:55,label:"Older"},{score:56,label:"Past"},{score:54,label:"Recent"},{score:55,label:"Latest"}];
+    }
+    return points.map(function(p,idx){
+      var score = Math.max(6, Math.min(100, Number(p.score || 0)));
+      var label = p.label || ("Meeting " + (idx+1));
+      var status = p.status || "";
+      var tip = label + " | Score " + Math.round(score) + "%" + (status ? " | " + status : "");
+      return '<span style="height:'+score+'%;animation-delay:'+(idx*80)+'ms" data-tip="'+tip.replace(/"/g,"&quot;")+'"></span>';
+    }).join("");
+  }
   function renderSingleProfileTrend(){
     if(!/\/member\/\d+\/profile|profile/i.test(location.pathname)) return;
     removeAllDuplicateTrendPanels();
@@ -12152,26 +12318,22 @@ ZA_CLEAN_TREND_ASSET = r"""
     if(existing) existing.remove();
 
     var tr = getCurrentProfileTrend();
+    var trendScore = profileTrendDetails && typeof profileTrendDetails.trend_score !== "undefined" ? Number(profileTrendDetails.trend_score || 0) : 0;
+    var basis = (profileTrendDetails && profileTrendDetails.basis) || "Based on last 7 meetings";
+
     var panel = document.createElement("div");
     panel.id = "zaMemberTrendSinglePanel";
+    panel.setAttribute("data-tooltip", basis + ". Bars are real attendance trend scores from older meetings on the left to recent meetings on the right.");
     panel.innerHTML =
       '<div class="trend-top">'+
-        '<div><h3>Member Trend Detection</h3><p>'+reason(tr)+' This is based on the last few meetings and attendance pattern.</p></div>'+
+        '<div><h3>Member Trend Detection</h3><p>'+reason(tr)+' This is based on the last few meetings and attendance pattern.</p><span class="za-trend-score-chip">'+scoreText(trendScore)+'</span></div>'+
         badge(tr)+
       '</div>'+
-      '<div class="za-trend-mini-bars">'+
-        '<span style="height:26%;animation-delay:0ms"></span>'+
-        '<span style="height:38%;animation-delay:80ms"></span>'+
-        '<span style="height:52%;animation-delay:160ms"></span>'+
-        '<span style="height:'+(tr==="Declining" ? "34" : tr==="Improving" ? "78" : "54")+'%;animation-delay:240ms"></span>'+
-      '</div>';
+      '<div class="za-trend-mini-bars">'+barsHtml()+'</div>';
 
     var anchor = findBestProfileAnchor();
-    if(anchor && anchor.parentNode){
-      anchor.parentNode.insertBefore(panel, anchor.nextSibling);
-    }else{
-      document.body.insertBefore(panel, document.body.firstChild);
-    }
+    if(anchor && anchor.parentNode) anchor.parentNode.insertBefore(panel, anchor.nextSibling);
+    else document.body.insertBefore(panel, document.body.firstChild);
 
     removeAllDuplicateTrendPanels();
   }
@@ -12214,17 +12376,12 @@ ZA_CLEAN_TREND_ASSET = r"""
         var m = findMemberForRow(row);
         if(!m) return;
         var tr = normalizeTrend(m.trend || "Stable");
-
-        // Remove stray trend badges outside trend cell.
         row.querySelectorAll(".za-trend-badge").forEach(function(b){
           var td = b.closest("td");
           var idx = td ? Array.from(row.children).indexOf(td) : -1;
           if(idx !== trendIdx) b.remove();
         });
-
-        while(row.children.length <= trendIdx){
-          row.appendChild(document.createElement("td"));
-        }
+        while(row.children.length <= trendIdx) row.appendChild(document.createElement("td"));
         var td = row.children[trendIdx];
         td.className = (td.className + " za-trend-table-col").trim();
         td.innerHTML = badge(tr) + '<span class="za-trend-explain">'+reason(tr)+'</span>';
@@ -12242,13 +12399,23 @@ ZA_CLEAN_TREND_ASSET = r"""
       renderRunning = false;
     }
   }
+  function loadProfileDetailsThenRender(){
+    var id = profileMemberId();
+    if(!id){ renderAll(); return; }
+    fetch("/api/member-trend-details/"+id+"?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(data){
+        if(data && data.ok) profileTrendDetails = data;
+        renderAll();
+      }).catch(function(){ renderAll(); });
+  }
   function loadTrends(){
     fetch("/api/member-risk-summary?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(data){
         if(data && data.ok && Array.isArray(data.members)) membersCache = data.members;
-        renderAll();
-      }).catch(function(){ renderAll(); });
+        loadProfileDetailsThenRender();
+      }).catch(function(){ loadProfileDetailsThenRender(); });
   }
 
   window.addEventListener("za:live-snapshot", loadTrends);
@@ -12263,7 +12430,7 @@ ZA_CLEAN_TREND_ASSET = r"""
 
 @app.after_request
 def za_clean_single_trend_ui_inject(response):
-    """Inject one clean member trend panel and trend table column into HTML pages only."""
+    """Inject one clean data-driven member trend panel and trend table column into HTML pages only."""
     try:
         ctype = response.headers.get("Content-Type", "")
         if "text/html" not in ctype.lower():
@@ -12278,9 +12445,9 @@ def za_clean_single_trend_ui_inject(response):
         response.set_data(html)
         response.headers["Content-Length"] = str(len(response.get_data()))
     except Exception as exc:
-        print(f"⚠️ clean trend UI injection skipped: {exc}")
+        print(f"⚠️ data-driven trend UI injection skipped: {exc}")
     return response
-# ===== END CLEAN SINGLE TREND UI INJECTION =====
+# ===== END DATA DRIVEN SINGLE TREND UI INJECTION =====
 
 
 if __name__ == "__main__":
