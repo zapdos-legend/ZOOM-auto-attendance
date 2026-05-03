@@ -8622,6 +8622,274 @@ def _za_elite_member_trend_html(member_id):
 # ===== END ELITE SAAS TREND ENGINE V2 =====
 
 
+
+# ===== COHORT COMPARISON SYSTEM V1 =====
+def _za_status_score_for_cohort(status, row_minutes=0):
+    """Small scoring helper used only for member cohort comparison."""
+    status = str(status or "").upper().strip()
+    if status in ("PRESENT", "HOST"):
+        base = 100.0
+    elif status == "LATE":
+        base = 62.0
+    elif status == "ABSENT":
+        base = 20.0
+    elif status in ("JOINED", "LEFT", "LIVE"):
+        base = 50.0
+    else:
+        base = 35.0
+    try:
+        row_minutes = float(row_minutes or 0)
+    except Exception:
+        row_minutes = 0.0
+    if row_minutes > 0:
+        base = min(100.0, base + min(row_minutes / 3.0, 16.0))
+    return round(max(0.0, min(100.0, base)), 2)
+
+
+def _za_member_cohort_payload(member_id):
+    """Compare one member against all tracked members.
+    Read-only: no schema changes, no attendance logic changes.
+    """
+    try:
+        member_id = int(member_id)
+        with db() as conn:
+            with conn.cursor() as cur:
+                member_name_expr = member_name_sql(conn)
+                cur.execute(f"SELECT id, {member_name_expr} AS display_name FROM members WHERE id=%s", (member_id,))
+                target_member = cur.fetchone()
+                if not target_member:
+                    return {"ok": False, "error": "Member not found"}
+
+                cur.execute(
+                    """
+                    SELECT
+                        m.id AS member_id,
+                        COALESCE(NULLIF(m.full_name,''), NULLIF(m.name,''), 'Member') AS member_name,
+                        a.final_status,
+                        a.status,
+                        COALESCE(a.total_seconds,0) AS total_seconds,
+                        COALESCE(a.rejoin_count,0) AS rejoin_count,
+                        a.meeting_uuid
+                    FROM attendance a
+                    JOIN members m ON m.id = a.member_id
+                    WHERE a.member_id IS NOT NULL
+                    """
+                )
+                rows = list(cur.fetchall() or [])
+
+        people = {}
+        for r in rows:
+            mid = r.get("member_id")
+            if mid is None:
+                continue
+            item = people.setdefault(mid, {
+                "member_id": mid,
+                "name": r.get("member_name") or "Member",
+                "meetings": 0,
+                "present": 0,
+                "late": 0,
+                "absent": 0,
+                "minutes": 0.0,
+                "rejoins": 0,
+                "score_points": [],
+            })
+            status = str(r.get("final_status") or r.get("status") or "UNKNOWN").upper()
+            seconds = r.get("total_seconds") or 0
+            minutes = round(seconds / 60.0, 2)
+            item["meetings"] += 1
+            item["minutes"] += minutes
+            item["rejoins"] += (r.get("rejoin_count") or 0)
+            if status == "PRESENT" or status == "HOST":
+                item["present"] += 1
+            elif status == "LATE":
+                item["late"] += 1
+            elif status == "ABSENT":
+                item["absent"] += 1
+            item["score_points"].append(_za_status_score_for_cohort(status, minutes))
+
+        summaries = []
+        for item in people.values():
+            meetings = max(item["meetings"], 1)
+            attendance_pct = round(((item["present"] + item["late"]) / meetings) * 100, 2)
+            avg_minutes = round(item["minutes"] / meetings, 2)
+            overall_score = round(sum(item["score_points"]) / max(len(item["score_points"]), 1), 2)
+            engagement_score = round(min(100.0, (avg_minutes * 3.0) + max(0, 20 - min(item["rejoins"], 20))), 2)
+            summaries.append({
+                "member_id": item["member_id"],
+                "name": item["name"],
+                "meetings": item["meetings"],
+                "attendance_pct": attendance_pct,
+                "avg_minutes": avg_minutes,
+                "total_minutes": round(item["minutes"], 2),
+                "rejoins": item["rejoins"],
+                "overall_score": overall_score,
+                "engagement_score": engagement_score,
+            })
+
+        if not summaries:
+            return {"ok": True, "empty": True, "member_id": member_id, "message": "No cohort data yet"}
+
+        summaries.sort(key=lambda x: (x["overall_score"], x["attendance_pct"], x["avg_minutes"]), reverse=True)
+        total = len(summaries)
+        target = None
+        rank = total
+        for idx, s in enumerate(summaries, start=1):
+            if int(s["member_id"]) == member_id:
+                target = s
+                rank = idx
+                break
+
+        if not target:
+            return {"ok": True, "empty": True, "member_id": member_id, "message": "This member has no cohort attendance data yet"}
+
+        avg_score = round(sum(s["overall_score"] for s in summaries) / total, 2)
+        avg_attendance = round(sum(s["attendance_pct"] for s in summaries) / total, 2)
+        avg_duration = round(sum(s["avg_minutes"] for s in summaries) / total, 2)
+        avg_engagement = round(sum(s["engagement_score"] for s in summaries) / total, 2)
+
+        score_delta = round(target["overall_score"] - avg_score, 2)
+        attendance_delta = round(target["attendance_pct"] - avg_attendance, 2)
+        duration_delta = round(target["avg_minutes"] - avg_duration, 2)
+        engagement_delta = round(target["engagement_score"] - avg_engagement, 2)
+
+        top_percent = round((rank / total) * 100, 1)
+        if rank <= max(1, round(total * 0.10)):
+            category = "Elite Performer"
+            category_class = "elite"
+        elif score_delta >= 10:
+            category = "Above Average"
+            category_class = "good"
+        elif score_delta <= -10:
+            category = "Needs Attention"
+            category_class = "danger"
+        else:
+            category = "Average Performer"
+            category_class = "stable"
+
+        if score_delta > 0:
+            conclusion = f"{target['name']} is {abs(score_delta):.1f} points above the cohort average."
+        elif score_delta < 0:
+            conclusion = f"{target['name']} is {abs(score_delta):.1f} points below the cohort average."
+        else:
+            conclusion = f"{target['name']} is exactly at cohort average."
+
+        return {
+            "ok": True,
+            "member_id": member_id,
+            "name": target["name"],
+            "rank": rank,
+            "total": total,
+            "top_percent": top_percent,
+            "category": category,
+            "category_class": category_class,
+            "conclusion": conclusion,
+            "member": target,
+            "cohort": {
+                "avg_score": avg_score,
+                "avg_attendance": avg_attendance,
+                "avg_duration": avg_duration,
+                "avg_engagement": avg_engagement,
+            },
+            "delta": {
+                "score": score_delta,
+                "attendance": attendance_delta,
+                "duration": duration_delta,
+                "engagement": engagement_delta,
+            },
+            "top_members": summaries[:5],
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "member_id": member_id}
+
+
+def _za_signed(value, suffix=""):
+    try:
+        value = float(value or 0)
+    except Exception:
+        value = 0.0
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.1f}{suffix}"
+
+
+def _za_member_cohort_html(member_id):
+    data = _za_member_cohort_payload(member_id)
+    if not data.get("ok") or data.get("empty"):
+        msg = html_escape(str(data.get("message") or data.get("error") or "Cohort comparison will appear after enough data is collected."))
+        return f"""
+        <section id="zaCohortComparison" class="za-cohort-card stable">
+          <div class="za-cohort-head">
+            <div><span>Cohort Comparison</span><h2>Not enough cohort data</h2></div>
+          </div>
+          <p class="za-cohort-conclusion">{msg}</p>
+        </section>
+        """
+
+    member = data["member"]
+    cohort = data["cohort"]
+    delta = data["delta"]
+    cls = data.get("category_class") or "stable"
+    rank = data.get("rank")
+    total = data.get("total")
+    top_percent = data.get("top_percent")
+    category = html_escape(data.get("category") or "Average Performer")
+    conclusion = html_escape(data.get("conclusion") or "")
+
+    def metric(label, member_val, avg_val, delta_val, suffix=""):
+        delta_cls = "up" if float(delta_val or 0) > 0 else "down" if float(delta_val or 0) < 0 else "flat"
+        return f"""
+        <div class="za-cohort-metric">
+          <small>{html_escape(label)}</small>
+          <strong>{member_val}{suffix}</strong>
+          <span>Cohort avg: {avg_val}{suffix}</span>
+          <em class="{delta_cls}">{html_escape(_za_signed(delta_val, suffix))}</em>
+        </div>
+        """
+
+    top_rows = []
+    for item in data.get("top_members", []):
+        badge = "👑" if int(item.get("member_id") or 0) == int(member_id) else "•"
+        top_rows.append(
+            f"<li><span>{badge} {html_escape(item.get('name') or 'Member')}</span><b>{item.get('overall_score', 0)}</b></li>"
+        )
+
+    return f"""
+    <section id="zaCohortComparison" class="za-cohort-card {cls}">
+      <div class="za-cohort-glow"></div>
+      <div class="za-cohort-head">
+        <div>
+          <span>Cohort Comparison</span>
+          <h2>🏆 Rank #{rank} / {total}</h2>
+          <p>{conclusion}</p>
+        </div>
+        <div class="za-cohort-rank-pill">
+          <strong>{category}</strong>
+          <small>Top {top_percent}% group</small>
+        </div>
+      </div>
+      <div class="za-cohort-grid">
+        {metric("Overall Score", member.get("overall_score", 0), cohort.get("avg_score", 0), delta.get("score", 0))}
+        {metric("Attendance", member.get("attendance_pct", 0), cohort.get("avg_attendance", 0), delta.get("attendance", 0), "%")}
+        {metric("Avg Duration", member.get("avg_minutes", 0), cohort.get("avg_duration", 0), delta.get("duration", 0), "m")}
+        {metric("Engagement", member.get("engagement_score", 0), cohort.get("avg_engagement", 0), delta.get("engagement", 0))}
+      </div>
+      <div class="za-cohort-bottom">
+        <div>
+          <b>What this concludes</b>
+          <p>{html_escape(data.get("conclusion") or "")} Use this to identify whether the member is outperforming or falling behind the active group.</p>
+        </div>
+        <ul>{''.join(top_rows)}</ul>
+      </div>
+    </section>
+    """
+# ===== END COHORT COMPARISON SYSTEM V1 =====
+
+
+
+@app.route("/api/member-cohort/<int:member_id>")
+@login_required
+def api_member_cohort(member_id):
+    return jsonify(_za_member_cohort_payload(member_id))
+
 @app.route("/members/<int:member_id>/profile")
 @login_required
 def member_profile(member_id):
@@ -8930,6 +9198,48 @@ def member_profile(member_id):
 @media(max-width:900px){.za-elite-grid{grid-template-columns:1fr!important}.za-elite-left h2{font-size:29px!important}.za-elite-score{font-size:36px!important}.za-elite-bars{height:135px!important}}
 /* ===== END 100% ELITE SAAS TREND POLISH V2 ===== */
 
+
+
+/* ===== COHORT COMPARISON UI V1 ===== */
+#zaCohortComparison{
+  margin:18px 0 24px!important;
+  padding:24px!important;
+  border-radius:30px!important;
+  position:relative!important;
+  overflow:hidden!important;
+  border:1px solid rgba(125,211,252,.28)!important;
+  background:radial-gradient(circle at 15% 10%,rgba(56,189,248,.16),transparent 28%),
+             linear-gradient(135deg,rgba(15,23,42,.94),rgba(30,41,59,.78))!important;
+  box-shadow:0 26px 80px rgba(0,0,0,.42),0 0 44px rgba(56,189,248,.10)!important;
+}
+#zaCohortComparison.elite,#zaCohortComparison.good{border-color:rgba(34,197,94,.34)!important;box-shadow:0 26px 80px rgba(0,0,0,.42),0 0 46px rgba(34,197,94,.12)!important;}
+#zaCohortComparison.danger{border-color:rgba(239,68,68,.36)!important;box-shadow:0 26px 80px rgba(0,0,0,.42),0 0 46px rgba(239,68,68,.14)!important;}
+.za-cohort-head{display:flex!important;justify-content:space-between!important;gap:18px!important;align-items:flex-start!important;margin-bottom:16px!important}
+.za-cohort-head span{display:block!important;color:#7dd3fc!important;font-size:11px!important;font-weight:1000!important;text-transform:uppercase!important;letter-spacing:.14em!important}
+.za-cohort-head h2{margin:6px 0 6px!important;color:#f8fafc!important;font-size:30px!important;font-weight:1000!important}
+.za-cohort-head p,.za-cohort-conclusion{margin:0!important;color:#cbd5e1!important;font-weight:850!important;line-height:1.5!important}
+.za-cohort-rank-pill{min-width:170px!important;border-radius:22px!important;padding:14px 16px!important;text-align:right!important;background:rgba(2,6,23,.34)!important;border:1px solid rgba(148,163,184,.16)!important}
+.za-cohort-rank-pill strong{display:block!important;color:#f8fafc!important;font-size:15px!important;font-weight:1000!important}
+.za-cohort-rank-pill small{display:block!important;margin-top:5px!important;color:#94a3b8!important;font-weight:900!important}
+.za-cohort-grid{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))!important;gap:12px!important}
+.za-cohort-metric{border-radius:20px!important;padding:14px!important;background:rgba(2,6,23,.35)!important;border:1px solid rgba(148,163,184,.15)!important}
+.za-cohort-metric small{display:block!important;color:#94a3b8!important;font-weight:1000!important;text-transform:uppercase!important;letter-spacing:.08em!important;font-size:10px!important}
+.za-cohort-metric strong{display:block!important;margin-top:6px!important;color:#f8fafc!important;font-size:25px!important;font-weight:1000!important}
+.za-cohort-metric span{display:block!important;color:#9ca3af!important;font-weight:850!important;font-size:11px!important;margin-top:4px!important}
+.za-cohort-metric em{display:inline-flex!important;margin-top:8px!important;border-radius:999px!important;padding:5px 9px!important;font-style:normal!important;font-size:11px!important;font-weight:1000!important}
+.za-cohort-metric em.up{background:rgba(34,197,94,.14)!important;color:#86efac!important}
+.za-cohort-metric em.down{background:rgba(239,68,68,.14)!important;color:#fca5a5!important}
+.za-cohort-metric em.flat{background:rgba(148,163,184,.14)!important;color:#cbd5e1!important}
+.za-cohort-bottom{display:grid!important;grid-template-columns:minmax(0,1.2fr) minmax(220px,.8fr)!important;gap:16px!important;margin-top:16px!important}
+.za-cohort-bottom>div,.za-cohort-bottom ul{border-radius:20px!important;background:rgba(15,23,42,.38)!important;border:1px solid rgba(148,163,184,.14)!important;padding:14px!important;margin:0!important}
+.za-cohort-bottom b{color:#f8fafc!important;font-weight:1000!important}
+.za-cohort-bottom p{margin:6px 0 0!important;color:#cbd5e1!important;font-weight:800!important;line-height:1.45!important}
+.za-cohort-bottom li{list-style:none!important;display:flex!important;justify-content:space-between!important;gap:10px!important;color:#cbd5e1!important;font-weight:850!important;padding:7px 0!important;border-bottom:1px dashed rgba(148,163,184,.14)!important}
+.za-cohort-bottom li:last-child{border-bottom:0!important}
+.za-cohort-bottom li b{color:#f8fafc!important}
+@media(max-width:900px){.za-cohort-head,.za-cohort-bottom{grid-template-columns:1fr!important;display:grid!important}.za-cohort-rank-pill{text-align:left!important}}
+/* ===== END COHORT COMPARISON UI V1 ===== */
+
 </style>
         <div class="member-profile-layout-fix"><div class="member-profile-hero">
             <div class="hero">
@@ -8956,6 +9266,8 @@ def member_profile(member_id):
 
         {{ elite_trend_html|safe }}
 
+        {{ cohort_comparison_html|safe }}
+
         <div class="profile-kpis">
             <div class="profile-kpi"><small>Attendance %</small><strong>{{ data.summary.attendance_percent }}%</strong></div>
             <div class="profile-kpi"><small>Overall Score</small><strong>{{ data.summary.overall_score }}</strong></div>
@@ -8970,12 +9282,12 @@ def member_profile(member_id):
         <div class="profile-chart-grid">
             <div class="card profile-chart">
                 <h3>Score Over Time</h3>
-                <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> score out of 100. Relation: higher line means stronger attendance consistency, duration participation, and engagement.</div>
+                <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> score out of 100. Relation: higher line means stronger attendance consistency, duration participation, and engagement. Hover any point to see exact date and score.</div>
                 <canvas id="memberScoreChart"></canvas>
             </div>
             <div class="card profile-chart">
                 <h3>Duration Over Time</h3>
-                <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> attended minutes. Relation: taller bars mean the member stayed longer in that meeting.</div>
+                <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> attended minutes. Relation: taller bars mean the member stayed longer in that meeting. Hover any bar to see exact date and minutes.</div>
                 <canvas id="memberDurationChart"></canvas>
             </div>
             <div class="card profile-chart profile-chart-wide">
@@ -9018,15 +9330,16 @@ def member_profile(member_id):
         function makeMemberProfileCharts(){
             if(!window.Chart) return;
             const p=memberProfilePalette();
-            new Chart(document.getElementById('memberScoreChart'),{type:'line',data:{labels:memberProfileData.labels,datasets:[{label:'Score',data:memberProfileData.score,borderColor:p.a,backgroundColor:p.a,fill:false,tension:.42}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,max:100,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
-            new Chart(document.getElementById('memberDurationChart'),{type:'bar',data:{labels:memberProfileData.labels,datasets:[{label:'Duration minutes',data:memberProfileData.duration,backgroundColor:p.b,borderColor:p.b}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
-            new Chart(document.getElementById('memberLateChart'),{type:'bar',data:{labels:memberProfileData.late_pattern.map(x=>x.label),datasets:[{label:'Late count',data:memberProfileData.late_pattern.map(x=>x.count),backgroundColor:p.warn,borderColor:p.warn}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
+            new Chart(document.getElementById('memberScoreChart'),{type:'line',data:{labels:memberProfileData.labels,datasets:[{label:'Score',data:memberProfileData.score,borderColor:p.a,backgroundColor:p.a,pointBackgroundColor:p.a,pointBorderColor:p.a,pointRadius:4,pointHoverRadius:7,fill:false,tension:.42}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{enabled:true,mode:'index',intersect:false,backgroundColor:'rgba(2,6,23,.96)',titleColor:'#f8fafc',bodyColor:'#e5e7eb',borderColor:'rgba(125,211,252,.35)',borderWidth:1,padding:12,displayColors:true,callbacks:{title:function(items){return items&&items.length?items[0].label:'Meeting';},label:function(ctx){return 'Score: '+ctx.parsed.y+'/100';},afterBody:function(items){return ['Higher score = stronger attendance, duration, consistency, and engagement.'];}}},legend:{labels:{color:p.text}}},scales:{y:{beginAtZero:true,max:100,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
+            new Chart(document.getElementById('memberDurationChart'),{type:'bar',data:{labels:memberProfileData.labels,datasets:[{label:'Duration minutes',data:memberProfileData.duration,backgroundColor:p.b,borderColor:p.b,borderRadius:8}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{enabled:true,mode:'index',intersect:false,backgroundColor:'rgba(2,6,23,.96)',titleColor:'#f8fafc',bodyColor:'#e5e7eb',borderColor:'rgba(34,211,238,.35)',borderWidth:1,padding:12,displayColors:true,callbacks:{title:function(items){return items&&items.length?items[0].label:'Meeting';},label:function(ctx){return 'Duration: '+ctx.parsed.y+' minutes';},afterBody:function(items){return ['Taller bar = member stayed longer in that meeting.'];}}},legend:{labels:{color:p.text}}},scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
+            new Chart(document.getElementById('memberLateChart'),{type:'bar',data:{labels:memberProfileData.late_pattern.map(x=>x.label),datasets:[{label:'Late count',data:memberProfileData.late_pattern.map(x=>x.count),backgroundColor:p.warn,borderColor:p.warn,borderRadius:8}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{enabled:true,mode:'index',intersect:false,backgroundColor:'rgba(2,6,23,.96)',titleColor:'#f8fafc',bodyColor:'#e5e7eb',borderColor:'rgba(245,158,11,.38)',borderWidth:1,padding:12,callbacks:{label:function(ctx){return 'Late count: '+ctx.parsed.y;},afterBody:function(){return ['Shows which weekday this member is more frequently late.'];}}},legend:{labels:{color:p.text}}},scales:{y:{beginAtZero:true,grid:{color:p.grid},ticks:{color:p.text}},x:{grid:{color:p.grid},ticks:{color:p.text}}}}});
         }
         document.addEventListener('DOMContentLoaded',()=>setTimeout(makeMemberProfileCharts,100));
         </script>
         """,
         data=profile_data,
         elite_trend_html=_za_elite_member_trend_html(member_id),
+        cohort_comparison_html=_za_member_cohort_html(member_id),
         member_display_name=member_display_name,
         fmt_dt=fmt_dt,
     )
