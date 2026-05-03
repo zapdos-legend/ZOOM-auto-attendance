@@ -307,6 +307,25 @@ button:active,.btn:active,a.btn:active{
   0%,100%{box-shadow:0 0 0 rgba(239,68,68,0);}
   50%{box-shadow:0 0 24px rgba(239,68,68,.28);}
 }
+
+<script>
+/* ZA_BLOCK_LIVE_SUMMARY_NON_LIVE_PAGES */
+(function(){
+  if(window.__zaLiveSummaryBlockerInstalled) return;
+  window.__zaLiveSummaryBlockerInstalled = true;
+  var oldFetch = window.fetch;
+  window.fetch = function(input, init){
+    try{
+      var url = (typeof input === "string") ? input : (input && input.url ? input.url : "");
+      if(url.indexOf("/api/live-summary") !== -1 && location.pathname !== "/live"){
+        return Promise.resolve(new Response(JSON.stringify({ok:true,blocked:true,summary:{}}), {status:200,headers:{"Content-Type":"application/json"}}));
+      }
+    }catch(e){}
+    return oldFetch.apply(this, arguments);
+  };
+})();
+</script>
+
 <script>
 (function(){
   if(location.pathname === '/login'){ return; }
@@ -590,7 +609,7 @@ button:active,.btn:active,a.btn:active{
           if(first) first.appendChild(badge);
         });
       }
-      if(!location.pathname.includes("members") && !location.pathname.includes("analytics")) return;
+      if(!location.pathname.includes("members") && !location.pathname.includes("analytics") && !location.pathname.includes("home")) return;
       fetch("/api/member-risk-summary?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(data){
@@ -1278,6 +1297,10 @@ tbody tr:hover{
 
 
 
+
+/* LOGIN_PASSWORD_BUTTON_GAP_FIX */
+.login-card input[type='password'], .login-card input[name='password']{margin-bottom:18px!important;}
+.login-card button[type='submit'], .login-card input[type='submit']{margin-top:8px!important;}
 </style>
 '''
 # ===== END THEME =====
@@ -1726,53 +1749,10 @@ def send_push_notification(title, body, target_username=None, click_url=None):
 # ===== PERFORMANCE FIX V1 LIGHTWEIGHT PAGE HELPERS =====
 LIGHT_LOGIN_CSS = """
 <style>
-:root{--bg:#060818;--card:rgba(15,23,42,.86);--line:rgba(148,163,184,.22);--txt:#e5e7eb;--muted:#94a3b8;--accent:#8b5cf6}
-*{box-sizing:border-box}
-html,body{min-height:100%;margin:0}
-body{
-  font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;
-  color:var(--txt);
-  background:
-    radial-gradient(circle at 18% 18%,rgba(139,92,246,.24),transparent 28%),
-    radial-gradient(circle at 82% 12%,rgba(56,189,248,.16),transparent 25%),
-    linear-gradient(135deg,#050816,#111827);
-}
-.login-shell,.auth-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px}
-.login-card,.auth-card,.card{
-  width:min(440px,92vw);
-  border:1px solid var(--line);
-  border-radius:26px;
-  background:var(--card);
-  box-shadow:0 28px 70px rgba(0,0,0,.40);
-  padding:26px;
-}
-input,select{
-  width:100%;
-  border:1px solid rgba(148,163,184,.25);
-  background:rgba(2,6,23,.48);
-  color:#f8fafc;
-  border-radius:14px;
-  padding:12px 14px;
-  margin:8px 0 12px;
-  outline:none;
-}
-button,.btn,input[type=submit]{
-  width:100%;
-  border:0;
-  border-radius:14px;
-  padding:12px 16px;
-  font-weight:900;
-  color:white;
-  background:linear-gradient(90deg,#7c3aed,#2563eb);
-  box-shadow:0 12px 28px rgba(99,102,241,.24);
-  cursor:pointer;
-}
-h1,h2,h3{margin:0 0 10px}
-p,small,label{color:var(--muted)}
-.alert,.flash,.message{border-radius:14px;padding:10px 12px;margin:10px 0;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.25)}
+.login-card input[type='password'], .login-card input[name='password']{margin-bottom:18px!important;}
+.login-card button[type='submit'], .login-card input[type='submit']{margin-top:8px!important;}
 </style>
 """
-
 def page_theme_css():
     try:
         if request.path == "/login":
@@ -1780,22 +1760,7 @@ def page_theme_css():
     except Exception:
         pass
     return DARK_THEME_CSS
-
-@app.after_request
-def za_performance_headers(response):
-    try:
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        if request.path == "/login":
-            response.headers["Cache-Control"] = "private, max-age=60"
-        elif request.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
-        else:
-            response.headers.setdefault("Cache-Control", "private, max-age=15")
-    except Exception:
-        pass
-    return response
 # ===== END PERFORMANCE FIX V1 LIGHTWEIGHT PAGE HELPERS =====
-
 
 
 def login_required(f):
@@ -6629,7 +6594,7 @@ button:active {
 
   function rowKey(row){
     if(!row) return "";
-    var txt = (row.textContent || "").toLowerCase().replace(/\\s+/g," ").trim();
+    var txt = (row.textContent || "").toLowerCase().replace(/\s+/g," ").trim();
     var email = txt.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
     if(email) return "email::" + email[0];
     var cells = row.querySelectorAll("td");
@@ -6637,7 +6602,7 @@ button:active {
     for(var i=0;i<Math.min(cells.length,2);i++){
       key += " " + (cells[i].textContent || "").trim().toLowerCase();
     }
-    return key.replace(/\\s+/g," ").trim();
+    return key.replace(/\s+/g," ").trim();
   }
 
   function secondsFromText(text){
@@ -7096,30 +7061,6 @@ def handle_any_error(e):
         error_text=str(e),
     )
     return render_template_string(BASE_HTML, title="Error", body=body, nav=[], active=""), 500
-
-
-
-# ===== ROUTE TIMING LIGHTWEIGHT PROFILER =====
-@app.before_request
-def za_request_timer_start():
-    try:
-        request._za_started_at = time.time()
-    except Exception:
-        pass
-
-@app.after_request
-def za_request_timer_log(response):
-    try:
-        started = getattr(request, "_za_started_at", None)
-        if started:
-            elapsed_ms = int((time.time() - started) * 1000)
-            if elapsed_ms > 1200:
-                print(f"SLOW_ROUTE {request.method} {request.path} {elapsed_ms}ms status={response.status_code}")
-            response.headers["X-ZA-Response-Time"] = str(elapsed_ms)
-    except Exception:
-        pass
-    return response
-# ===== END ROUTE TIMING LIGHTWEIGHT PROFILER =====
 
 
 @app.route("/toggle-theme")
@@ -7790,9 +7731,17 @@ def api_live_snapshot():
     return response
 
 
+_ZA_LIVE_SUMMARY_CACHE = {'ts': 0, 'payload': None}
+
 @app.route("/api/live-summary")
 @login_required
 def api_live_summary():
+    try:
+        _now_cache = time.time()
+        if _ZA_LIVE_SUMMARY_CACHE.get('payload') is not None and (_now_cache - _ZA_LIVE_SUMMARY_CACHE.get('ts', 0)) < 2.5:
+            return jsonify(_ZA_LIVE_SUMMARY_CACHE['payload'])
+    except Exception:
+        pass
     payload = build_live_snapshot_payload(include_feed=False)
     return jsonify({
         "transport": "debug_api_socket_primary",
@@ -8821,144 +8770,123 @@ def _za_status_score_for_cohort(status, row_minutes=0):
 
 
 def _za_member_cohort_payload(member_id):
-    """Compare one member against all active members using Attendance Truth Engine.
-    Every member is scored against the same complete meeting universe; missing rows are ABSENT.
-    """
+    """Fast cohort comparison. Avoids calling truth engine for every member."""
     try:
-        member_id = int(member_id)
         with db() as conn:
             with conn.cursor() as cur:
-                member_name_expr = member_name_sql(conn)
-                cur.execute(f"SELECT id, {member_name_expr} AS display_name FROM members WHERE id=%s", (member_id,))
-                target_member = cur.fetchone()
-                if not target_member:
-                    return {"ok": False, "error": "Member not found"}
+                name_sql = member_name_sql(conn)
+                cur.execute(f"SELECT id, {name_sql} AS name FROM members WHERE {ACTIVE_MEMBER_SQL}")
+                members = list(cur.fetchall() or [])
+                total_members = len(members)
+                if not members:
+                    return {"ok": True, "rank": 0, "total": 0, "member": {}, "averages": {}, "top": [], "basis": "No active members"}
 
-                cur.execute(f"SELECT id, {member_name_expr} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY {member_name_expr} ASC NULLS LAST, id ASC")
-                members_list = list(cur.fetchall() or [])
+                member_ids = [m["id"] for m in members]
 
-            summaries = []
-            # Average duration reference across truth rows for all members, kept local and safe.
-            all_avg_minutes = []
-            member_truth_cache = {}
-            for m in members_list:
-                mid = int(m.get("id"))
-                truth = get_member_attendance_truth(conn, mid)
-                member_truth_cache[mid] = truth
-                if truth.get("avg_minutes", 0) > 0:
-                    all_avg_minutes.append(float(truth.get("avg_minutes") or 0))
-            avg_ref = (sum(all_avg_minutes) / len(all_avg_minutes)) if all_avg_minutes else 1.0
+                cur.execute("SELECT COUNT(*) AS c FROM meetings")
+                total_meetings = int((cur.fetchone() or {}).get("c") or 0)
+                if total_meetings <= 0:
+                    total_meetings = 1
 
-            for m in members_list:
-                mid = int(m.get("id"))
-                truth = member_truth_cache.get(mid) or get_member_attendance_truth(conn, mid)
-                rows = truth.get("rows") or []
-                score_points = build_member_truth_score_points(rows)
-                person = {
-                    "name": m.get("display_name") or "Member",
-                    "meetings": truth.get("meetings", 0),
-                    "present": truth.get("present", 0) + truth.get("host", 0),
-                    "late": truth.get("late", 0),
-                    "absent": truth.get("absent", 0),
-                    "minutes": truth.get("total_minutes", 0),
-                    "rejoins": truth.get("rejoins", 0),
-                    "score_points": score_points,
-                    "last_seen": None,
+                has_total_seconds = column_exists(conn, "attendance", "total_seconds")
+                has_duration_seconds = column_exists(conn, "attendance", "duration_seconds")
+                has_duration = column_exists(conn, "attendance", "duration")
+                has_final_status = column_exists(conn, "attendance", "final_status")
+                has_status = column_exists(conn, "attendance", "status")
+                has_rejoins = column_exists(conn, "attendance", "rejoins")
+
+                duration_expr = (
+                    "COALESCE(a.total_seconds, 0)" if has_total_seconds else
+                    "COALESCE(a.duration_seconds, 0)" if has_duration_seconds else
+                    "COALESCE(a.duration, 0)" if has_duration else
+                    "0"
+                )
+                status_expr = (
+                    "COALESCE(a.final_status, a.status, '')" if has_final_status and has_status else
+                    "COALESCE(a.final_status, '')" if has_final_status else
+                    "COALESCE(a.status, '')" if has_status else
+                    "''"
+                )
+                rejoins_expr = "COALESCE(a.rejoins, 0)" if has_rejoins else "0"
+
+                cur.execute(
+                    f"""
+                    SELECT
+                        a.member_id,
+                        COUNT(DISTINCT a.meeting_uuid) AS joined_meetings,
+                        SUM(CASE WHEN UPPER({status_expr}) IN ('PRESENT','HOST') THEN 1 ELSE 0 END) AS present_count,
+                        SUM(CASE WHEN UPPER({status_expr}) = 'LATE' THEN 1 ELSE 0 END) AS late_count,
+                        COALESCE(SUM({duration_expr}),0) AS total_seconds,
+                        COALESCE(SUM({rejoins_expr}),0) AS rejoins
+                    FROM attendance a
+                    WHERE a.member_id = ANY(%s)
+                    GROUP BY a.member_id
+                    """,
+                    (member_ids,),
+                )
+                agg_rows = {r["member_id"]: r for r in (cur.fetchall() or [])}
+
+                scored = []
+                for mem in members:
+                    mid = mem["id"]
+                    r = agg_rows.get(mid, {})
+                    present_count = int(r.get("present_count") or 0)
+                    late_count = int(r.get("late_count") or 0)
+                    total_seconds = float(r.get("total_seconds") or 0)
+                    rejoins = int(r.get("rejoins") or 0)
+
+                    attendance_pct = round(((present_count + late_count) / total_meetings) * 100, 2)
+                    avg_duration_min = round((total_seconds / 60) / total_meetings, 2)
+                    duration_score = min(100, avg_duration_min * 3.5)
+                    stability_score = max(0, 100 - min(60, rejoins * 3))
+                    overall = round((attendance_pct * 0.50) + (duration_score * 0.30) + (stability_score * 0.20), 2)
+
+                    scored.append({
+                        "id": mid,
+                        "name": mem.get("name") or f"Member {mid}",
+                        "attendance_pct": attendance_pct,
+                        "avg_duration_min": avg_duration_min,
+                        "overall_score": overall,
+                        "engagement_score": round((duration_score * 0.65) + (stability_score * 0.35), 2),
+                        "rejoins": rejoins,
+                    })
+
+                scored.sort(key=lambda x: x["overall_score"], reverse=True)
+                rank = next((i + 1 for i, item in enumerate(scored) if item["id"] == member_id), total_members)
+                member_row = next((item for item in scored if item["id"] == member_id), scored[-1] if scored else {})
+
+                def avg(key):
+                    return round(sum(float(x.get(key) or 0) for x in scored) / max(len(scored), 1), 2)
+
+                averages = {
+                    "overall_score": avg("overall_score"),
+                    "attendance_pct": avg("attendance_pct"),
+                    "avg_duration_min": avg("avg_duration_min"),
+                    "engagement_score": avg("engagement_score"),
                 }
-                seen_candidates = [
-                    parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join"))
-                    for r in rows
-                ]
-                seen_candidates = [x for x in seen_candidates if x]
-                person["last_seen"] = max(seen_candidates) if seen_candidates else None
-                intel = build_member_intelligence(person, avg_ref)
 
-                summaries.append({
-                    "member_id": mid,
-                    "name": m.get("display_name") or "Member",
-                    "meetings": truth.get("meetings", 0),
-                    "attendance_pct": truth.get("attendance_percent", 0),
-                    "avg_minutes": truth.get("avg_minutes", 0),
-                    "total_minutes": truth.get("total_minutes", 0),
-                    "rejoins": truth.get("rejoins", 0),
-                    "overall_score": round(float(intel.get("overall_score") or 0), 2),
-                    "engagement_score": round(float(intel.get("engagement_score") or 0), 2),
-                })
-
-        if not summaries:
-            return {"ok": True, "empty": True, "member_id": member_id, "message": "No cohort data yet"}
-
-        summaries.sort(key=lambda x: (x["overall_score"], x["attendance_pct"], x["avg_minutes"]), reverse=True)
-        total = len(summaries)
-        target = None
-        rank = total
-        for idx, s in enumerate(summaries, start=1):
-            if int(s["member_id"]) == member_id:
-                target = s
-                rank = idx
-                break
-
-        if not target:
-            return {"ok": True, "empty": True, "member_id": member_id, "message": "This member has no cohort attendance data yet"}
-
-        avg_score = round(sum(s["overall_score"] for s in summaries) / total, 2)
-        avg_attendance = round(sum(s["attendance_pct"] for s in summaries) / total, 2)
-        avg_duration = round(sum(s["avg_minutes"] for s in summaries) / total, 2)
-        avg_engagement = round(sum(s["engagement_score"] for s in summaries) / total, 2)
-
-        score_delta = round(target["overall_score"] - avg_score, 2)
-        attendance_delta = round(target["attendance_pct"] - avg_attendance, 2)
-        duration_delta = round(target["avg_minutes"] - avg_duration, 2)
-        engagement_delta = round(target["engagement_score"] - avg_engagement, 2)
-
-        top_percent = round((rank / total) * 100, 1)
-        if rank <= max(1, round(total * 0.10)):
-            category = "Elite Performer"
-            category_class = "elite"
-        elif score_delta >= 10:
-            category = "Above Average"
-            category_class = "good"
-        elif score_delta <= -10:
-            category = "Needs Attention"
-            category_class = "danger"
-        else:
-            category = "Average Performer"
-            category_class = "stable"
-
-        if score_delta > 0:
-            conclusion = f"{target['name']} is {abs(score_delta):.1f} points above the truth-counted cohort average."
-        elif score_delta < 0:
-            conclusion = f"{target['name']} is {abs(score_delta):.1f} points below the truth-counted cohort average."
-        else:
-            conclusion = f"{target['name']} is exactly at truth-counted cohort average."
-
-        return {
-            "ok": True,
-            "member_id": member_id,
-            "name": target["name"],
-            "rank": rank,
-            "total": total,
-            "top_percent": top_percent,
-            "category": category,
-            "category_class": category_class,
-            "conclusion": conclusion,
-            "member": target,
-            "cohort": {
-                "avg_score": avg_score,
-                "avg_attendance": avg_attendance,
-                "avg_duration": avg_duration,
-                "avg_engagement": avg_engagement,
-            },
-            "delta": {
-                "score": score_delta,
-                "attendance": attendance_delta,
-                "duration": duration_delta,
-                "engagement": engagement_delta,
-            },
-            "top_members": summaries[:5],
-        }
+                return {
+                    "ok": True,
+                    "rank": rank,
+                    "total": total_members,
+                    "member": member_row,
+                    "averages": averages,
+                    "top": scored[:5],
+                    "basis": f"Compared with {total_members} active members across {total_meetings} meetings",
+                }
     except Exception as exc:
-        return {"ok": False, "error": str(exc), "member_id": member_id}
+        print("COHORT_FAST_PAYLOAD_ERROR", exc)
+        return {
+            "ok": False,
+            "rank": 0,
+            "total": 0,
+            "member": {"overall_score": 0, "attendance_pct": 0, "avg_duration_min": 0, "engagement_score": 0},
+            "averages": {"overall_score": 0, "attendance_pct": 0, "avg_duration_min": 0, "engagement_score": 0},
+            "top": [],
+            "basis": "Cohort temporarily unavailable",
+            "error": str(exc),
+        }
+
 
 def _za_signed(value, suffix=""):
     try:
@@ -8970,7 +8898,11 @@ def _za_signed(value, suffix=""):
 
 
 def _za_member_cohort_html(member_id):
-    data = _za_member_cohort_payload(member_id)
+    try:
+        data = _za_member_cohort_payload(member_id)
+    except Exception as cohort_exc:
+        print('COHORT_HTML_ERROR', cohort_exc)
+        data = {'ok': False, 'rank': 0, 'total': 0, 'member': {}, 'averages': {}, 'top': [], 'basis': 'Cohort temporarily unavailable'}
     if not data.get("ok") or data.get("empty"):
         msg = html_escape(str(data.get("message") or data.get("error") or "Cohort comparison will appear after enough data is collected."))
         return f"""
