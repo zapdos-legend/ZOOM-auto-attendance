@@ -309,6 +309,7 @@ button:active,.btn:active,a.btn:active{
 }
 <script>
 (function(){
+  if(location.pathname === '/login'){ return; }
   if(window.ZoomAttendanceMotionEngine){ return; }
   window.ZoomAttendanceMotionEngine = {
     started:false,
@@ -589,7 +590,7 @@ button:active,.btn:active,a.btn:active{
           if(first) first.appendChild(badge);
         });
       }
-      if(!location.pathname.includes("members") && !location.pathname.includes("analytics") && !location.pathname.includes("home")) return;
+      if(!location.pathname.includes("members") && !location.pathname.includes("analytics")) return;
       fetch("/api/member-risk-summary?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(data){
@@ -784,6 +785,7 @@ body.za-socket-live-mode .za-realtime-pill::before{
 }
 <script>
 (function(){
+  if(!(/\/live|\/home|\/analytics/.test(location.pathname))){ return; }
   if(window.ZoomAttendanceAdvancedRealtimeUI){ return; }
   window.ZoomAttendanceAdvancedRealtimeUI = {
     maxFeed:8,
@@ -1135,6 +1137,7 @@ tbody tr:hover{
 }
 <script>
 (function(){
+  if(!(/\/live/.test(location.pathname))){ return; }
   if(window.ZoomAttendancePhase22){ return; }
   window.ZoomAttendancePhase22 = {
     points:[],
@@ -1717,6 +1720,82 @@ def send_push_notification(title, body, target_username=None, click_url=None):
         conn.commit()
 
     return results
+
+
+
+# ===== PERFORMANCE FIX V1 LIGHTWEIGHT PAGE HELPERS =====
+LIGHT_LOGIN_CSS = """
+<style>
+:root{--bg:#060818;--card:rgba(15,23,42,.86);--line:rgba(148,163,184,.22);--txt:#e5e7eb;--muted:#94a3b8;--accent:#8b5cf6}
+*{box-sizing:border-box}
+html,body{min-height:100%;margin:0}
+body{
+  font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;
+  color:var(--txt);
+  background:
+    radial-gradient(circle at 18% 18%,rgba(139,92,246,.24),transparent 28%),
+    radial-gradient(circle at 82% 12%,rgba(56,189,248,.16),transparent 25%),
+    linear-gradient(135deg,#050816,#111827);
+}
+.login-shell,.auth-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px}
+.login-card,.auth-card,.card{
+  width:min(440px,92vw);
+  border:1px solid var(--line);
+  border-radius:26px;
+  background:var(--card);
+  box-shadow:0 28px 70px rgba(0,0,0,.40);
+  padding:26px;
+}
+input,select{
+  width:100%;
+  border:1px solid rgba(148,163,184,.25);
+  background:rgba(2,6,23,.48);
+  color:#f8fafc;
+  border-radius:14px;
+  padding:12px 14px;
+  margin:8px 0 12px;
+  outline:none;
+}
+button,.btn,input[type=submit]{
+  width:100%;
+  border:0;
+  border-radius:14px;
+  padding:12px 16px;
+  font-weight:900;
+  color:white;
+  background:linear-gradient(90deg,#7c3aed,#2563eb);
+  box-shadow:0 12px 28px rgba(99,102,241,.24);
+  cursor:pointer;
+}
+h1,h2,h3{margin:0 0 10px}
+p,small,label{color:var(--muted)}
+.alert,.flash,.message{border-radius:14px;padding:10px 12px;margin:10px 0;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.25)}
+</style>
+"""
+
+def page_theme_css():
+    try:
+        if request.path == "/login":
+            return LIGHT_LOGIN_CSS
+    except Exception:
+        pass
+    return DARK_THEME_CSS
+
+@app.after_request
+def za_performance_headers(response):
+    try:
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        if request.path == "/login":
+            response.headers["Cache-Control"] = "private, max-age=60"
+        elif request.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        else:
+            response.headers.setdefault("Cache-Control", "private, max-age=15")
+    except Exception:
+        pass
+    return response
+# ===== END PERFORMANCE FIX V1 LIGHTWEIGHT PAGE HELPERS =====
+
 
 
 def login_required(f):
@@ -6550,7 +6629,7 @@ button:active {
 
   function rowKey(row){
     if(!row) return "";
-    var txt = (row.textContent || "").toLowerCase().replace(/\s+/g," ").trim();
+    var txt = (row.textContent || "").toLowerCase().replace(/\\s+/g," ").trim();
     var email = txt.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
     if(email) return "email::" + email[0];
     var cells = row.querySelectorAll("td");
@@ -6558,7 +6637,7 @@ button:active {
     for(var i=0;i<Math.min(cells.length,2);i++){
       key += " " + (cells[i].textContent || "").trim().toLowerCase();
     }
-    return key.replace(/\s+/g," ").trim();
+    return key.replace(/\\s+/g," ").trim();
   }
 
   function secondsFromText(text){
@@ -7019,6 +7098,30 @@ def handle_any_error(e):
     return render_template_string(BASE_HTML, title="Error", body=body, nav=[], active=""), 500
 
 
+
+# ===== ROUTE TIMING LIGHTWEIGHT PROFILER =====
+@app.before_request
+def za_request_timer_start():
+    try:
+        request._za_started_at = time.time()
+    except Exception:
+        pass
+
+@app.after_request
+def za_request_timer_log(response):
+    try:
+        started = getattr(request, "_za_started_at", None)
+        if started:
+            elapsed_ms = int((time.time() - started) * 1000)
+            if elapsed_ms > 1200:
+                print(f"SLOW_ROUTE {request.method} {request.path} {elapsed_ms}ms status={response.status_code}")
+            response.headers["X-ZA-Response-Time"] = str(elapsed_ms)
+    except Exception:
+        pass
+    return response
+# ===== END ROUTE TIMING LIGHTWEIGHT PROFILER =====
+
+
 @app.route("/toggle-theme")
 @login_required
 def toggle_theme():
@@ -7099,7 +7202,7 @@ def login():
         login_error=login_error,
         request=request,
     )
-    return render_template_string(BASE_HTML, title="Login", body=body, nav=[], active="")
+    return render_template_string(BASE_HTML, title="Login", body=body, nav=[], active="", DARK_THEME_CSS=page_theme_css())
 
 
 @app.route("/logout")
