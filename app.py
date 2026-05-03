@@ -1494,7 +1494,7 @@ def slugify(text: str) -> str:
 def db():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is missing")
-    connect_timeout = os.getenv("DB_CONNECT_TIMEOUT", "5")
+    connect_timeout = os.getenv("DB_CONNECT_TIMEOUT", "3")
     try:
         connect_timeout = int(connect_timeout)
     except Exception:
@@ -1504,7 +1504,7 @@ def db():
     conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=connect_timeout)
     try:
         with conn.cursor() as cur:
-            cur.execute("SET statement_timeout TO 8000")
+            cur.execute("SET statement_timeout TO 5000")
     except Exception:
         pass
     return conn
@@ -3771,11 +3771,11 @@ def _truth_seconds_between(start_value, end_value):
 def _truth_status_from_duration(status_value, total_seconds, meeting_seconds, present_threshold=None, late_threshold=None):
     status_text = str(status_value or "").upper().strip()
     try:
-        present_threshold = float(present_threshold if present_threshold is not None else get_setting("present_percentage", DEFAULT_SETTINGS.get("present_percentage", "75")))
+        present_threshold = float(present_threshold if present_threshold is not None else DEFAULT_SETTINGS.get("present_percentage", "75"))
     except Exception:
         present_threshold = 75.0
     try:
-        late_threshold = float(late_threshold if late_threshold is not None else get_setting("late_count_as_present_percentage", DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30")))
+        late_threshold = float(late_threshold if late_threshold is not None else DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30"))
     except Exception:
         late_threshold = 30.0
 
@@ -3817,6 +3817,14 @@ def get_attendance_truth_rows(conn, member_id=None, start_date=None, end_date=No
     Every selected meeting is represented. Missing member attendance becomes ABSENT.
     This prevents inflated 100% scores when a member only has one joined row.
     """
+    try:
+        truth_present_threshold = float(get_setting("present_percentage", DEFAULT_SETTINGS.get("present_percentage", "75")))
+    except Exception:
+        truth_present_threshold = float(DEFAULT_SETTINGS.get("present_percentage", "75"))
+    try:
+        truth_late_threshold = float(get_setting("late_count_as_present_percentage", DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30")))
+    except Exception:
+        truth_late_threshold = float(DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30"))
     member_id = int(member_id) if member_id is not None else None
     with conn.cursor() as cur:
         where = []
@@ -3900,7 +3908,7 @@ def get_attendance_truth_rows(conn, member_id=None, start_date=None, end_date=No
                 meeting_seconds = max(int(max_seconds_by_uuid.get(uuid) or 0), total_seconds, 1 if total_seconds > 0 else 0)
 
             source_status = (a or {}).get("final_status") or (a or {}).get("status")
-            final_status, duration_pct = _truth_status_from_duration(source_status, total_seconds, meeting_seconds)
+            final_status, duration_pct = _truth_status_from_duration(source_status, total_seconds, meeting_seconds, truth_present_threshold, truth_late_threshold)
 
             truth_rows.append({
                 "attendance_id": (a or {}).get("attendance_id"),
@@ -8937,10 +8945,55 @@ def _za_member_cohort_html(member_id):
 def api_member_cohort(member_id):
     return jsonify(_za_member_cohort_payload(member_id))
 
+
+# ===== PROFILE SAFE FALLBACK AGAINST 500 =====
+def build_member_profile_insights_legacy_safe(member_id):
+    member = {"id": member_id, "full_name": "Member", "name": "Member", "email": "-", "phone": "-"}
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                name_sql = member_name_sql(conn)
+                cur.execute(f"SELECT id, {name_sql} AS full_name, email, phone FROM members WHERE id=%s", (member_id,))
+                row = cur.fetchone()
+                if row:
+                    member = row
+    except Exception as exc:
+        print("PROFILE_FALLBACK_MEMBER_ERROR", exc)
+    return {
+        "member": member,
+        "member_id": member_id,
+        "member_name": member_display_name(member),
+        "meetings_tracked": 0,
+        "last_seen": None,
+        "attendance_percent": 0,
+        "overall_score": 0,
+        "attendance_score": 0,
+        "engagement_score": 0,
+        "total_duration_min": 0,
+        "avg_duration_min": 0,
+        "late_count": 0,
+        "rejoins": 0,
+        "risk_status": "Unknown",
+        "trend": "Stable",
+        "history": [],
+        "score_points": [],
+        "duration_points": [],
+        "late_points": [],
+        "alerts": [],
+        "stats": {},
+        "charts": {},
+        "risk": {},
+    }
+# ===== END PROFILE SAFE FALLBACK AGAINST 500 =====
+
 @app.route("/members/<int:member_id>/profile")
 @login_required
 def member_profile(member_id):
-    profile_data = build_member_profile_insights(member_id)
+    try:
+        profile_data = build_member_profile_insights(member_id)
+    except Exception as profile_exc:
+        print('PROFILE_INSIGHTS_ERROR', profile_exc)
+        profile_data = build_member_profile_insights_legacy_safe(member_id)
     if not profile_data:
         flash("Member not found.", "error")
         return redirect(url_for("members"))
