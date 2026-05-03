@@ -8224,10 +8224,15 @@ def _za_wow_premium_trend_html(member_id):
 
 
 
-# ===== FINAL AUTO UI TREND ENGINE =====
-def _za_final_member_trend_payload(member_id):
-    """Combined trend engine: attendance status + duration consistency, based on last 7 meetings.
-    Read-only and compatible with old/new DB columns.
+
+
+
+# ===== ELITE SAAS TREND ENGINE V2 - AUTO UI INTEGRATED =====
+def _za_elite_member_trend_payload(member_id):
+    """Elite SaaS trend engine.
+    Option C: attendance/status 60% + duration consistency 40%.
+    Adds normalization, trend strength, anomaly detection, smart insight, and action suggestion.
+    Read-only. No DB schema changes.
     """
     try:
         with db() as conn:
@@ -8236,7 +8241,17 @@ def _za_final_member_trend_payload(member_id):
                 cur.execute(f"SELECT id, {name_sql} AS display_name, email, phone FROM members WHERE id=%s", (member_id,))
                 member = cur.fetchone()
                 if not member:
-                    return {"ok": False, "trend": "Stable", "trend_score": 0, "bars": [], "insight": "Member not found"}
+                    return {
+                        "ok": False,
+                        "trend": "Stable",
+                        "trend_score": 0,
+                        "raw_score": 0,
+                        "bars": [],
+                        "points": [],
+                        "insight": "Member not found.",
+                        "action": "Suggested action: Verify member record.",
+                        "basis": "Based on last 7 meetings",
+                    }
 
                 has_total_seconds = column_exists(conn, "attendance", "total_seconds")
                 has_duration_seconds = column_exists(conn, "attendance", "duration_seconds")
@@ -8289,7 +8304,7 @@ def _za_final_member_trend_payload(member_id):
                 )
                 rows = list(cur.fetchall() or [])
 
-                # Fallback for old data where member_id may not be linked but name exists
+                # Fallback for old/unlinked records by participant/name
                 if not rows and (has_participant_name or has_name):
                     display_name = member_display_name(member)
                     name_cols = []
@@ -8317,8 +8332,10 @@ def _za_final_member_trend_payload(member_id):
                     )
                     rows = list(cur.fetchall() or [])
 
+                # Oldest -> newest
                 rows = list(reversed(rows))
                 points = []
+
                 for idx, row in enumerate(rows):
                     status = str(row.get("status") or "ABSENT").upper().strip()
                     try:
@@ -8346,10 +8363,13 @@ def _za_final_member_trend_payload(member_id):
                     else:
                         attendance_score = 0
 
-                    # Option C: Combined intelligence = attendance/status 60% + duration 40%
+                    # Option C combined score: attendance/status 60% + duration consistency 40%
                     combined = (attendance_score * 0.60) + (duration_pct * 0.40)
+
+                    # Soft penalty for high rejoin instability
                     if rejoins > 3:
                         combined -= min(12, (rejoins - 3) * 2)
+
                     combined = round(max(0, min(100, combined)), 2)
 
                     label = fmt_date(row.get("start_time"))
@@ -8358,96 +8378,174 @@ def _za_final_member_trend_payload(member_id):
 
                     points.append({
                         "label": label,
+                        "topic": row.get("topic") or "",
                         "score": combined,
                         "status": status,
                         "minutes": round(attended_seconds / 60, 2),
                         "duration_pct": round(duration_pct, 2),
+                        "rejoins": rejoins,
                     })
+
+                if not points:
+                    return {
+                        "ok": True,
+                        "trend": "Stable",
+                        "trend_score": 0,
+                        "raw_score": 0,
+                        "older_avg": 0,
+                        "recent_avg": 0,
+                        "weighted_avg": 0,
+                        "normalized_bars": [],
+                        "points": [],
+                        "bars": [],
+                        "insight": "Not enough meeting history is available yet.",
+                        "action": "Suggested action: Continue collecting attendance data for this member.",
+                        "basis": "Based on last 0 meetings",
+                        "strength": "Insufficient data",
+                        "anomaly": False,
+                    }
+
+                values = [float(p["score"]) for p in points]
+
+                # Normalize bars for better visual contrast without changing real score.
+                min_v = min(values)
+                max_v = max(values)
+                if max_v == min_v:
+                    normalized = [55 for _ in values]
+                else:
+                    normalized = [round(18 + ((v - min_v) / (max_v - min_v)) * 82, 1) for v in values]
+
+                # Weighted average: latest meetings matter more.
+                weights = list(range(1, len(values) + 1))
+                weighted_avg = sum(v * w for v, w in zip(values, weights)) / max(sum(weights), 1)
 
                 older_avg = 0.0
                 recent_avg = 0.0
-                trend_score = 0.0
-                trend = "Stable"
+                if len(values) >= 4:
+                    split = len(values) // 2
+                    older_avg = sum(values[:split]) / max(split, 1)
+                    recent_avg = sum(values[split:]) / max(len(values[split:]), 1)
+                elif len(values) >= 2:
+                    older_avg = values[0]
+                    recent_avg = values[-1]
+                else:
+                    older_avg = recent_avg = values[0]
 
-                if len(points) >= 4:
-                    split = len(points) // 2
-                    old = points[:split]
-                    new = points[split:]
-                    older_avg = sum(p["score"] for p in old) / max(len(old), 1)
-                    recent_avg = sum(p["score"] for p in new) / max(len(new), 1)
-                elif len(points) >= 2:
-                    older_avg = points[0]["score"]
-                    recent_avg = points[-1]["score"]
-                elif points:
-                    older_avg = recent_avg = points[0]["score"]
-
+                raw_score = recent_avg - older_avg
                 if older_avg > 0:
                     trend_score = ((recent_avg - older_avg) / older_avg) * 100
                 else:
-                    trend_score = recent_avg - older_avg
+                    trend_score = raw_score
 
-                if trend_score > 15:
+                # Anomaly detection: sudden latest drop/spike compared with previous average.
+                anomaly = False
+                anomaly_text = ""
+                if len(values) >= 4:
+                    prev_avg = sum(values[:-1]) / max(len(values[:-1]), 1)
+                    latest = values[-1]
+                    delta_latest = latest - prev_avg
+                    if delta_latest <= -22:
+                        anomaly = True
+                        anomaly_text = f" Sudden drop detected: latest score {latest:.0f}% vs previous average {prev_avg:.0f}%."
+                    elif delta_latest >= 22:
+                        anomaly = True
+                        anomaly_text = f" Sudden positive spike detected: latest score {latest:.0f}% vs previous average {prev_avg:.0f}%."
+
+                if trend_score > 25:
                     trend = "Strong Improving"
-                elif trend_score > 5:
+                    strength = "Strong Uptrend"
+                elif trend_score > 8:
                     trend = "Improving"
-                elif trend_score < -15:
-                    trend = "Strong Declining"
-                elif trend_score < -5:
+                    strength = "Mild Uptrend"
+                elif trend_score < -25:
+                    trend = "Critical Drop"
+                    strength = "Critical Downtrend"
+                elif trend_score < -8:
                     trend = "Declining"
+                    strength = "Mild Downtrend"
+                else:
+                    trend = "Stable"
+                    strength = "Stable Pattern"
+
+                high_recent = sum(1 for v in values[-3:] if v >= 75)
+                low_recent = sum(1 for v in values[-3:] if v < 45)
 
                 if trend in ("Strong Improving", "Improving"):
-                    insight = f"Attendance improved by {round(abs(trend_score), 1)}% because recent meetings show better consistency and duration."
-                    action = "Suggested action: Send appreciation message to maintain this positive engagement."
-                elif trend in ("Strong Declining", "Declining"):
-                    insight = f"Attendance dropped by {round(abs(trend_score), 1)}%. Member may be attending less or leaving early."
-                    action = "Suggested action: Send reminder or personal follow-up."
+                    driver = f"{high_recent} of last 3 meetings scored above 75%" if len(values) >= 3 else "recent score increased"
+                    insight = f"Trend improved by {abs(trend_score):.1f}%. {driver}, pushing recent average to {recent_avg:.0f}%." + anomaly_text
+                    action = "Suggested action: Send appreciation message and keep the same engagement pattern."
+                elif trend in ("Critical Drop", "Declining"):
+                    driver = f"{low_recent} of last 3 meetings scored below 45%" if len(values) >= 3 else "recent score dropped"
+                    insight = f"Trend dropped by {abs(trend_score):.1f}%. {driver}, reducing recent average to {recent_avg:.0f}%." + anomaly_text
+                    action = "Suggested action: Send reminder or personal follow-up before the next meeting."
                 else:
-                    insight = "Attendance behavior is stable across recent meetings."
-                    action = "Suggested action: Continue monitoring without urgent action."
+                    insight = f"Trend is stable. Recent average is {recent_avg:.0f}% and weighted score is {weighted_avg:.0f}%." + anomaly_text
+                    action = "Suggested action: Continue monitoring; no urgent action needed."
 
                 return {
                     "ok": True,
                     "trend": trend,
                     "trend_score": round(trend_score, 1),
+                    "raw_score": round(raw_score, 1),
                     "older_avg": round(older_avg, 1),
                     "recent_avg": round(recent_avg, 1),
+                    "weighted_avg": round(weighted_avg, 1),
+                    "normalized_bars": normalized,
                     "points": points,
-                    "bars": [p["score"] for p in points],
+                    "bars": values,
                     "insight": insight,
                     "action": action,
                     "basis": f"Based on last {len(points)} meeting{'s' if len(points) != 1 else ''}",
+                    "strength": strength,
+                    "anomaly": anomaly,
                 }
     except Exception as exc:
         return {
             "ok": False,
             "trend": "Stable",
             "trend_score": 0,
+            "raw_score": 0,
             "older_avg": 0,
             "recent_avg": 0,
+            "weighted_avg": 0,
+            "normalized_bars": [],
             "points": [],
             "bars": [],
-            "insight": "Trend intelligence is waiting for enough attendance data.",
+            "insight": "Trend intelligence is waiting for enough reliable attendance data.",
             "action": "Suggested action: Continue collecting meeting data.",
             "basis": "Based on last 7 meetings",
+            "strength": "Stable Pattern",
+            "anomaly": False,
             "error": str(exc),
         }
 
 
-def _za_final_member_trend_html(member_id):
-    data = _za_final_member_trend_payload(member_id)
+def _za_elite_member_trend_html(member_id):
+    data = _za_elite_member_trend_payload(member_id)
     trend = str(data.get("trend") or "Stable")
     lower = trend.lower()
-    cls = "up" if "improving" in lower else "down" if "declining" in lower else "stable"
-    icon = "📈" if cls == "up" else "📉" if cls == "down" else "➖"
+    if "improving" in lower:
+        cls = "up"
+        icon = "📈"
+    elif "declining" in lower or "drop" in lower:
+        cls = "down"
+        icon = "📉"
+    else:
+        cls = "stable"
+        icon = "➖"
+
     score = float(data.get("trend_score") or 0)
     sign = "+" if score > 0 else ""
     older = float(data.get("older_avg") or 0)
     recent = float(data.get("recent_avg") or 0)
+    weighted = float(data.get("weighted_avg") or 0)
     basis = html_escape(str(data.get("basis") or "Based on last 7 meetings"))
     insight = html_escape(str(data.get("insight") or "Trend intelligence active."))
     action = html_escape(str(data.get("action") or "Continue monitoring."))
-    points = data.get("points") or []
+    strength = html_escape(str(data.get("strength") or "Stable Pattern"))
 
+    points = data.get("points") or []
+    norm_bars = data.get("normalized_bars") or []
     if not points:
         points = [
             {"score": 20, "label": "No data", "status": "-", "minutes": 0},
@@ -8455,57 +8553,73 @@ def _za_final_member_trend_html(member_id):
             {"score": 55, "label": "No data", "status": "-", "minutes": 0},
             {"score": 70, "label": "No data", "status": "-", "minutes": 0},
         ]
+        norm_bars = [20, 35, 55, 70]
 
     bars = []
     for idx, point in enumerate(points):
         try:
-            val = max(8, min(100, float(point.get("score") or 0)))
+            real_score = max(0, min(100, float(point.get("score") or 0)))
         except Exception:
-            val = 8
-        bcls = "good" if val >= 70 else "warn" if val >= 45 else "bad"
-        tip = html_escape(f"{point.get('label','Meeting')} | Score {round(val)}% | {point.get('status','-')} | {point.get('minutes',0)} min")
+            real_score = 0
+        try:
+            visual_height = max(8, min(100, float(norm_bars[idx] if idx < len(norm_bars) else real_score)))
+        except Exception:
+            visual_height = max(8, real_score)
+
+        if real_score >= 75:
+            bcls = "good"
+        elif real_score >= 45:
+            bcls = "warn"
+        else:
+            bcls = "bad"
+
+        tip = html_escape(
+            f"{point.get('label','Meeting')} | Real score {round(real_score)}% | Visual scale {round(visual_height)}% | {point.get('status','-')} | {point.get('minutes',0)} min"
+        )
         bars.append(
-            f"<span class='za-final-wow-bar {bcls}' style='--h:{val}%;animation-delay:{idx*90}ms' data-tip='{tip}'><i>{round(val)}</i></span>"
+            f"<span class='za-elite-bar {bcls}' style='--h:{visual_height}%;animation-delay:{idx*95}ms' data-tip='{tip}'><i>{round(real_score)}</i></span>"
         )
 
     return f"""
-    <section id="zaFinalWowTrendHero" class="za-final-wow-trend {cls}" title="{basis}">
-      <div class="za-final-wow-glow"></div>
-      <div class="za-final-wow-layout">
-        <div class="za-final-wow-left">
-          <div class="za-final-wow-kicker">AI Trend Intelligence • Option C</div>
+    <section id="zaEliteTrendHero" class="za-elite-trend {cls}" title="{basis}">
+      <div class="za-elite-bg-orb one"></div>
+      <div class="za-elite-bg-orb two"></div>
+      <div class="za-elite-grid">
+        <div class="za-elite-left">
+          <div class="za-elite-kicker">Elite AI Trend Intelligence • Combined Score</div>
           <h2>{icon} {html_escape(trend)}</h2>
-          <div class="za-final-wow-score-row">
-            <span class="za-final-wow-score">{sign}{score:.1f}%</span>
-            <span class="za-final-wow-pill">{icon} {html_escape(trend)}</span>
+          <div class="za-elite-score-row">
+            <span class="za-elite-score" data-za-target="{score:.1f}">{sign}{score:.1f}%</span>
+            <span class="za-elite-pill">{strength}</span>
           </div>
-          <p class="za-final-wow-insight">{insight}</p>
-          <div class="za-final-wow-action">{action}</div>
-          <div class="za-final-wow-meta">
+          <p class="za-elite-insight">{insight}</p>
+          <div class="za-elite-action">{action}</div>
+          <div class="za-elite-meta">
             <span>Older Avg <b>{older:.0f}%</b></span>
             <span>Recent Avg <b>{recent:.0f}%</b></span>
+            <span>Weighted <b>{weighted:.0f}%</b></span>
             <span>{basis}</span>
           </div>
         </div>
-        <div class="za-final-wow-chart">
-          <div class="za-final-wow-chart-head">
+        <div class="za-elite-chart">
+          <div class="za-elite-chart-head">
             <div>
-              <strong>Combined Attendance + Duration Trend</strong>
-              <small>Bars use attendance/status 60% + duration consistency 40%</small>
+              <strong>Normalized Recent Performance</strong>
+              <small>Real score = attendance/status 60% + duration 40%. Bar height is normalized for clear contrast.</small>
             </div>
-            <em>Hover bars for score/status/minutes</em>
+            <em>Hover bars for exact score/status/minutes</em>
           </div>
-          <div class="za-final-wow-bars">{''.join(bars)}</div>
-          <div class="za-final-wow-mini">
+          <div class="za-elite-bars">{''.join(bars)}</div>
+          <div class="za-elite-mini">
             <div><small>Direction</small><strong>{html_escape(trend)}</strong></div>
-            <div><small>Trend Score</small><strong>{sign}{score:.1f}%</strong></div>
-            <div><small>Action</small><strong>{'Reward' if cls == 'up' else 'Follow-up' if cls == 'down' else 'Monitor'}</strong></div>
+            <div><small>Trend</small><strong>{sign}{score:.1f}%</strong></div>
+            <div><small>Next Action</small><strong>{'Reward' if cls == 'up' else 'Follow-up' if cls == 'down' else 'Monitor'}</strong></div>
           </div>
         </div>
       </div>
     </section>
     """
-# ===== END FINAL AUTO UI TREND ENGINE =====
+# ===== END ELITE SAAS TREND ENGINE V2 =====
 
 
 @app.route("/members/<int:member_id>/profile")
@@ -8735,6 +8849,87 @@ def member_profile(member_id):
 @media(max-width:900px){.za-final-wow-layout{grid-template-columns:1fr!important}.za-final-wow-left h2{font-size:28px!important}.za-final-wow-score{font-size:34px!important}.za-final-wow-bars{height:130px!important}}
 /* ===== END FINAL 100% WOW TREND UI AUTO INTEGRATED ===== */
 
+
+
+/* ===== 100% ELITE SAAS TREND POLISH V2 ===== */
+#zaEliteTrendHero{
+  margin:24px 0 26px!important;
+  padding:30px!important;
+  border-radius:36px!important;
+  position:relative!important;
+  overflow:hidden!important;
+  isolation:isolate!important;
+  border:1px solid rgba(125,211,252,.40)!important;
+  background:
+    radial-gradient(circle at 15% 18%, rgba(56,189,248,.24), transparent 30%),
+    radial-gradient(circle at 84% 8%, rgba(34,197,94,.20), transparent 28%),
+    linear-gradient(135deg, rgba(2,6,23,.97), rgba(15,23,42,.94) 46%, rgba(30,41,59,.80))!important;
+  box-shadow:0 38px 110px rgba(0,0,0,.56),0 0 78px rgba(56,189,248,.16)!important;
+  animation:zaEliteHeroPulse 3.6s ease-in-out infinite alternate;
+}
+#zaEliteTrendHero.down{
+  border-color:rgba(248,113,113,.42)!important;
+  box-shadow:0 38px 110px rgba(0,0,0,.56),0 0 78px rgba(239,68,68,.18)!important;
+}
+#zaEliteTrendHero.stable{border-color:rgba(147,197,253,.34)!important;}
+@keyframes zaEliteHeroPulse{
+  from{filter:brightness(1);transform:translateY(0);}
+  to{filter:brightness(1.07);transform:translateY(-1px);}
+}
+#zaEliteTrendHero::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  z-index:-1;
+  background:linear-gradient(120deg, transparent 0%, rgba(255,255,255,.13) 42%, transparent 68%);
+  transform:translateX(-118%);
+  animation:zaEliteShine 5.4s ease-in-out infinite;
+}
+@keyframes zaEliteShine{0%,58%{transform:translateX(-118%)}100%{transform:translateX(118%)}}
+.za-elite-bg-orb{position:absolute;border-radius:999px;filter:blur(22px);opacity:.50;pointer-events:none;z-index:-1}
+.za-elite-bg-orb.one{width:160px;height:160px;right:-42px;top:-44px;background:rgba(34,197,94,.34);animation:zaEliteFloatA 7s ease-in-out infinite alternate}
+.za-elite-bg-orb.two{width:140px;height:140px;left:-48px;bottom:-48px;background:rgba(99,102,241,.36);animation:zaEliteFloatB 8s ease-in-out infinite alternate}
+@keyframes zaEliteFloatA{from{transform:translate(0,0) scale(1)}to{transform:translate(-20px,26px) scale(1.13)}}
+@keyframes zaEliteFloatB{from{transform:translate(0,0) scale(1)}to{transform:translate(22px,-18px) scale(1.10)}}
+.za-elite-grid{display:grid!important;grid-template-columns:minmax(285px,1fr) minmax(400px,1.62fr)!important;gap:26px!important;align-items:stretch!important}
+.za-elite-left{display:flex!important;flex-direction:column!important;justify-content:space-between!important;gap:19px!important}
+.za-elite-kicker{font-size:11px!important;font-weight:1000!important;letter-spacing:.16em!important;text-transform:uppercase!important;color:#7dd3fc!important}
+.za-elite-left h2{font-size:38px!important;line-height:1.02!important;margin:8px 0 12px!important;color:#f8fafc!important;font-weight:1000!important;text-shadow:0 0 26px rgba(125,211,252,.14)!important}
+.za-elite-score-row{display:flex!important;align-items:center!important;gap:13px!important;flex-wrap:wrap!important}
+.za-elite-score{display:inline-flex!important;align-items:center!important;font-size:46px!important;font-weight:1000!important;letter-spacing:-.04em!important;line-height:1!important;color:#86efac!important;text-shadow:0 0 34px rgba(34,197,94,.30)!important;animation:zaEliteScorePop .8s cubic-bezier(.16,1,.3,1) both!important}
+#zaEliteTrendHero.down .za-elite-score{color:#fca5a5!important;text-shadow:0 0 34px rgba(239,68,68,.30)!important}
+#zaEliteTrendHero.stable .za-elite-score{color:#bfdbfe!important;text-shadow:0 0 28px rgba(59,130,246,.22)!important}
+@keyframes zaEliteScorePop{from{opacity:.25;transform:scale(.88) translateY(10px)}75%{transform:scale(1.06)}to{opacity:1;transform:scale(1) translateY(0)}}
+.za-elite-pill{display:inline-flex!important;align-items:center!important;gap:8px!important;border-radius:999px!important;padding:11px 15px!important;font-size:13px!important;font-weight:1000!important;border:1px solid rgba(34,197,94,.42)!important;background:rgba(34,197,94,.16)!important;color:#bbf7d0!important}
+#zaEliteTrendHero.down .za-elite-pill{border-color:rgba(239,68,68,.42)!important;background:rgba(239,68,68,.17)!important;color:#fecaca!important}
+#zaEliteTrendHero.stable .za-elite-pill{border-color:rgba(59,130,246,.34)!important;background:rgba(59,130,246,.15)!important;color:#dbeafe!important}
+.za-elite-insight{margin:0!important;color:#cbd5e1!important;font-size:14px!important;font-weight:850!important;line-height:1.56!important}
+.za-elite-action{border:1px solid rgba(125,211,252,.22)!important;background:rgba(14,165,233,.11)!important;color:#e0f2fe!important;border-radius:18px!important;padding:13px 15px!important;font-weight:950!important;font-size:13px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)!important}
+#zaEliteTrendHero.down .za-elite-action{border-color:rgba(248,113,113,.25)!important;background:rgba(239,68,68,.12)!important;color:#fecaca!important}
+.za-elite-meta{display:flex!important;gap:10px!important;flex-wrap:wrap!important}
+.za-elite-meta span{border:1px solid rgba(148,163,184,.18)!important;background:rgba(15,23,42,.58)!important;color:#cbd5e1!important;border-radius:999px!important;padding:8px 11px!important;font-size:11px!important;font-weight:900!important}
+.za-elite-meta b{color:#f8fafc!important}
+.za-elite-chart{border-radius:27px!important;background:rgba(2,6,23,.43)!important;border:1px solid rgba(148,163,184,.18)!important;padding:19px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)!important}
+.za-elite-chart-head{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:15px!important;margin-bottom:15px!important}
+.za-elite-chart-head strong{display:block!important;color:#f8fafc!important;font-size:15px!important;font-weight:1000!important}
+.za-elite-chart-head small,.za-elite-chart-head em{display:block!important;color:#94a3b8!important;font-size:11px!important;font-weight:850!important;font-style:normal!important}
+.za-elite-bars{display:flex!important;align-items:flex-end!important;gap:12px!important;height:178px!important;padding:15px!important;border-radius:21px!important;background:linear-gradient(180deg,rgba(15,23,42,.64),rgba(2,6,23,.43))!important;border:1px solid rgba(148,163,184,.12)!important}
+.za-elite-bar{flex:1!important;min-width:21px!important;border-radius:999px 999px 9px 9px!important;position:relative!important;height:var(--h)!important;animation:zaEliteBarGrow .98s cubic-bezier(.16,1,.3,1) both!important;transition:transform .28s ease, filter .28s ease!important}
+.za-elite-bar.good{background:linear-gradient(180deg,#22c55e,#06b6d4)!important;box-shadow:0 0 28px rgba(34,197,94,.23)!important}
+.za-elite-bar.warn{background:linear-gradient(180deg,#f59e0b,#8b5cf6)!important;box-shadow:0 0 28px rgba(245,158,11,.21)!important}
+.za-elite-bar.bad{background:linear-gradient(180deg,#ef4444,#7c3aed)!important;box-shadow:0 0 28px rgba(239,68,68,.22)!important}
+.za-elite-bar i{position:absolute!important;left:50%!important;bottom:calc(100% + 6px)!important;transform:translateX(-50%)!important;font-style:normal!important;color:#e5e7eb!important;font-size:10px!important;font-weight:1000!important;opacity:.88!important}
+@keyframes zaEliteBarGrow{from{height:8px;opacity:.22;transform:translateY(15px) scaleX(.82)}78%{transform:translateY(-2px) scaleX(1.035)}to{height:var(--h);opacity:1;transform:translateY(0) scaleX(1)}}
+.za-elite-bar:hover{filter:brightness(1.26)!important;transform:translateY(-7px) scaleY(1.055)!important}
+.za-elite-bar:hover::after{content:attr(data-tip);position:absolute!important;left:50%!important;bottom:calc(100% + 26px)!important;transform:translateX(-50%)!important;z-index:99999!important;min-width:230px!important;padding:10px 11px!important;border-radius:14px!important;background:rgba(15,23,42,.98)!important;color:#e5e7eb!important;border:1px solid rgba(148,163,184,.24)!important;box-shadow:0 18px 42px rgba(0,0,0,.42)!important;font-size:11px!important;font-weight:850!important;text-align:center!important;line-height:1.35!important}
+.za-elite-mini{margin-top:15px!important;display:grid!important;grid-template-columns:repeat(auto-fit,minmax(145px,1fr))!important;gap:11px!important}
+.za-elite-mini div{border-radius:18px!important;padding:12px 13px!important;background:rgba(15,23,42,.50)!important;border:1px solid rgba(148,163,184,.14)!important}
+.za-elite-mini small{display:block!important;color:#94a3b8!important;font-size:10px!important;font-weight:1000!important;text-transform:uppercase!important;letter-spacing:.08em!important}
+.za-elite-mini strong{display:block!important;margin-top:5px!important;color:#f8fafc!important;font-size:18px!important;font-weight:1000!important}
+#zaMemberTrendSinglePanel,#zaPremiumTrendHero,#zaWowTrendHero,#zaFinalWowTrendHero{display:none!important}
+@media(max-width:900px){.za-elite-grid{grid-template-columns:1fr!important}.za-elite-left h2{font-size:29px!important}.za-elite-score{font-size:36px!important}.za-elite-bars{height:135px!important}}
+/* ===== END 100% ELITE SAAS TREND POLISH V2 ===== */
+
 </style>
         <div class="member-profile-layout-fix"><div class="member-profile-hero">
             <div class="hero">
@@ -8759,7 +8954,7 @@ def member_profile(member_id):
 
         {{ wow_premium_trend_html|safe }}
 
-        {{ final_wow_trend_html|safe }}
+        {{ elite_trend_html|safe }}
 
         <div class="profile-kpis">
             <div class="profile-kpi"><small>Attendance %</small><strong>{{ data.summary.attendance_percent }}%</strong></div>
@@ -8831,9 +9026,7 @@ def member_profile(member_id):
         </script>
         """,
         data=profile_data,
-        premium_trend_html=_za_premium_trend_html(member_id),
-        wow_premium_trend_html=_za_wow_premium_trend_html(member_id),
-        final_wow_trend_html=_za_final_member_trend_html(member_id),
+        elite_trend_html=_za_elite_member_trend_html(member_id),
         member_display_name=member_display_name,
         fmt_dt=fmt_dt,
     )
