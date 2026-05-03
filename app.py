@@ -3758,9 +3758,228 @@ def build_member_intelligence(person, avg_minutes_reference):
 
 
 
+
+# ===== ATTENDANCE TRUTH ENGINE V1 - SINGLE SOURCE OF TRUTH =====
+def _truth_seconds_between(start_value, end_value):
+    start_dt = parse_dt(start_value)
+    end_dt = parse_dt(end_value)
+    if start_dt and end_dt and end_dt >= start_dt:
+        return max(int((end_dt - start_dt).total_seconds()), 1)
+    return 0
+
+
+def _truth_status_from_duration(status_value, total_seconds, meeting_seconds, present_threshold=None, late_threshold=None):
+    status_text = str(status_value or "").upper().strip()
+    try:
+        present_threshold = float(present_threshold if present_threshold is not None else get_setting("present_percentage", DEFAULT_SETTINGS.get("present_percentage", "75")))
+    except Exception:
+        present_threshold = 75.0
+    try:
+        late_threshold = float(late_threshold if late_threshold is not None else get_setting("late_count_as_present_percentage", DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30")))
+    except Exception:
+        late_threshold = 30.0
+
+    if status_text == "HOST":
+        return "HOST", 100.0
+
+    if meeting_seconds and meeting_seconds > 0:
+        pct = max(0.0, min(100.0, (float(total_seconds or 0) / float(meeting_seconds)) * 100.0))
+        if pct >= present_threshold:
+            return "PRESENT", pct
+        if pct >= late_threshold:
+            return "LATE", pct
+        return "ABSENT", pct
+
+    if status_text in ("PRESENT", "LATE", "ABSENT", "HOST"):
+        fallback_pct = 100.0 if status_text in ("PRESENT", "HOST") else 50.0 if status_text == "LATE" else 0.0
+        return status_text, fallback_pct
+
+    if float(total_seconds or 0) > 0:
+        return "LATE", 0.0
+    return "ABSENT", 0.0
+
+
+def _truth_status_score(status, duration_pct):
+    status = str(status or "ABSENT").upper()
+    if status in ("PRESENT", "HOST"):
+        base = 100.0
+    elif status == "LATE":
+        base = 64.0
+    elif status in ("UNKNOWN", "UNMAPPED"):
+        base = 35.0
+    else:
+        base = 0.0
+    return round(max(0.0, min(100.0, (base * 0.60) + (float(duration_pct or 0) * 0.40))), 2)
+
+
+def get_attendance_truth_rows(conn, member_id=None, start_date=None, end_date=None, include_inactive_meetings=False):
+    """Central truth source.
+    Every selected meeting is represented. Missing member attendance becomes ABSENT.
+    This prevents inflated 100% scores when a member only has one joined row.
+    """
+    member_id = int(member_id) if member_id is not None else None
+    with conn.cursor() as cur:
+        where = []
+        params = []
+        if start_date:
+            where.append("DATE(start_time) >= %s")
+            params.append(start_date)
+        if end_date:
+            where.append("DATE(start_time) <= %s")
+            params.append(end_date)
+        if not include_inactive_meetings:
+            where.append("start_time IS NOT NULL")
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+        cur.execute(
+            f"""
+            SELECT id, meeting_uuid, topic, meeting_id, start_time, end_time, status
+            FROM meetings
+            {where_sql}
+            ORDER BY start_time ASC NULLS LAST, id ASC
+            """,
+            tuple(params),
+        )
+        meetings = list(cur.fetchall() or [])
+
+        uuids = [m.get("meeting_uuid") for m in meetings if m.get("meeting_uuid")]
+        if not meetings:
+            return []
+
+        # Fallback meeting duration map from attendance data when meeting.end_time is missing.
+        max_seconds_by_uuid = {}
+        if uuids and column_exists(conn, "attendance", "total_seconds"):
+            cur.execute(
+                """
+                SELECT meeting_uuid, MAX(COALESCE(total_seconds,0)) AS max_seconds
+                FROM attendance
+                WHERE meeting_uuid = ANY(%s)
+                GROUP BY meeting_uuid
+                """,
+                (uuids,),
+            )
+            for r in cur.fetchall() or []:
+                max_seconds_by_uuid[r.get("meeting_uuid")] = int(r.get("max_seconds") or 0)
+
+        attendance_by_uuid = {}
+        if member_id is not None and uuids:
+            cur.execute(
+                """
+                SELECT
+                    id AS attendance_id,
+                    meeting_uuid,
+                    participant_name,
+                    participant_email,
+                    first_join,
+                    last_leave,
+                    COALESCE(total_seconds,0) AS total_seconds,
+                    COALESCE(rejoin_count,0) AS rejoin_count,
+                    current_join,
+                    final_status,
+                    status
+                FROM attendance
+                WHERE member_id=%s AND meeting_uuid = ANY(%s)
+                ORDER BY COALESCE(last_leave, current_join, first_join) DESC NULLS LAST, id DESC
+                """,
+                (member_id, uuids),
+            )
+            for r in cur.fetchall() or []:
+                uuid = r.get("meeting_uuid")
+                if not uuid:
+                    continue
+                existing = attendance_by_uuid.get(uuid)
+                if existing is None or int(r.get("total_seconds") or 0) >= int(existing.get("total_seconds") or 0):
+                    attendance_by_uuid[uuid] = r
+
+        truth_rows = []
+        for m in meetings:
+            uuid = m.get("meeting_uuid")
+            a = attendance_by_uuid.get(uuid) if member_id is not None else None
+            total_seconds = int((a or {}).get("total_seconds") or 0)
+            meeting_seconds = _truth_seconds_between(m.get("start_time"), m.get("end_time"))
+            if meeting_seconds <= 0:
+                meeting_seconds = max(int(max_seconds_by_uuid.get(uuid) or 0), total_seconds, 1 if total_seconds > 0 else 0)
+
+            source_status = (a or {}).get("final_status") or (a or {}).get("status")
+            final_status, duration_pct = _truth_status_from_duration(source_status, total_seconds, meeting_seconds)
+
+            truth_rows.append({
+                "attendance_id": (a or {}).get("attendance_id"),
+                "meeting_uuid": uuid,
+                "participant_name": (a or {}).get("participant_name"),
+                "participant_email": (a or {}).get("participant_email"),
+                "first_join": (a or {}).get("first_join"),
+                "last_leave": (a or {}).get("last_leave"),
+                "total_seconds": total_seconds,
+                "rejoin_count": int((a or {}).get("rejoin_count") or 0),
+                "current_join": (a or {}).get("current_join"),
+                "final_status": final_status,
+                "status": final_status,
+                "duration_pct": round(duration_pct, 2),
+                "meeting_seconds": meeting_seconds,
+                "meeting_row_id": m.get("id"),
+                "topic": m.get("topic") or "Zoom Meeting",
+                "meeting_id": m.get("meeting_id"),
+                "start_time": m.get("start_time"),
+                "end_time": m.get("end_time"),
+                "meeting_status": m.get("status"),
+                "truth_missing_attendance": a is None,
+            })
+        return truth_rows
+
+
+def summarize_attendance_truth_rows(rows):
+    rows = list(rows or [])
+    present = sum(1 for r in rows if str(r.get("final_status") or "").upper() in ("PRESENT", "HOST"))
+    late = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "LATE")
+    absent = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "ABSENT")
+    host = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "HOST")
+    total = len(rows)
+    total_seconds = sum(int(r.get("total_seconds") or 0) for r in rows)
+    total_minutes = round(total_seconds / 60.0, 2)
+    avg_minutes = round(total_minutes / total, 2) if total else 0.0
+    total_rejoins = sum(int(r.get("rejoin_count") or 0) for r in rows)
+    attendance_percent = round(((present + late) / total) * 100.0, 2) if total else 0.0
+    return {
+        "total": total,
+        "meetings": total,
+        "present": present,
+        "late": late,
+        "absent": absent,
+        "host": host,
+        "total_seconds": total_seconds,
+        "total_minutes": total_minutes,
+        "avg_minutes": avg_minutes,
+        "rejoins": total_rejoins,
+        "attendance_percent": attendance_percent,
+    }
+
+
+def get_member_attendance_truth(conn, member_id, start_date=None, end_date=None):
+    rows = get_attendance_truth_rows(conn, member_id=member_id, start_date=start_date, end_date=end_date)
+    summary = summarize_attendance_truth_rows(rows)
+    summary["rows"] = rows
+    return summary
+
+
+def build_member_truth_score_points(rows):
+    points = []
+    for r in rows or []:
+        status = str(r.get("final_status") or "ABSENT").upper()
+        duration_pct = float(r.get("duration_pct") or 0)
+        score = _truth_status_score(status, duration_pct)
+        rejoins = int(r.get("rejoin_count") or 0)
+        if rejoins > 3:
+            score = max(0.0, score - min(12.0, (rejoins - 3) * 2.0))
+        points.append(round(score, 2))
+    return points
+# ===== END ATTENDANCE TRUTH ENGINE V1 =====
+
+
 # ===== MEMBER PROFILE INSIGHTS UPGRADE (SAFE ADD-ON) =====
 def build_member_profile_insights(member_id: int):
-    """Build deep member-level analytics without changing attendance logic or schema."""
+    """Build deep member-level analytics from Attendance Truth Engine.
+    Important: every meeting is counted; missing attendance rows are treated as ABSENT.
+    """
     member_id = int(member_id)
     with db() as conn:
         with conn.cursor() as cur:
@@ -3770,34 +3989,7 @@ def build_member_profile_insights(member_id: int):
             if not member:
                 return None
 
-            cur.execute(
-                """
-                SELECT
-                    a.id AS attendance_id,
-                    a.meeting_uuid,
-                    a.participant_name,
-                    a.participant_email,
-                    a.first_join,
-                    a.last_leave,
-                    a.total_seconds,
-                    a.rejoin_count,
-                    a.current_join,
-                    a.final_status,
-                    a.status,
-                    m.id AS meeting_row_id,
-                    m.topic,
-                    m.meeting_id,
-                    m.start_time,
-                    m.end_time,
-                    m.status AS meeting_status
-                FROM attendance a
-                JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
-                WHERE a.member_id=%s
-                ORDER BY m.start_time ASC NULLS LAST, m.id ASC
-                """,
-                (member_id,),
-            )
-            rows = cur.fetchall()
+            rows = get_attendance_truth_rows(conn, member_id=member_id)
 
             cur.execute(
                 """
@@ -3811,15 +4003,16 @@ def build_member_profile_insights(member_id: int):
             )
             alert_logs = cur.fetchall()
 
-    present = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "PRESENT")
-    late = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "LATE")
-    absent = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "ABSENT")
-    host = sum(1 for r in rows if str(r.get("final_status") or "").upper() == "HOST")
-    meetings_count = len(rows)
-    total_minutes = round(sum((r.get("total_seconds") or 0) for r in rows) / 60.0, 2)
-    avg_minutes = round(total_minutes / meetings_count, 2) if meetings_count else 0
-    total_rejoins = sum((r.get("rejoin_count") or 0) for r in rows)
-    attendance_percent = round(((present + late) / meetings_count) * 100, 2) if meetings_count else 0
+    truth_summary = summarize_attendance_truth_rows(rows)
+    present = truth_summary["present"]
+    late = truth_summary["late"]
+    absent = truth_summary["absent"]
+    host = truth_summary["host"]
+    meetings_count = truth_summary["meetings"]
+    total_minutes = truth_summary["total_minutes"]
+    avg_minutes = truth_summary["avg_minutes"]
+    total_rejoins = truth_summary["rejoins"]
+    attendance_percent = truth_summary["attendance_percent"]
 
     score_points = []
     labels = []
@@ -3842,38 +4035,33 @@ def build_member_profile_insights(member_id: int):
 
     avg_ref = avg_minutes if avg_minutes > 0 else 1
     for index, r in enumerate(rows, start=1):
-        status = str(r.get("final_status") or r.get("status") or "UNKNOWN").upper()
+        status = str(r.get("final_status") or r.get("status") or "ABSENT").upper()
         row_minutes = round((r.get("total_seconds") or 0) / 60.0, 2)
         start_dt = parse_dt(r.get("start_time"))
         label = start_dt.strftime("%d-%m-%Y") if start_dt else f"Meeting {index}"
         labels.append(label)
         duration_values.append(row_minutes)
 
-        if status == "PRESENT":
-            score_point = 100.0
+        score_point = _truth_status_score(status, r.get("duration_pct") or 0)
+        if row_minutes > 0:
+            score_point = min(100.0, score_point + min(row_minutes / 5.0, 10.0))
+        score_point = round(score_point, 2)
+        score_points.append(score_point)
+
+        if status == "PRESENT" or status == "HOST":
             cumulative_person["present"] += 1
         elif status == "LATE":
-            score_point = 62.0
             cumulative_person["late"] += 1
             if start_dt:
                 late_days[start_dt.strftime("%a")] += 1
-        elif status == "ABSENT":
-            score_point = 20.0
-            cumulative_person["absent"] += 1
-        elif status == "HOST":
-            score_point = 100.0
         else:
-            score_point = 50.0
-        if row_minutes > 0:
-            score_point = min(100.0, score_point + min(row_minutes / 3.0, 16.0))
-        score_point = round(score_point, 2)
-        score_points.append(score_point)
+            cumulative_person["absent"] += 1
 
         cumulative_person["meetings"] += 1
         cumulative_person["minutes"] += row_minutes
         cumulative_person["rejoins"] += (r.get("rejoin_count") or 0)
         cumulative_person["score_points"].append(score_point)
-        last_seen_candidate = parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join")) or start_dt
+        last_seen_candidate = parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join"))
         if last_seen_candidate and (cumulative_person["last_seen"] is None or last_seen_candidate > cumulative_person["last_seen"]):
             cumulative_person["last_seen"] = last_seen_candidate
         intel = build_member_intelligence(dict(cumulative_person), avg_ref)
@@ -3893,7 +4081,7 @@ def build_member_profile_insights(member_id: int):
     profile_person = {
         "name": member_display_name(member),
         "meetings": meetings_count,
-        "present": present,
+        "present": present + host,
         "late": late,
         "absent": absent,
         "minutes": total_minutes,
@@ -3902,10 +4090,16 @@ def build_member_profile_insights(member_id: int):
         "last_seen": None,
     }
     if rows:
-        seen_candidates = [parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join")) or parse_dt(r.get("start_time")) for r in rows]
+        seen_candidates = [
+            parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join"))
+            for r in rows
+        ]
         seen_candidates = [x for x in seen_candidates if x]
         profile_person["last_seen"] = max(seen_candidates) if seen_candidates else None
+
     intelligence = build_member_intelligence(profile_person, avg_ref)
+    # Force attendance percent to come from truth engine, not joined-row-only logic.
+    intelligence["attendance_pct"] = attendance_percent
     trend = derive_trend_label(score_points)
 
     late_pattern = [{"label": day, "count": late_days.get(day, 0)} for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
@@ -3916,6 +4110,10 @@ def build_member_profile_insights(member_id: int):
 
     return {
         "member": member,
+        "truth_engine": {
+            "enabled": True,
+            "rule": "All meetings counted; missing member attendance rows are ABSENT.",
+        },
         "summary": {
             "attendance_percent": attendance_percent,
             "overall_score": intelligence.get("overall_score", 0),
@@ -3945,6 +4143,7 @@ def build_member_profile_insights(member_id: int):
         "alerts": alert_logs,
     }
 # ===== END MEMBER PROFILE INSIGHTS UPGRADE =====
+
 
 def calculate_meeting_health_score(present_count, late_count, absent_count, avg_duration_minutes, reference_duration_minutes, unknown_count=0, host_present=False):
     total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
@@ -8229,276 +8428,141 @@ def _za_wow_premium_trend_html(member_id):
 
 # ===== ELITE SAAS TREND ENGINE V2 - AUTO UI INTEGRATED =====
 def _za_elite_member_trend_payload(member_id):
-    """Elite SaaS trend engine.
-    Option C: attendance/status 60% + duration consistency 40%.
-    Adds normalization, trend strength, anomaly detection, smart insight, and action suggestion.
-    Read-only. No DB schema changes.
+    """Elite trend engine powered by Attendance Truth Engine.
+    Counts missed meetings as ABSENT, so trend/score cannot be inflated by joined rows only.
     """
     try:
+        member_id = int(member_id)
         with db() as conn:
-            with conn.cursor() as cur:
-                name_sql = member_name_sql(conn)
-                cur.execute(f"SELECT id, {name_sql} AS display_name, email, phone FROM members WHERE id=%s", (member_id,))
-                member = cur.fetchone()
-                if not member:
-                    return {
-                        "ok": False,
-                        "trend": "Stable",
-                        "trend_score": 0,
-                        "raw_score": 0,
-                        "bars": [],
-                        "points": [],
-                        "insight": "Member not found.",
-                        "action": "Suggested action: Verify member record.",
-                        "basis": "Based on last 7 meetings",
-                    }
+            rows = get_attendance_truth_rows(conn, member_id=member_id)
 
-                has_total_seconds = column_exists(conn, "attendance", "total_seconds")
-                has_duration_seconds = column_exists(conn, "attendance", "duration_seconds")
-                has_duration = column_exists(conn, "attendance", "duration")
-                has_final_status = column_exists(conn, "attendance", "final_status")
-                has_status = column_exists(conn, "attendance", "status")
-                has_rejoins = column_exists(conn, "attendance", "rejoins")
-                has_updated_at = column_exists(conn, "attendance", "updated_at")
-                has_created_at = column_exists(conn, "attendance", "created_at")
-                has_participant_name = column_exists(conn, "attendance", "participant_name")
-                has_name = column_exists(conn, "attendance", "name")
+        points = []
+        for idx, row in enumerate(rows):
+            status = str(row.get("final_status") or "ABSENT").upper().strip()
+            score = _truth_status_score(status, row.get("duration_pct") or 0)
+            rejoins = int(row.get("rejoin_count") or 0)
+            if rejoins > 3:
+                score = max(0.0, score - min(12.0, (rejoins - 3) * 2.0))
+            label = fmt_date(row.get("start_time"))
+            if not label or label == "-":
+                label = f"M{idx + 1}"
+            points.append({
+                "label": label,
+                "topic": row.get("topic") or "",
+                "score": round(score, 2),
+                "status": status,
+                "minutes": round((row.get("total_seconds") or 0) / 60.0, 2),
+                "duration_pct": round(float(row.get("duration_pct") or 0), 2),
+                "rejoins": rejoins,
+            })
 
-                duration_expr = (
-                    "COALESCE(a.total_seconds, 0)" if has_total_seconds else
-                    "COALESCE(a.duration_seconds, 0)" if has_duration_seconds else
-                    "COALESCE(a.duration, 0)" if has_duration else
-                    "0"
-                )
-                status_expr = (
-                    "COALESCE(a.final_status, a.status, 'ABSENT')" if has_final_status and has_status else
-                    "COALESCE(a.final_status, 'ABSENT')" if has_final_status else
-                    "COALESCE(a.status, 'ABSENT')" if has_status else
-                    "'ABSENT'"
-                )
-                rejoins_expr = "COALESCE(a.rejoins, 0)" if has_rejoins else "0"
+        if not points:
+            return {
+                "ok": True,
+                "trend": "Stable",
+                "trend_score": 0,
+                "raw_score": 0,
+                "older_avg": 0,
+                "recent_avg": 0,
+                "weighted_avg": 0,
+                "normalized_bars": [],
+                "points": [],
+                "bars": [],
+                "insight": "Not enough meeting history is available yet.",
+                "action": "Suggested action: Continue collecting attendance data for this member.",
+                "basis": "Based on last 0 meetings",
+                "strength": "Insufficient data",
+                "anomaly": False,
+            }
 
-                order_parts = ["mt.start_time"]
-                if has_updated_at:
-                    order_parts.append("a.updated_at")
-                if has_created_at:
-                    order_parts.append("a.created_at")
-                order_expr = "COALESCE(" + ", ".join(order_parts) + ")"
+        # Last 7 truth rows only for trend, but each row already includes absent meetings.
+        points = points[-7:]
+        values = [float(p["score"]) for p in points]
 
-                cur.execute(
-                    f"""
-                    SELECT
-                        {status_expr} AS status,
-                        {duration_expr} AS attended_seconds,
-                        {rejoins_expr} AS rejoins,
-                        mt.start_time,
-                        mt.end_time,
-                        mt.topic
-                    FROM attendance a
-                    LEFT JOIN meetings mt ON mt.meeting_uuid = a.meeting_uuid
-                    WHERE a.member_id=%s
-                    ORDER BY {order_expr} DESC NULLS LAST
-                    LIMIT 7
-                    """,
-                    (member_id,),
-                )
-                rows = list(cur.fetchall() or [])
+        min_v = min(values)
+        max_v = max(values)
+        if max_v == min_v:
+            normalized = [55 for _ in values]
+        else:
+            normalized = [round(18 + ((v - min_v) / (max_v - min_v)) * 82, 1) for v in values]
 
-                # Fallback for old/unlinked records by participant/name
-                if not rows and (has_participant_name or has_name):
-                    display_name = member_display_name(member)
-                    name_cols = []
-                    if has_participant_name:
-                        name_cols.append("a.participant_name")
-                    if has_name:
-                        name_cols.append("a.name")
-                    name_expr = "COALESCE(" + ", ".join(name_cols + ["''"]) + ")"
-                    cur.execute(
-                        f"""
-                        SELECT
-                            {status_expr} AS status,
-                            {duration_expr} AS attended_seconds,
-                            {rejoins_expr} AS rejoins,
-                            mt.start_time,
-                            mt.end_time,
-                            mt.topic
-                        FROM attendance a
-                        LEFT JOIN meetings mt ON mt.meeting_uuid = a.meeting_uuid
-                        WHERE LOWER({name_expr}) = LOWER(%s)
-                        ORDER BY {order_expr} DESC NULLS LAST
-                        LIMIT 7
-                        """,
-                        (display_name,),
-                    )
-                    rows = list(cur.fetchall() or [])
+        weights = list(range(1, len(values) + 1))
+        weighted_avg = sum(v * w for v, w in zip(values, weights)) / max(sum(weights), 1)
 
-                # Oldest -> newest
-                rows = list(reversed(rows))
-                points = []
+        if len(values) >= 4:
+            split = len(values) // 2
+            older_avg = sum(values[:split]) / max(split, 1)
+            recent_avg = sum(values[split:]) / max(len(values[split:]), 1)
+        elif len(values) >= 2:
+            older_avg = values[0]
+            recent_avg = values[-1]
+        else:
+            older_avg = recent_avg = values[0]
 
-                for idx, row in enumerate(rows):
-                    status = str(row.get("status") or "ABSENT").upper().strip()
-                    try:
-                        attended_seconds = int(float(row.get("attended_seconds") or 0))
-                    except Exception:
-                        attended_seconds = 0
-                    try:
-                        rejoins = int(float(row.get("rejoins") or 0))
-                    except Exception:
-                        rejoins = 0
+        raw_score = recent_avg - older_avg
+        trend_score = ((recent_avg - older_avg) / older_avg) * 100 if older_avg > 0 else raw_score
 
-                    st = parse_dt(row.get("start_time"))
-                    et = parse_dt(row.get("end_time"))
-                    meeting_seconds = max(int((et - st).total_seconds()), 1) if st and et and et >= st else 0
-                    duration_pct = min(100, max(0, (attended_seconds / meeting_seconds) * 100)) if meeting_seconds else 0
+        anomaly = False
+        anomaly_text = ""
+        if len(values) >= 4:
+            prev_avg = sum(values[:-1]) / max(len(values[:-1]), 1)
+            latest = values[-1]
+            delta_latest = latest - prev_avg
+            if delta_latest <= -22:
+                anomaly = True
+                anomaly_text = f" Sudden drop detected: latest score {latest:.0f}% vs previous average {prev_avg:.0f}%."
+            elif delta_latest >= 22:
+                anomaly = True
+                anomaly_text = f" Sudden positive spike detected: latest score {latest:.0f}% vs previous average {prev_avg:.0f}%."
 
-                    if status in ("PRESENT", "HOST"):
-                        attendance_score = 100
-                    elif status == "LATE":
-                        attendance_score = 65
-                    elif status in ("JOINED", "LEFT", "LIVE"):
-                        attendance_score = 45
-                    elif status in ("UNKNOWN", "UNMAPPED"):
-                        attendance_score = 35
-                    else:
-                        attendance_score = 0
+        if trend_score > 25:
+            trend = "Strong Improving"
+            strength = "Strong Uptrend"
+        elif trend_score > 8:
+            trend = "Improving"
+            strength = "Mild Uptrend"
+        elif trend_score < -25:
+            trend = "Critical Drop"
+            strength = "Critical Downtrend"
+        elif trend_score < -8:
+            trend = "Declining"
+            strength = "Mild Downtrend"
+        else:
+            trend = "Stable"
+            strength = "Stable Pattern"
 
-                    # Option C combined score: attendance/status 60% + duration consistency 40%
-                    combined = (attendance_score * 0.60) + (duration_pct * 0.40)
+        high_recent = sum(1 for v in values[-3:] if v >= 75)
+        low_recent = sum(1 for v in values[-3:] if v < 45)
 
-                    # Soft penalty for high rejoin instability
-                    if rejoins > 3:
-                        combined -= min(12, (rejoins - 3) * 2)
+        if trend in ("Strong Improving", "Improving"):
+            driver = f"{high_recent} of last 3 meetings scored above 75%" if len(values) >= 3 else "recent score increased"
+            insight = f"Trend improved by {abs(trend_score):.1f}%. {driver}, pushing recent average to {recent_avg:.0f}%." + anomaly_text
+            action = "Suggested action: Send appreciation message and keep the same engagement pattern."
+        elif trend in ("Critical Drop", "Declining"):
+            driver = f"{low_recent} of last 3 meetings scored below 45%" if len(values) >= 3 else "recent score dropped"
+            insight = f"Trend dropped by {abs(trend_score):.1f}%. {driver}, reducing recent average to {recent_avg:.0f}%." + anomaly_text
+            action = "Suggested action: Send reminder or personal follow-up before the next meeting."
+        else:
+            insight = f"Trend is stable. Recent average is {recent_avg:.0f}% and weighted score is {weighted_avg:.0f}%." + anomaly_text
+            action = "Suggested action: Continue monitoring; no urgent action needed."
 
-                    combined = round(max(0, min(100, combined)), 2)
-
-                    label = fmt_date(row.get("start_time"))
-                    if not label or label == "-":
-                        label = f"M{idx + 1}"
-
-                    points.append({
-                        "label": label,
-                        "topic": row.get("topic") or "",
-                        "score": combined,
-                        "status": status,
-                        "minutes": round(attended_seconds / 60, 2),
-                        "duration_pct": round(duration_pct, 2),
-                        "rejoins": rejoins,
-                    })
-
-                if not points:
-                    return {
-                        "ok": True,
-                        "trend": "Stable",
-                        "trend_score": 0,
-                        "raw_score": 0,
-                        "older_avg": 0,
-                        "recent_avg": 0,
-                        "weighted_avg": 0,
-                        "normalized_bars": [],
-                        "points": [],
-                        "bars": [],
-                        "insight": "Not enough meeting history is available yet.",
-                        "action": "Suggested action: Continue collecting attendance data for this member.",
-                        "basis": "Based on last 0 meetings",
-                        "strength": "Insufficient data",
-                        "anomaly": False,
-                    }
-
-                values = [float(p["score"]) for p in points]
-
-                # Normalize bars for better visual contrast without changing real score.
-                min_v = min(values)
-                max_v = max(values)
-                if max_v == min_v:
-                    normalized = [55 for _ in values]
-                else:
-                    normalized = [round(18 + ((v - min_v) / (max_v - min_v)) * 82, 1) for v in values]
-
-                # Weighted average: latest meetings matter more.
-                weights = list(range(1, len(values) + 1))
-                weighted_avg = sum(v * w for v, w in zip(values, weights)) / max(sum(weights), 1)
-
-                older_avg = 0.0
-                recent_avg = 0.0
-                if len(values) >= 4:
-                    split = len(values) // 2
-                    older_avg = sum(values[:split]) / max(split, 1)
-                    recent_avg = sum(values[split:]) / max(len(values[split:]), 1)
-                elif len(values) >= 2:
-                    older_avg = values[0]
-                    recent_avg = values[-1]
-                else:
-                    older_avg = recent_avg = values[0]
-
-                raw_score = recent_avg - older_avg
-                if older_avg > 0:
-                    trend_score = ((recent_avg - older_avg) / older_avg) * 100
-                else:
-                    trend_score = raw_score
-
-                # Anomaly detection: sudden latest drop/spike compared with previous average.
-                anomaly = False
-                anomaly_text = ""
-                if len(values) >= 4:
-                    prev_avg = sum(values[:-1]) / max(len(values[:-1]), 1)
-                    latest = values[-1]
-                    delta_latest = latest - prev_avg
-                    if delta_latest <= -22:
-                        anomaly = True
-                        anomaly_text = f" Sudden drop detected: latest score {latest:.0f}% vs previous average {prev_avg:.0f}%."
-                    elif delta_latest >= 22:
-                        anomaly = True
-                        anomaly_text = f" Sudden positive spike detected: latest score {latest:.0f}% vs previous average {prev_avg:.0f}%."
-
-                if trend_score > 25:
-                    trend = "Strong Improving"
-                    strength = "Strong Uptrend"
-                elif trend_score > 8:
-                    trend = "Improving"
-                    strength = "Mild Uptrend"
-                elif trend_score < -25:
-                    trend = "Critical Drop"
-                    strength = "Critical Downtrend"
-                elif trend_score < -8:
-                    trend = "Declining"
-                    strength = "Mild Downtrend"
-                else:
-                    trend = "Stable"
-                    strength = "Stable Pattern"
-
-                high_recent = sum(1 for v in values[-3:] if v >= 75)
-                low_recent = sum(1 for v in values[-3:] if v < 45)
-
-                if trend in ("Strong Improving", "Improving"):
-                    driver = f"{high_recent} of last 3 meetings scored above 75%" if len(values) >= 3 else "recent score increased"
-                    insight = f"Trend improved by {abs(trend_score):.1f}%. {driver}, pushing recent average to {recent_avg:.0f}%." + anomaly_text
-                    action = "Suggested action: Send appreciation message and keep the same engagement pattern."
-                elif trend in ("Critical Drop", "Declining"):
-                    driver = f"{low_recent} of last 3 meetings scored below 45%" if len(values) >= 3 else "recent score dropped"
-                    insight = f"Trend dropped by {abs(trend_score):.1f}%. {driver}, reducing recent average to {recent_avg:.0f}%." + anomaly_text
-                    action = "Suggested action: Send reminder or personal follow-up before the next meeting."
-                else:
-                    insight = f"Trend is stable. Recent average is {recent_avg:.0f}% and weighted score is {weighted_avg:.0f}%." + anomaly_text
-                    action = "Suggested action: Continue monitoring; no urgent action needed."
-
-                return {
-                    "ok": True,
-                    "trend": trend,
-                    "trend_score": round(trend_score, 1),
-                    "raw_score": round(raw_score, 1),
-                    "older_avg": round(older_avg, 1),
-                    "recent_avg": round(recent_avg, 1),
-                    "weighted_avg": round(weighted_avg, 1),
-                    "normalized_bars": normalized,
-                    "points": points,
-                    "bars": values,
-                    "insight": insight,
-                    "action": action,
-                    "basis": f"Based on last {len(points)} meeting{'s' if len(points) != 1 else ''}",
-                    "strength": strength,
-                    "anomaly": anomaly,
-                }
+        return {
+            "ok": True,
+            "trend": trend,
+            "trend_score": round(trend_score, 1),
+            "raw_score": round(raw_score, 1),
+            "older_avg": round(older_avg, 1),
+            "recent_avg": round(recent_avg, 1),
+            "weighted_avg": round(weighted_avg, 1),
+            "normalized_bars": normalized,
+            "points": points,
+            "bars": values,
+            "insight": insight,
+            "action": action,
+            "basis": f"Based on last {len(points)} truth-counted meeting{'s' if len(points) != 1 else ''}",
+            "strength": strength,
+            "anomaly": anomaly,
+        }
     except Exception as exc:
         return {
             "ok": False,
@@ -8513,12 +8577,11 @@ def _za_elite_member_trend_payload(member_id):
             "bars": [],
             "insight": "Trend intelligence is waiting for enough reliable attendance data.",
             "action": "Suggested action: Continue collecting meeting data.",
-            "basis": "Based on last 7 meetings",
+            "basis": "Based on last 7 truth-counted meetings",
             "strength": "Stable Pattern",
             "anomaly": False,
             "error": str(exc),
         }
-
 
 def _za_elite_member_trend_html(member_id):
     data = _za_elite_member_trend_payload(member_id)
@@ -8647,8 +8710,8 @@ def _za_status_score_for_cohort(status, row_minutes=0):
 
 
 def _za_member_cohort_payload(member_id):
-    """Compare one member against all tracked members.
-    Read-only: no schema changes, no attendance logic changes.
+    """Compare one member against all active members using Attendance Truth Engine.
+    Every member is scored against the same complete meeting universe; missing rows are ABSENT.
     """
     try:
         member_id = int(member_id)
@@ -8660,71 +8723,56 @@ def _za_member_cohort_payload(member_id):
                 if not target_member:
                     return {"ok": False, "error": "Member not found"}
 
-                cur.execute(
-                    """
-                    SELECT
-                        m.id AS member_id,
-                        COALESCE(NULLIF(m.full_name,''), NULLIF(m.name,''), 'Member') AS member_name,
-                        a.final_status,
-                        a.status,
-                        COALESCE(a.total_seconds,0) AS total_seconds,
-                        COALESCE(a.rejoin_count,0) AS rejoin_count,
-                        a.meeting_uuid
-                    FROM attendance a
-                    JOIN members m ON m.id = a.member_id
-                    WHERE a.member_id IS NOT NULL
-                    """
-                )
-                rows = list(cur.fetchall() or [])
+                cur.execute(f"SELECT id, {member_name_expr} AS display_name FROM members WHERE {ACTIVE_MEMBER_SQL} ORDER BY {member_name_expr} ASC NULLS LAST, id ASC")
+                members_list = list(cur.fetchall() or [])
 
-        people = {}
-        for r in rows:
-            mid = r.get("member_id")
-            if mid is None:
-                continue
-            item = people.setdefault(mid, {
-                "member_id": mid,
-                "name": r.get("member_name") or "Member",
-                "meetings": 0,
-                "present": 0,
-                "late": 0,
-                "absent": 0,
-                "minutes": 0.0,
-                "rejoins": 0,
-                "score_points": [],
-            })
-            status = str(r.get("final_status") or r.get("status") or "UNKNOWN").upper()
-            seconds = r.get("total_seconds") or 0
-            minutes = round(seconds / 60.0, 2)
-            item["meetings"] += 1
-            item["minutes"] += minutes
-            item["rejoins"] += (r.get("rejoin_count") or 0)
-            if status == "PRESENT" or status == "HOST":
-                item["present"] += 1
-            elif status == "LATE":
-                item["late"] += 1
-            elif status == "ABSENT":
-                item["absent"] += 1
-            item["score_points"].append(_za_status_score_for_cohort(status, minutes))
+            summaries = []
+            # Average duration reference across truth rows for all members, kept local and safe.
+            all_avg_minutes = []
+            member_truth_cache = {}
+            for m in members_list:
+                mid = int(m.get("id"))
+                truth = get_member_attendance_truth(conn, mid)
+                member_truth_cache[mid] = truth
+                if truth.get("avg_minutes", 0) > 0:
+                    all_avg_minutes.append(float(truth.get("avg_minutes") or 0))
+            avg_ref = (sum(all_avg_minutes) / len(all_avg_minutes)) if all_avg_minutes else 1.0
 
-        summaries = []
-        for item in people.values():
-            meetings = max(item["meetings"], 1)
-            attendance_pct = round(((item["present"] + item["late"]) / meetings) * 100, 2)
-            avg_minutes = round(item["minutes"] / meetings, 2)
-            overall_score = round(sum(item["score_points"]) / max(len(item["score_points"]), 1), 2)
-            engagement_score = round(min(100.0, (avg_minutes * 3.0) + max(0, 20 - min(item["rejoins"], 20))), 2)
-            summaries.append({
-                "member_id": item["member_id"],
-                "name": item["name"],
-                "meetings": item["meetings"],
-                "attendance_pct": attendance_pct,
-                "avg_minutes": avg_minutes,
-                "total_minutes": round(item["minutes"], 2),
-                "rejoins": item["rejoins"],
-                "overall_score": overall_score,
-                "engagement_score": engagement_score,
-            })
+            for m in members_list:
+                mid = int(m.get("id"))
+                truth = member_truth_cache.get(mid) or get_member_attendance_truth(conn, mid)
+                rows = truth.get("rows") or []
+                score_points = build_member_truth_score_points(rows)
+                person = {
+                    "name": m.get("display_name") or "Member",
+                    "meetings": truth.get("meetings", 0),
+                    "present": truth.get("present", 0) + truth.get("host", 0),
+                    "late": truth.get("late", 0),
+                    "absent": truth.get("absent", 0),
+                    "minutes": truth.get("total_minutes", 0),
+                    "rejoins": truth.get("rejoins", 0),
+                    "score_points": score_points,
+                    "last_seen": None,
+                }
+                seen_candidates = [
+                    parse_dt(r.get("last_leave")) or parse_dt(r.get("current_join")) or parse_dt(r.get("first_join"))
+                    for r in rows
+                ]
+                seen_candidates = [x for x in seen_candidates if x]
+                person["last_seen"] = max(seen_candidates) if seen_candidates else None
+                intel = build_member_intelligence(person, avg_ref)
+
+                summaries.append({
+                    "member_id": mid,
+                    "name": m.get("display_name") or "Member",
+                    "meetings": truth.get("meetings", 0),
+                    "attendance_pct": truth.get("attendance_percent", 0),
+                    "avg_minutes": truth.get("avg_minutes", 0),
+                    "total_minutes": truth.get("total_minutes", 0),
+                    "rejoins": truth.get("rejoins", 0),
+                    "overall_score": round(float(intel.get("overall_score") or 0), 2),
+                    "engagement_score": round(float(intel.get("engagement_score") or 0), 2),
+                })
 
         if not summaries:
             return {"ok": True, "empty": True, "member_id": member_id, "message": "No cohort data yet"}
@@ -8767,11 +8815,11 @@ def _za_member_cohort_payload(member_id):
             category_class = "stable"
 
         if score_delta > 0:
-            conclusion = f"{target['name']} is {abs(score_delta):.1f} points above the cohort average."
+            conclusion = f"{target['name']} is {abs(score_delta):.1f} points above the truth-counted cohort average."
         elif score_delta < 0:
-            conclusion = f"{target['name']} is {abs(score_delta):.1f} points below the cohort average."
+            conclusion = f"{target['name']} is {abs(score_delta):.1f} points below the truth-counted cohort average."
         else:
-            conclusion = f"{target['name']} is exactly at cohort average."
+            conclusion = f"{target['name']} is exactly at truth-counted cohort average."
 
         return {
             "ok": True,
@@ -8800,7 +8848,6 @@ def _za_member_cohort_payload(member_id):
         }
     except Exception as exc:
         return {"ok": False, "error": str(exc), "member_id": member_id}
-
 
 def _za_signed(value, suffix=""):
     try:
