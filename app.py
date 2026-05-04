@@ -1339,7 +1339,7 @@ tbody tr:hover{
 .auth-card input[name="password"],
 form input[type="password"],
 form input[name="password"]{
-    margin-bottom: 32px !important;
+    margin-bottom: 40px !important;
     display: block !important;
 }
 .login-card button[type="submit"],
@@ -1347,7 +1347,7 @@ form input[name="password"]{
 form button[type="submit"],
 .login-card input[type="submit"],
 .auth-card input[type="submit"]{
-    margin-top: 18px !important;
+    margin-top: 24px !important;
     display: block !important;
 }
 </style>
@@ -1408,7 +1408,7 @@ TIMEZONE_NAME = os.getenv("TIMEZONE_NAME", "Asia/Kolkata")
 ZOOM_SECRET_TOKEN = os.getenv("ZOOM_SECRET_TOKEN", "")
 HOST_NAME_HINT = os.getenv("HOST_NAME_HINT", "host").strip().lower()
 WEB_PUSH_ENABLED = os.getenv("WEB_PUSH_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
-SOCKET_REALTIME_ENABLED = os.getenv("SOCKET_REALTIME_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+SOCKET_REALTIME_ENABLED = False
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:test@example.com").strip()
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
@@ -1450,6 +1450,12 @@ ALERT_AUTOMATION_RUN_EVERY_SECONDS = globals().get("ALERT_AUTOMATION_RUN_EVERY_S
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
 
+
+
+def safe_get(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return default
 
 def now_local() -> datetime:
     return datetime.now(ZoneInfo(TIMEZONE_NAME))
@@ -12075,7 +12081,7 @@ def push_setup():
             .push-wrap {{ max-width: 760px; margin: 40px auto; padding: 24px; }}
             .push-card {{ background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 24px; box-shadow: 0 8px 30px rgba(0,0,0,0.35); }}
             .push-muted {{ color: #9ca3af; }}
-            .push-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }}
+            .push-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }}
             .push-btn {{ cursor: pointer; }}
             .push-status {{ margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.04); white-space: pre-wrap; }}
             a.push-link {{ color: #c4b5fd; text-decoration: none; }}
