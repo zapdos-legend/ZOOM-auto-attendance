@@ -1,6 +1,6 @@
 import time as _t
 LAZY_ANALYTICS = True
-    # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
+# UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
 # UI_UPDATE_V3_ANALYTICS_TABS_DARK_REGISTER_APPLIED = True
@@ -310,6 +310,34 @@ button:active,.btn:active,a.btn:active{
   50%{box-shadow:0 0 24px rgba(239,68,68,.28);}
 }
 
+
+<script>
+/* ZA_FINAL_PERFORMANCE_GUARD_V2 */
+(function(){
+  if(window.__zaFinalPerformanceGuardV2) return;
+  window.__zaFinalPerformanceGuardV2 = true;
+  var isLivePage = location.pathname === "/live";
+  var oldFetch = window.fetch;
+  window.fetch = function(input, init){
+    try{
+      var url = (typeof input === "string") ? input : (input && input.url ? input.url : "");
+      if(url.indexOf("/api/live-summary") !== -1 && !isLivePage){
+        return Promise.resolve(new Response(JSON.stringify({ok:true,blocked:true,summary:{}}), {
+          status:200,
+          headers:{"Content-Type":"application/json"}
+        }));
+      }
+    }catch(e){}
+    return oldFetch.apply(this, arguments);
+  };
+  if(!isLivePage){
+    window.io = function(){
+      return {on:function(){return this;},emit:function(){return this;},connected:false,disconnect:function(){}};
+    };
+  }
+})();
+</script>
+
 <script>
 /* ZA_BLOCK_LIVE_SUMMARY_NON_LIVE_PAGES */
 (function(){
@@ -611,7 +639,7 @@ button:active,.btn:active,a.btn:active{
           if(first) first.appendChild(badge);
         });
       }
-      if(!location.pathname.includes("members") && !location.pathname.includes("analytics") && !location.pathname.includes("home")) return;
+      if(!location.pathname.includes("members") && !location.pathname.includes("analytics")) return;
       fetch("/api/member-risk-summary?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(data){
@@ -653,7 +681,7 @@ button:active,.btn:active,a.btn:active{
       this.initFlashToasts();
       this.initTrends();
       this.initFocus();
-      this.initRealtimeSocket();
+      if(location.pathname === '/live'){ this.initRealtimeSocket(); }
       this.initRiskBadges();
       this.initCharts();
       this.initLivePollingPolish();
@@ -806,7 +834,7 @@ body.za-socket-live-mode .za-realtime-pill::before{
 }
 <script>
 (function(){
-  if(!(/(live|home|analytics)/.test(location.pathname))){ return; }
+  if(location.pathname !== '/live'){ return; }
   if(window.ZoomAttendanceAdvancedRealtimeUI){ return; }
   window.ZoomAttendanceAdvancedRealtimeUI = {
     maxFeed:8,
@@ -1158,7 +1186,7 @@ tbody tr:hover{
 }
 <script>
 (function(){
-  if(!(/live/.test(location.pathname))){ return; }
+  if(location.pathname !== '/live'){ return; }
   if(window.ZoomAttendancePhase22){ return; }
   window.ZoomAttendancePhase22 = {
     points:[],
@@ -1303,6 +1331,25 @@ tbody tr:hover{
 /* LOGIN_PASSWORD_BUTTON_GAP_FIX */
 .login-card input[type='password'], .login-card input[name='password']{margin-bottom:28px!important;}
 .login-card button[type='submit'], .login-card input[type='submit']{margin-top:14px!important;}
+
+/* ZA_FINAL_LOGIN_GAP_FIX_V2 */
+.login-card input[type="password"],
+.login-card input[name="password"],
+.auth-card input[type="password"],
+.auth-card input[name="password"],
+form input[type="password"],
+form input[name="password"]{
+    margin-bottom: 32px !important;
+    display: block !important;
+}
+.login-card button[type="submit"],
+.auth-card button[type="submit"],
+form button[type="submit"],
+.login-card input[type="submit"],
+.auth-card input[type="submit"]{
+    margin-top: 18px !important;
+    display: block !important;
+}
 </style>
 '''
 # ===== END THEME =====
@@ -1361,6 +1408,7 @@ TIMEZONE_NAME = os.getenv("TIMEZONE_NAME", "Asia/Kolkata")
 ZOOM_SECRET_TOKEN = os.getenv("ZOOM_SECRET_TOKEN", "")
 HOST_NAME_HINT = os.getenv("HOST_NAME_HINT", "host").strip().lower()
 WEB_PUSH_ENABLED = os.getenv("WEB_PUSH_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+SOCKET_REALTIME_ENABLED = os.getenv("SOCKET_REALTIME_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:test@example.com").strip()
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
@@ -7065,6 +7113,24 @@ def handle_any_error(e):
     return render_template_string(BASE_HTML, title="Error", body=body, nav=[], active=""), 500
 
 
+
+# ===== ZA_FINAL_PERF_HEADERS_V2 =====
+@app.after_request
+def za_final_perf_headers(response):
+    try:
+        if request.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        elif request.path == "/login":
+            response.headers["Cache-Control"] = "private, max-age=60"
+        else:
+            response.headers.setdefault("Cache-Control", "private, max-age=20")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    except Exception:
+        pass
+    return response
+# ===== END ZA_FINAL_PERF_HEADERS_V2 =====
+
+
 @app.route("/toggle-theme")
 @login_required
 def toggle_theme():
@@ -7231,11 +7297,11 @@ def profile():
                 <div class="section-title"><div><h3 style="margin:0">Change Password</h3><p>Apply a new password without affecting current project data.</p></div></div>
                 <form method="post">
                     <label>Current Password</label>
-                    <input type="password" style="margin-bottom:16px;" name="current_password" required>
+                    <input type="password" name="current_password" required>
                     <label>New Password</label>
-                    <input type="password" style="margin-bottom:16px;" name="new_password" required>
+                    <input type="password" name="new_password" required>
                     <label>Confirm New Password</label>
-                    <input type="password" style="margin-bottom:16px;" name="confirm_password" required>
+                    <input type="password" name="confirm_password" required>
                     <div class="app-note" style="margin:10px 0 14px 0">Use at least 4 characters. Longer passwords are safer for admin roles.</div>
                     <button type="submit">Update Password</button>
                 </form>
@@ -8877,6 +8943,12 @@ def _za_member_cohort_payload(member_id):
                     "total": total_members,
                     "member": member_row,
                     "averages": averages,
+                    "delta": {
+                        "score": round(float(member_row.get("overall_score", 0) or 0) - float(averages.get("overall_score", 0) or 0), 2),
+                        "attendance": round(float(member_row.get("attendance_pct", 0) or 0) - float(averages.get("attendance_pct", 0) or 0), 2),
+                        "duration": round(float(member_row.get("avg_duration_min", 0) or 0) - float(averages.get("avg_duration_min", 0) or 0), 2),
+                        "engagement": round(float(member_row.get("engagement_score", 0) or 0) - float(averages.get("engagement_score", 0) or 0), 2),
+                    },
                     "top": scored[:5],
                     "basis": f"Compared with {total_members} active members across {total_meetings} meetings",
                 }
@@ -8922,7 +8994,7 @@ def _za_member_cohort_html(member_id):
 
     member = data["member"]
     cohort = data.get('cohort','default')
-    delta = data["delta"]
+    delta = data.get("delta", {})
     cls = data.get("category_class") or "stable"
     rank = data.get("rank")
     total = data.get("total")
