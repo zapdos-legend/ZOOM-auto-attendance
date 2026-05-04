@@ -1,3 +1,4 @@
+LAZY_ANALYTICS = True
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
@@ -1329,7 +1330,7 @@ from xml.sax.saxutils import escape as xml_escape
 html_escape = xml_escape
 
 from dotenv import load_dotenv
-from flask import (
+from flask import (, request
     Flask,
     Response,
     flash,
@@ -7079,7 +7080,8 @@ def index():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    login_error = None
+    
+    _tstart = _t.time()login_error = None
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -7227,11 +7229,11 @@ def profile():
                 <div class="section-title"><div><h3 style="margin:0">Change Password</h3><p>Apply a new password without affecting current project data.</p></div></div>
                 <form method="post">
                     <label>Current Password</label>
-                    <input type="password" name="current_password" required>
+                    <input type="password" style="margin-bottom:16px;" name="current_password" required>
                     <label>New Password</label>
-                    <input type="password" name="new_password" required>
+                    <input type="password" style="margin-bottom:16px;" name="new_password" required>
                     <label>Confirm New Password</label>
-                    <input type="password" name="confirm_password" required>
+                    <input type="password" style="margin-bottom:16px;" name="confirm_password" required>
                     <div class="app-note" style="margin:10px 0 14px 0">Use at least 4 characters. Longer passwords are safer for admin roles.</div>
                     <button type="submit">Update Password</button>
                 </form>
@@ -7980,7 +7982,8 @@ def delete_meeting(meeting_uuid):
 @app.route("/members", methods=["GET", "POST"])
 @login_required
 def members():
-    if request.method == "POST":
+    
+    _tstart = _t.time()if request.method == "POST":
         action = request.form.get("action")
 
         if action == "add" and can_edit_users():
@@ -8915,7 +8918,7 @@ def _za_member_cohort_html(member_id):
         """
 
     member = data["member"]
-    cohort = data["cohort"]
+    cohort = data.get('cohort','default')
     delta = data["delta"]
     cls = data.get("category_class") or "stable"
     rank = data.get("rank")
@@ -9024,14 +9027,15 @@ def build_member_profile_insights_legacy_safe(member_id):
 @app.route("/members/<int:member_id>/profile")
 @login_required
 def member_profile(member_id):
-    try:
+    
+    _tstart = _t.time()try:
         profile_data = build_member_profile_insights(member_id)
     except Exception as profile_exc:
         print('PROFILE_INSIGHTS_ERROR', profile_exc)
         profile_data = build_member_profile_insights_legacy_safe(member_id)
     if not profile_data:
         flash("Member not found.", "error")
-        return redirect(url_for("members"))
+        print(f\"[PERF] route took {_t.time()-_tstart:.3f}s\"); return redirect(url_for("members"))
 
     body = render_template_string(
         """
@@ -9674,7 +9678,11 @@ def users():
 @login_required
 
 def analytics():
-    maybe_finalize_stale_live_meetings()
+    
+    
+    if LAZY_ANALYTICS and not (request.args.get('full') == '1'):
+        # light mode: avoid heavy recompute
+        pass_tstart = _t.time()maybe_finalize_stale_live_meetings()
 
     filters = {
         "period_mode": request.args.get("period_mode", "custom"),
@@ -10859,7 +10867,8 @@ def attendance_register_payload(year=None, month=None, search="", page=1, per_pa
 @app.route("/attendance-register")
 @login_required
 def attendance_register():
-    today = today_local()
+    
+    _tstart = _t.time()today = today_local()
     data = attendance_register_payload(
         request.args.get("year", today.year),
         request.args.get("month", today.month),
