@@ -1,3 +1,4 @@
+import time as _t
 LAZY_ANALYTICS = True
     # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
@@ -805,7 +806,7 @@ body.za-socket-live-mode .za-realtime-pill::before{
 }
 <script>
 (function(){
-  if(!(/\/live|\/home|\/analytics/.test(location.pathname))){ return; }
+  if(!(/(live|home|analytics)/.test(location.pathname))){ return; }
   if(window.ZoomAttendanceAdvancedRealtimeUI){ return; }
   window.ZoomAttendanceAdvancedRealtimeUI = {
     maxFeed:8,
@@ -1157,7 +1158,7 @@ tbody tr:hover{
 }
 <script>
 (function(){
-  if(!(/\/live/.test(location.pathname))){ return; }
+  if(!(/live/.test(location.pathname))){ return; }
   if(window.ZoomAttendancePhase22){ return; }
   window.ZoomAttendancePhase22 = {
     points:[],
@@ -1300,8 +1301,8 @@ tbody tr:hover{
 
 
 /* LOGIN_PASSWORD_BUTTON_GAP_FIX */
-.login-card input[type='password'], .login-card input[name='password']{margin-bottom:18px!important;}
-.login-card button[type='submit'], .login-card input[type='submit']{margin-top:8px!important;}
+.login-card input[type='password'], .login-card input[name='password']{margin-bottom:28px!important;}
+.login-card button[type='submit'], .login-card input[type='submit']{margin-top:14px!important;}
 </style>
 '''
 # ===== END THEME =====
@@ -1330,7 +1331,7 @@ from xml.sax.saxutils import escape as xml_escape
 html_escape = xml_escape
 
 from dotenv import load_dotenv
-from flask import (, request
+from flask import (
     Flask,
     Response,
     flash,
@@ -1750,8 +1751,8 @@ def send_push_notification(title, body, target_username=None, click_url=None):
 # ===== PERFORMANCE FIX V1 LIGHTWEIGHT PAGE HELPERS =====
 LIGHT_LOGIN_CSS = """
 <style>
-.login-card input[type='password'], .login-card input[name='password']{margin-bottom:18px!important;}
-.login-card button[type='submit'], .login-card input[type='submit']{margin-top:8px!important;}
+.login-card input[type='password'], .login-card input[name='password']{margin-bottom:28px!important;}
+.login-card button[type='submit'], .login-card input[type='submit']{margin-top:14px!important;}
 </style>
 """
 def page_theme_css():
@@ -7081,7 +7082,8 @@ def index():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     
-    _tstart = _t.time()login_error = None
+    _tstart = _t.time()
+    login_error = None
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -7983,7 +7985,8 @@ def delete_meeting(meeting_uuid):
 @login_required
 def members():
     
-    _tstart = _t.time()if request.method == "POST":
+    _tstart = _t.time()
+    if request.method == "POST":
         action = request.form.get("action")
 
         if action == "add" and can_edit_users():
@@ -9028,14 +9031,15 @@ def build_member_profile_insights_legacy_safe(member_id):
 @login_required
 def member_profile(member_id):
     
-    _tstart = _t.time()try:
+    _tstart = _t.time()
+    try:
         profile_data = build_member_profile_insights(member_id)
     except Exception as profile_exc:
         print('PROFILE_INSIGHTS_ERROR', profile_exc)
         profile_data = build_member_profile_insights_legacy_safe(member_id)
     if not profile_data:
         flash("Member not found.", "error")
-        print(f\"[PERF] route took {_t.time()-_tstart:.3f}s\"); return redirect(url_for("members"))
+        return redirect(url_for("members"))
 
     body = render_template_string(
         """
@@ -9682,7 +9686,8 @@ def analytics():
     
     if LAZY_ANALYTICS and not (request.args.get('full') == '1'):
         # light mode: avoid heavy recompute
-        pass_tstart = _t.time()maybe_finalize_stale_live_meetings()
+        pass_tstart = _t.time()
+    maybe_finalize_stale_live_meetings()
 
     filters = {
         "period_mode": request.args.get("period_mode", "custom"),
@@ -10868,7 +10873,8 @@ def attendance_register_payload(year=None, month=None, search="", page=1, per_pa
 @login_required
 def attendance_register():
     
-    _tstart = _t.time()today = today_local()
+    _tstart = _t.time()
+    today = today_local()
     data = attendance_register_payload(
         request.args.get("year", today.year),
         request.args.get("month", today.month),
