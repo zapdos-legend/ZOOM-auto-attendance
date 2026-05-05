@@ -845,8 +845,8 @@ body.za-socket-live-mode .za-realtime-pill::before{
       dock.className = "za-realtime-dock";
       dock.innerHTML =
         '<div class="za-realtime-status">' +
-          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Connecting socket...</span></div>' +
-          '<div class="za-realtime-pill" id="zaRealtimePill">Socket</div>' +
+          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Safe live polling active</span></div>' +
+          '<div class="za-realtime-pill" id="zaRealtimePill">Live</div>' +
         '</div>' +
         '<div class="za-realtime-feed" id="zaRealtimeFeed"></div>';
       document.body.appendChild(dock);
@@ -1366,6 +1366,58 @@ td form{ display:inline-block !important; vertical-align:middle !important; }
 <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
+
+/* ===== FULL LIVE ACCURACY ENGINE - FINAL UI PATCH ===== */
+.live-fix-conn,.za-realtime-status,.za-realtime-pill,[class*="socket"],[class*="Socket"]{
+    background:rgba(2,6,23,.94)!important;color:#e0f2fe!important;
+    border-color:rgba(56,189,248,.35)!important;box-shadow:0 18px 48px rgba(0,0,0,.45)!important;
+}
+.live-fix-conn *,.za-realtime-status *,.za-realtime-pill *{color:#e0f2fe!important;}
+.badge.ok.live-fix-conn,.live-fix-conn.ok{
+    background:rgba(2,6,23,.94)!important;color:#86efac!important;border:1px solid rgba(34,197,94,.42)!important;
+}
+.za-premium-trend-card,.za-trend-wow-card,.za-trend-card,.za-member-trend-card,[class*="trend"],
+.za-trend-chart-wrap,.za-recent-performance,.za-normalized-performance,[class*="performance"]{overflow:visible!important;}
+.za-bar-tooltip,.za-trend-tooltip,.chartjs-tooltip{
+    z-index:999999!important;background:rgba(2,6,23,.96)!important;color:#f8fafc!important;
+    border:1px solid rgba(56,189,248,.35)!important;box-shadow:0 18px 52px rgba(0,0,0,.55)!important;
+}
+[data-za-duration-seconds],.za-live-accurate-duration{
+    font-variant-numeric:tabular-nums!important;min-width:52px;display:inline-flex;justify-content:center;align-items:center;
+}
+/* ===== END FULL LIVE ACCURACY ENGINE - FINAL UI PATCH ===== */
+
+
+<script>
+/* FULL LIVE ACCURACY ENGINE V1 */
+(function(){
+  if(window.__zaFullLiveAccuracyEngineV1) return;
+  window.__zaFullLiveAccuracyEngineV1 = true;
+  function live(){return location.pathname==="/live";}
+  var oldFetch=window.fetch;
+  window.fetch=function(input,init){
+    try{
+      var url=(typeof input==="string")?input:(input&&input.url?input.url:"");
+      if(url.indexOf("/api/live-summary")!==-1 && !live()){
+        return Promise.resolve(new Response(JSON.stringify({ok:true,blocked:true,summary:{}}),{status:200,headers:{"Content-Type":"application/json"}}));
+      }
+    }catch(e){}
+    return oldFetch.apply(this,arguments);
+  };
+  function p(t){t=String(t||"").trim();var a=t.split(":").map(function(x){return parseInt(x,10)});if(a.length===2&&!isNaN(a[0])&&!isNaN(a[1]))return a[0]*60+a[1];if(a.length===3&&!isNaN(a[0])&&!isNaN(a[1])&&!isNaN(a[2]))return a[0]*3600+a[1]*60+a[2];return null;}
+  function f(sec){sec=Math.max(0,Math.floor(Number(sec)||0));var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h>0?h+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"):m+":"+String(s).padStart(2,"0");}
+  function liveRow(row){var cell=row.querySelector("[data-label='Status'],.status,.badge,td:last-child");var txt=String((cell?cell.innerText:row.innerText)||"").toLowerCase();if(txt.indexOf("left")!==-1||txt.indexOf("ended")!==-1||row.classList.contains("za-row-left-persistent"))return false;return txt.indexOf("live")!==-1||txt.indexOf("host")!==-1||txt.indexOf("present")!==-1;}
+  function durCell(row){var ex=row.querySelector("[data-za-duration-seconds]");if(ex)return ex;var cells=Array.from(row.querySelectorAll("td,span,div"));for(var i=0;i<cells.length;i++){var el=cells[i],lab=String(el.getAttribute("data-label")||el.className||"").toLowerCase(),tx=String(el.innerText||el.textContent||"").trim();if(lab.indexOf("duration")!==-1&&p(tx)!==null)return el;}for(var j=0;j<cells.length;j++){var tx2=String(cells[j].innerText||cells[j].textContent||"").trim();if(/^\d{1,3}:\d{2}(:\d{2})?$/.test(tx2))return cells[j];}return null;}
+  function elapsed(row){var m=String(row.innerText||"").match(/(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)/i);if(!m)return null;var h=parseInt(m[1],10),mi=parseInt(m[2],10),s=parseInt(m[3],10),ap=m[4].toUpperCase();if(ap==="PM"&&h!==12)h+=12;if(ap==="AM"&&h===12)h=0;var n=new Date(),j=new Date(n.getFullYear(),n.getMonth(),n.getDate(),h,mi,s);var d=Math.floor((Date.now()-j.getTime())/1000);return d>0&&d<86400?d:null;}
+  function init(){if(!live())return;document.querySelectorAll("tbody tr").forEach(function(row){var c=durCell(row);if(!c)return;c.classList.add("za-live-accurate-duration");var best=Math.max(p(c.innerText||c.textContent)||0,elapsed(row)||0);if(!c.dataset.zaDurationSeconds||best>parseInt(c.dataset.zaDurationSeconds||"0",10)){c.dataset.zaDurationSeconds=String(best);c.textContent=f(best);}});}
+  function tick(){if(!live())return;document.querySelectorAll("tbody tr").forEach(function(row){var c=durCell(row);if(!c||!liveRow(row))return;var sec=parseInt(c.dataset.zaDurationSeconds||"0",10);if(!sec||isNaN(sec))sec=Math.max(p(c.innerText||c.textContent)||0,elapsed(row)||0);sec+=1;c.dataset.zaDurationSeconds=String(sec);c.textContent=f(sec);});}
+  function dark(){document.querySelectorAll(".live-fix-conn,.za-realtime-status,.za-realtime-pill,[class*='socket'],[class*='Socket']").forEach(function(el){el.style.background="rgba(2,6,23,.94)";el.style.color="#e0f2fe";el.style.borderColor="rgba(56,189,248,.35)";});}
+  function start(){dark();if(live()){init();if(window.__zaFullAccuracyTimer)clearInterval(window.__zaFullAccuracyTimer);window.__zaFullAccuracyTimer=setInterval(function(){init();tick();dark();},1000);}}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start);else start();
+})();
+</script>
+<!-- END FULL LIVE ACCURACY ENGINE V1 -->
+
 </style>
 
 </style>
@@ -7885,6 +7937,13 @@ _ZA_LIVE_SUMMARY_CACHE = {'ts': 0, 'payload': None}
 @app.route("/api/live-summary")
 @login_required
 def api_live_summary():
+    # FULL_LIVE_ACCURACY_BACKEND_REFERER_GUARD
+    try:
+        _ref = (request.headers.get('Referer') or '')
+        if '/live' not in _ref and request.args.get('force') != '1':
+            return jsonify({'ok': True, 'blocked': True, 'summary': {}})
+    except Exception:
+        pass
     try:
         _now_cache = time.time()
         if _ZA_LIVE_SUMMARY_CACHE.get('payload') is not None and (_now_cache - _ZA_LIVE_SUMMARY_CACHE.get('ts', 0)) < 2.5:
@@ -8058,7 +8117,7 @@ button[type="submit"]{margin-top:20px!important;}
                 try{
                     if(!data) return;
                     document.getElementById('lfConn').className='live-fix-conn ok';
-                    document.getElementById('lfConn').textContent='● Socket updated '+new Date().toLocaleTimeString();
+                    document.getElementById('lfConn').textContent='● Live updated '+new Date().toLocaleTimeString();
                     render(data);
                 }catch(e){
                     document.getElementById('lfConn').className='live-fix-conn bad';
