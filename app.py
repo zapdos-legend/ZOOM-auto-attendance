@@ -611,11 +611,11 @@ button:active,.btn:active,a.btn:active{
           });
         }catch(e){}
       }
-      if(window.io){ bind(); return; }
+      return; // Safe Polling Mode: do not bind Socket.IO on Render
       if(!document.getElementById("za-socketio-client")){
         var s=document.createElement("script");
         s.id="za-socketio-client";
-        s.src="https://cdn.socket.io/4.7.5/socket.io.min.js";
+        return; // Safe Polling Mode: Socket.IO client disabled on Render
         s.onload=bind;
         s.onerror=function(){ window.__zaSocketBound=false; };
         document.head.appendChild(s);
@@ -1350,6 +1350,18 @@ form button[type="submit"],
     margin-top: 24px !important;
     display: block !important;
 }
+
+/* FINAL LOGIN FORM SPACING PATCH */
+form input[name="password"]{display:block !important;margin-bottom:34px !important;}
+form input[name="password"] + button, form input[name="password"] + input[type="submit"]{display:block !important;margin-top:18px !important;}
+.login-card form, .auth-card form{display:block !important;}
+.login-card .form-actions, .auth-card .form-actions{margin-top:18px !important;}
+
+/* FINAL MEMBER ACTION BUTTON GAP PATCH */
+td .btn, td button, td form{ margin-right: 12px !important; }
+td .btn:last-child, td button:last-child, td form:last-child{ margin-right: 0 !important; }
+td form{ display:inline-block !important; vertical-align:middle !important; }
+.status-toggle-btn{ margin-left: 8px !important; margin-right: 8px !important; }
 </style>
 '''
 # ===== END THEME =====
@@ -1803,12 +1815,30 @@ def send_push_notification(title, body, target_username=None, click_url=None):
 
 
 # ===== PERFORMANCE FIX V1 LIGHTWEIGHT PAGE HELPERS =====
+
 LIGHT_LOGIN_CSS = """
 <style>
-.login-card input[type='password'], .login-card input[name='password']{margin-bottom:28px!important;}
-.login-card button[type='submit'], .login-card input[type='submit']{margin-top:14px!important;}
+body{background:linear-gradient(135deg,#111,#3b0508)!important;color:#f8fafc;font-family:Inter,system-ui,sans-serif;}
+.card,.login-card,.auth-card{background:rgba(24,24,27,.88)!important;border:1px solid rgba(255,255,255,.12)!important;border-radius:26px!important;box-shadow:0 24px 70px rgba(0,0,0,.38)!important;}
+input{border-radius:14px!important;padding:13px 14px!important;background:#374151!important;color:#fff!important;border:1px solid rgba(239,68,68,.35)!important;}
+form input[name="password"]{display:block!important;margin-bottom:34px!important;}
+form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
+button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
 </style>
 """
+
+
+LIGHT_LOGIN_CSS = """
+<style>
+body{background:linear-gradient(135deg,#111,#3b0508)!important;color:#f8fafc;font-family:Inter,system-ui,sans-serif;}
+.card,.login-card,.auth-card{background:rgba(24,24,27,.88)!important;border:1px solid rgba(255,255,255,.12)!important;border-radius:26px!important;box-shadow:0 24px 70px rgba(0,0,0,.38)!important;}
+input{border-radius:14px!important;padding:13px 14px!important;background:#374151!important;color:#fff!important;border:1px solid rgba(239,68,68,.35)!important;}
+form input[name="password"]{display:block!important;margin-bottom:34px!important;}
+form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
+button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
+</style>
+"""
+
 def page_theme_css():
     try:
         if request.path == "/login":
@@ -2121,8 +2151,11 @@ def cast_setting_value(value, cast=str):
 
 
 def get_setting(name, cast=str):
-    cached_value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
-    value = cached_value
+    # Fast safe settings: avoid opening a new DB connection inside hot paths/webhooks.
+    # Settings still honor cached DB values if previously loaded; otherwise defaults/env are used.
+    value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
+    if value is not None:
+        return cast_setting_value(value, cast)
     try:
         with db() as conn:
             with conn.cursor() as cur:
@@ -2131,11 +2164,9 @@ def get_setting(name, cast=str):
                 if row and row.get("value") not in (None, ""):
                     value = row["value"]
                     SETTINGS_CACHE[name] = value
-                elif name not in SETTINGS_CACHE and value is not None:
-                    SETTINGS_CACHE[name] = value
     except Exception as e:
         print(f"⚠️ get_setting fallback for {name}: {e}")
-        value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
+        value = DEFAULT_SETTINGS.get(name)
     return cast_setting_value(value, cast)
 
 
@@ -6901,14 +6932,14 @@ button:active {
   }
 
   function ensureSocketClient(){
-    if(window.io){ bindSocket(); return; }
+    return; // Safe Polling Mode: do not bind Socket.IO on Render
     if(document.getElementById("za-socketio-client-global")){
       setTimeout(bindSocket, 300);
       return;
     }
     var s = document.createElement("script");
     s.id = "za-socketio-client-global";
-    s.src = "https://cdn.socket.io/4.7.5/socket.io.min.js";
+    return; // Safe Polling Mode: Socket.IO client disabled on Render
     s.onload = bindSocket;
     s.onerror = function(){ socketStarted = false; };
     document.head.appendChild(s);
@@ -7210,8 +7241,8 @@ def login():
                     <label>Username</label>
                     <input name='username' required value='{{ request.form.get("username", "") if request.method == "POST" else "" }}'>
                     <label>Password</label>
-                    <input type='password' name='password' required>
-                    <button type='submit' style="width:100%">Login</button>
+                    <input type='password' name='password' required style='display:block;margin-bottom:34px !important;'>
+                    <button type='submit' style="width:100%;display:block;margin-top:18px !important;">Login</button>
                 </form>
             </div>
         </div>
@@ -8987,6 +9018,8 @@ def _za_member_cohort_html(member_id):
     except Exception as cohort_exc:
         print('COHORT_HTML_ERROR', cohort_exc)
         data = {'ok': False, 'rank': 0, 'total': 0, 'member': {}, 'averages': {}, 'top': [], 'basis': 'Cohort temporarily unavailable'}
+    if not isinstance(data, dict):
+        data = {"ok": False, "error": "Invalid cohort payload"}
     if not data.get("ok") or data.get("empty"):
         msg = html_escape(str(data.get("message") or data.get("error") or "Cohort comparison will appear after enough data is collected."))
         return f"""
@@ -8998,9 +9031,17 @@ def _za_member_cohort_html(member_id):
         </section>
         """
 
-    member = data["member"]
-    cohort = data.get('cohort','default')
+    if not isinstance(data, dict):
+        data = {}
+    member = data.get("member", {})
+    if not isinstance(member, dict):
+        member = {}
+    cohort = data.get("cohort") or data.get("averages") or {}
+    if not isinstance(cohort, dict):
+        cohort = {}
     delta = data.get("delta", {})
+    if not isinstance(delta, dict):
+        delta = {}
     cls = data.get("category_class") or "stable"
     rank = data.get("rank")
     total = data.get("total")
@@ -9020,8 +9061,8 @@ def _za_member_cohort_html(member_id):
         """
 
     top_rows = []
-    for item in data.get("top_members", []):
-        badge = "👑" if int(item.get("member_id") or 0) == int(member_id) else "•"
+    for item in (data.get("top_members") or data.get("top") or []):
+        badge = "👑" if int(item.get("member_id") or item.get("id") or 0) == int(member_id) else "•"
         top_rows.append(
             f"<li><span>{badge} {html_escape(item.get('name') or 'Member')}</span><b>{item.get('overall_score', 0)}</b></li>"
         )
@@ -9041,10 +9082,10 @@ def _za_member_cohort_html(member_id):
         </div>
       </div>
       <div class="za-cohort-grid">
-        {metric("Overall Score", member.get("overall_score", 0), cohort.get("avg_score", 0), delta.get("score", 0))}
-        {metric("Attendance", member.get("attendance_pct", 0), cohort.get("avg_attendance", 0), delta.get("attendance", 0), "%")}
-        {metric("Avg Duration", member.get("avg_minutes", 0), cohort.get("avg_duration", 0), delta.get("duration", 0), "m")}
-        {metric("Engagement", member.get("engagement_score", 0), cohort.get("avg_engagement", 0), delta.get("engagement", 0))}
+        {metric("Overall Score", member.get("overall_score", 0), cohort.get("avg_score", cohort.get("overall_score", 0)), delta.get("score", 0))}
+        {metric("Attendance", member.get("attendance_pct", 0), cohort.get("avg_attendance", cohort.get("attendance_pct", 0)), delta.get("attendance", 0), "%")}
+        {metric("Avg Duration", member.get("avg_minutes", 0), cohort.get("avg_duration", cohort.get("avg_duration_min", 0)), delta.get("duration", 0), "m")}
+        {metric("Engagement", member.get("engagement_score", 0), cohort.get("avg_engagement", cohort.get("engagement_score", 0)), delta.get("engagement", 0))}
       </div>
       <div class="za-cohort-bottom">
         <div>
@@ -13205,20 +13246,24 @@ def api_alerts_run_now():
 
 
 # ================== PHASE 2 SAFE REALTIME + INTELLIGENCE ==================
-try:
-    from flask_socketio import SocketIO
-    socketio = SocketIO(
-        app,
-        cors_allowed_origins="*",
-        async_mode="threading",
-        logger=False,
-        engineio_logger=False,
-        ping_timeout=25,
-        ping_interval=10,
-    )
-except Exception as _socketio_error:
-    socketio = None
-    print(f"⚠️ SocketIO disabled: {_socketio_error}")
+# Socket.IO is disabled by default on Render sync Gunicorn because websocket requests block the only worker.
+# Live dashboard uses safe polling mode. Enable only after deploying with a proper async worker.
+socketio = None
+if SOCKET_REALTIME_ENABLED:
+    try:
+        from flask_socketio import SocketIO
+        socketio = SocketIO(
+            app,
+            cors_allowed_origins="*",
+            async_mode="threading",
+            logger=False,
+            engineio_logger=False,
+            ping_timeout=25,
+            ping_interval=10,
+        )
+    except Exception as _socketio_error:
+        socketio = None
+        print(f"⚠️ SocketIO disabled: {_socketio_error}")
 
 def emit_realtime(event, data=None):
     """Best-effort realtime push. Never breaks core attendance/webhook flow."""
