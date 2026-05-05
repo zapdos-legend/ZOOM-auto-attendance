@@ -1362,6 +1362,12 @@ td .btn, td button, td form{ margin-right: 12px !important; }
 td .btn:last-child, td button:last-child, td form:last-child{ margin-right: 0 !important; }
 td form{ display:inline-block !important; vertical-align:middle !important; }
 .status-toggle-btn{ margin-left: 8px !important; margin-right: 8px !important; }
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 '''
 # ===== END THEME =====
@@ -1824,6 +1830,12 @@ input{border-radius:14px!important;padding:13px 14px!important;background:#37415
 form input[name="password"]{display:block!important;margin-bottom:34px!important;}
 form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
 button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 """
 
@@ -1836,6 +1848,12 @@ input{border-radius:14px!important;padding:13px 14px!important;background:#37415
 form input[name="password"]{display:block!important;margin-bottom:34px!important;}
 form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
 button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 """
 
@@ -6276,6 +6294,12 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 
 /* ===== END V9 PATCH ===== */
 
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 <style>
@@ -6298,6 +6322,12 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
     background: white;
     color: #111;
 }
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 
@@ -6306,6 +6336,12 @@ button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 </head>
@@ -7030,6 +7066,12 @@ button:active {
     font-weight: bold;
     color: white;
 }
+
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
 
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
@@ -7915,6 +7957,12 @@ def live():
     font-weight: bold;
     color: white;
 }
+
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
 
 </style>
 
@@ -9502,6 +9550,12 @@ def member_profile(member_id):
 @media(max-width:900px){.za-cohort-head,.za-cohort-bottom{grid-template-columns:1fr!important;display:grid!important}.za-cohort-rank-pill{text-align:left!important}}
 /* ===== END COHORT COMPARISON UI V1 ===== */
 
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
         <div class="member-profile-layout-fix"><div class="member-profile-hero">
             <div class="hero">
@@ -9982,6 +10036,12 @@ def analytics():
     color: white;
 }
 
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 
@@ -10034,6 +10094,12 @@ def analytics():
     font-weight: bold;
     color: white;
 }
+
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
 
 </style>
         <div class="analytics-tab-shell" id="analyticsTabsV3">
@@ -11046,6 +11112,12 @@ def attendance_register():
     color: white;
 }
 
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 
@@ -11128,6 +11200,12 @@ def attendance_register():
     font-weight: bold;
     color: white;
 }
+
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
 
 </style>
         <div class="reg-dashboard-shell">
@@ -11308,6 +11386,12 @@ def attendance_register_export_excel():
     background: white;
     color: #111;
 }
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 
@@ -11316,6 +11400,12 @@ button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 </head><body><table border='1'>""")
@@ -12158,6 +12248,12 @@ def push_setup():
     color: white;
 }
 
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
     
 <style>
@@ -12180,6 +12276,12 @@ def push_setup():
     background: white;
     color: #111;
 }
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 
@@ -12188,6 +12290,12 @@ button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 
 </head>
@@ -12382,6 +12490,12 @@ def notification_control():
     font-weight: bold;
     color: white;
 }
+
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
 
 </style>
         <div class="hero"><div class="hero-grid"><div><div class="badge">Notification Control Center</div><h1 class="hero-title">Smart alert delivery controls</h1><div class="hero-copy">Enable or disable Email/Push, select alert types, customize messages, test delivery, and review alert logs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Email</div><div class="big">{{ 'ON' if settings.email_enabled else 'OFF' }}</div></div><div class="hero-chip"><div class="small">Push</div><div class="big">{{ 'ON' if settings.push_enabled else 'OFF' }}</div></div></div></div></div>
@@ -12711,6 +12825,12 @@ def ai_intelligence():
     font-weight: bold;
     color: white;
 }
+
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
 
 </style>
     <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Intelligence Center</div><h1 class="hero-title">🧠 AI Intelligence + Level 4</h1><div class="hero-copy">Smart assistant, current-month member intelligence, risk heatmap, prediction engine, behavioral tags, auto-actions, and smart reports — merged into one dashboard.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Basis</div><div class="big" style="font-size:18px">{{ basis }}</div></div></div></div></div>
@@ -13763,6 +13883,12 @@ ZA_FINAL_DYNAMIC_TREND_ASSET = r"""
   border-radius:14px!important;background:rgba(15,23,42,.98)!important;color:#e5e7eb!important;border:1px solid rgba(148,163,184,.24)!important;
   box-shadow:0 18px 42px rgba(0,0,0,.36)!important;font-size:11px!important;font-weight:850!important;line-height:1.35!important;z-index:99999!important;
 }
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 <script id="za-final-dynamic-trend-script">
 (function(){
@@ -14211,6 +14337,12 @@ ZA_OPTION_A_PREMIUM_CSS = r"""
 #zaMemberTrendSinglePanel{display:none!important;}
 @media(max-width:900px){.za-premium-trend-grid{grid-template-columns:1fr!important}.za-premium-title{font-size:24px!important}.za-premium-bars{height:115px!important}}
 /* ===== END OPTION A PREMIUM FORCE UI ===== */
+
+<style>
+input[type="password"]{margin-bottom:40px!important;}
+button[type="submit"]{margin-top:20px!important;}
+</style>
+
 </style>
 """
 
