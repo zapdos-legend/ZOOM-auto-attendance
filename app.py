@@ -436,9 +436,9 @@ button:active,.btn:active,a.btn:active{
 
       cells.forEach(safeInit);
 
-      if(window.__zaDurationTimer) return;
+      if(window.__zaDurationTimer){ clearInterval(window.__zaDurationTimer); window.__zaDurationTimer=null; }
 
-      window.__zaDurationTimer = setInterval(function(){
+      window.__zaDurationTimer_DISABLED = setInterval(function(){
         document.querySelectorAll("[data-za-duration-seconds]").forEach(function(el){
           var row = el.closest("tr");
           if(!row) return;
@@ -1377,6 +1377,46 @@ button[type="submit"]{margin-top:20px!important;}
     box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
     z-index:999999!important;
 }
+
+/* FINAL TIMER + TOOLTIP FIX */
+.live-fix-conn,.live-fix-conn.ok,.live-fix-conn.bad{
+  background:rgba(2,6,23,.94)!important;
+  color:#e0f2fe!important;
+  border:1px solid rgba(56,189,248,.38)!important;
+  box-shadow:0 16px 44px rgba(0,0,0,.42)!important;
+}
+.live-fix-duration{min-width:64px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;font-variant-numeric:tabular-nums!important}
+#zaEliteTrendHero .za-elite-bar:hover::after{display:none!important}
+#zaFinalFloatingTrendTip{
+  position:fixed!important;z-index:2147483647!important;max-width:340px!important;padding:11px 13px!important;border-radius:14px!important;
+  background:rgba(2,6,23,.98)!important;color:#f8fafc!important;border:1px solid rgba(56,189,248,.45)!important;
+  box-shadow:0 24px 70px rgba(0,0,0,.72)!important;font-size:12px!important;font-weight:900!important;line-height:1.35!important;
+  pointer-events:none!important;display:none;
+}
+<script>
+(function(){
+  if(window.__zaFinalFloatingTrendTip) return;
+  window.__zaFinalFloatingTrendTip = true;
+  function ensureTip(){
+    var tip=document.getElementById("zaFinalFloatingTrendTip");
+    if(!tip){tip=document.createElement("div");tip.id="zaFinalFloatingTrendTip";document.body.appendChild(tip);}
+    return tip;
+  }
+  document.addEventListener("mouseover",function(e){
+    var bar=e.target.closest&&e.target.closest(".za-elite-bar"); if(!bar)return;
+    var tip=ensureTip(); tip.textContent=bar.getAttribute("data-tip")||""; tip.style.display="block";
+  },true);
+  document.addEventListener("mousemove",function(e){
+    var bar=e.target.closest&&e.target.closest(".za-elite-bar"); if(!bar)return;
+    var tip=ensureTip(); tip.style.left=Math.min(window.innerWidth-360,Math.max(16,e.clientX+16))+"px"; tip.style.top=Math.max(90,e.clientY-76)+"px";
+  },true);
+  document.addEventListener("mouseout",function(e){
+    var bar=e.target.closest&&e.target.closest(".za-elite-bar"); if(!bar)return;
+    ensureTip().style.display="none";
+  },true);
+})();
+</script>
+/* END FINAL TIMER + TOOLTIP FIX */
 </style>
 
 </style>
@@ -7896,10 +7936,7 @@ _ZA_LIVE_SUMMARY_CACHE = {'ts': 0, 'payload': None}
 @app.route("/api/live-summary")
 @login_required
 def api_live_summary():
-    """Live dashboard polling endpoint.
-    Returns the full live payload so /live can repaint rows every 2 seconds.
-    Blocks heavy work when accidentally called from non-live pages.
-    """
+    """Live dashboard polling endpoint. Always returns fresh live data for /live."""
     try:
         _ref = request.headers.get("Referer") or ""
         if "/live" not in _ref and request.args.get("force") != "1":
@@ -7908,9 +7945,8 @@ def api_live_summary():
         pass
 
     payload = build_live_snapshot_payload(include_feed=True)
-
-    response_payload = {
-        "transport": "safe_polling_primary",
+    response = jsonify({
+        "transport": "safe_polling_fresh",
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
         "server_now": payload.get("server_now"),
@@ -7919,8 +7955,11 @@ def api_live_summary():
         "participants": payload.get("participants", []),
         "not_joined": payload.get("not_joined", []),
         "feed": payload.get("feed", []),
-    }
-    return jsonify(response_payload)
+    })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/api/live-feed")
@@ -8074,6 +8113,47 @@ button[type="submit"]{margin-top:20px!important;}
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
             function secFromText(t){const p=String(t||'').trim().split(':').map(Number);if(p.length!==3||p.some(isNaN))return 0;return p[0]*3600+p[1]*60+p[2];}
+            function finalLiveSecFromText(t){
+                t=String(t||'').trim();
+                let p=t.split(':').map(Number);
+                if(p.length===3&&!p.some(isNaN))return p[0]*3600+p[1]*60+p[2];
+                if(p.length===2&&!p.some(isNaN))return p[0]*60+p[1];
+                return 0;
+            }
+            function finalLiveMeetingSeconds(){
+                try{
+                    let raw=(document.getElementById('lfDuration')?.textContent||'').replace('Duration','').trim();
+                    return finalLiveSecFromText(raw);
+                }catch(e){return 0;}
+            }
+            function finalLiveNormalizeDurations(){
+                try{
+                    let meetingSec=finalLiveMeetingSeconds();
+                    let rows=[...document.querySelectorAll('#lfRows tr')];
+                    let liveRows=rows.filter(function(r){
+                        let t=(r.textContent||'').toLowerCase();
+                        return t.includes('live') || t.includes('host') || t.includes('present');
+                    });
+                    rows.forEach(function(row){
+                        let el=row.querySelector('.live-fix-duration');
+                        if(!el)return;
+                        let isActive=el.getAttribute('data-active')==='1';
+                        let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
+                        let base=parseInt(el.getAttribute('data-base')||'0',10);
+                        let shown=finalLiveSecFromText(el.textContent);
+                        if(isActive){
+                            let elapsed=(joinMs>0)?Math.max(0,Math.floor((Date.now()-joinMs)/1000)):shown;
+                            shown=Math.max(shown,base+elapsed);
+                            if(meetingSec>0){
+                                shown=Math.min(shown,meetingSec);
+                                if(liveRows.length===1){ shown=meetingSec; }
+                            }
+                        }
+                        el.dataset.finalLiveSeconds=String(shown);
+                        el.textContent=fmt(shown);
+                    });
+                }catch(e){}
+            }
             function sortLiveRowsByDuration(){const body=document.getElementById('lfRows');if(!body)return;[...body.querySelectorAll('tr')].sort((a,b)=>secFromText(b.querySelector('.live-fix-duration')?.textContent)-secFromText(a.querySelector('.live-fix-duration')?.textContent)).forEach(r=>body.appendChild(r));}
             function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);const start=parseInt(el.textContent||'0',10)||0;if(start===next){el.textContent=next;return;}const t0=performance.now(),dur=520;function step(t){const p=Math.min((t-t0)/dur,1);const eased=1-Math.pow(1-p,3);el.textContent=Math.round(start+(next-start)*eased);if(p<1)requestAnimationFrame(step);else el.textContent=next;}requestAnimationFrame(step);}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
@@ -8099,6 +8179,7 @@ button[type="submit"]{margin-top:20px!important;}
                 document.getElementById('lfEmpty').style.display=rows.length?'none':'block';
                 document.getElementById('lfTableWrap').style.display=rows.length?'block':'none';
                 document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt((p.is_active && activeRowsForDuration.length===1)?Math.max(parseInt(p.stored_seconds||0,10),parseInt(meetingSecForRows||0,10)):((p.is_active?p.stored_seconds:p.duration_seconds)||0),10)}" data-active="${p.is_active?1:0}" data-current-join-ms="${p.is_active?parseInt(p.current_join_epoch_ms||0,10):0}">${fmt((p.is_active && activeRowsForDuration.length===1)?Math.max(parseInt(p.duration_seconds||0,10),parseInt(meetingSecForRows||0,10)):p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
+                finalLiveNormalizeDurations();
                 sortLiveRowsByDuration();
                 document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
                 document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
@@ -8107,7 +8188,7 @@ button[type="submit"]{margin-top:20px!important;}
                 try{
                     if(!data) return;
                     document.getElementById('lfConn').className='live-fix-conn ok';
-                    document.getElementById('lfConn').textContent='● Socket updated '+new Date().toLocaleTimeString();
+                    document.getElementById('lfConn').textContent='● Live updated '+new Date().toLocaleTimeString();
                     render(data);
                 }catch(e){
                     document.getElementById('lfConn').className='live-fix-conn bad';
@@ -8159,6 +8240,7 @@ button[type="submit"]{margin-top:20px!important;}
                     let sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((nowMs-startMs)/1000));
                     document.getElementById('lfDuration').textContent='Duration '+fmt(sec);
                 }
+                finalLiveNormalizeDurations();
                 sortLiveRowsByDuration();
             },1000);
             render(lastPayload); setTimeout(function(){ if(window.zaLiveRefresh) window.zaLiveRefresh(true); }, 350); setInterval(function(){ if(window.zaLiveRefresh) window.zaLiveRefresh(true); }, 2000);
