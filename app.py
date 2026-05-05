@@ -845,8 +845,8 @@ body.za-socket-live-mode .za-realtime-pill::before{
       dock.className = "za-realtime-dock";
       dock.innerHTML =
         '<div class="za-realtime-status">' +
-          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Safe live polling active</span></div>' +
-          '<div class="za-realtime-pill" id="zaRealtimePill">Live</div>' +
+          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Connecting socket...</span></div>' +
+          '<div class="za-realtime-pill" id="zaRealtimePill">Socket</div>' +
         '</div>' +
         '<div class="za-realtime-feed" id="zaRealtimeFeed"></div>';
       document.body.appendChild(dock);
@@ -1367,57 +1367,16 @@ td form{ display:inline-block !important; vertical-align:middle !important; }
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
 
-/* ===== FULL LIVE ACCURACY ENGINE - FINAL UI PATCH ===== */
-.live-fix-conn,.za-realtime-status,.za-realtime-pill,[class*="socket"],[class*="Socket"]{
-    background:rgba(2,6,23,.94)!important;color:#e0f2fe!important;
-    border-color:rgba(56,189,248,.35)!important;box-shadow:0 18px 48px rgba(0,0,0,.45)!important;
+/* FINAL TREND TOOLTIP FIX: keep tooltip above bars, not covering readable data */
+.za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important}
+.za-elite-bars{margin-top:54px!important;position:relative!important}
+.za-elite-bar:hover::after{
+    bottom:calc(100% + 54px)!important;
+    background:rgba(2,6,23,.98)!important;
+    border:1px solid rgba(56,189,248,.42)!important;
+    box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
+    z-index:999999!important;
 }
-.live-fix-conn *,.za-realtime-status *,.za-realtime-pill *{color:#e0f2fe!important;}
-.badge.ok.live-fix-conn,.live-fix-conn.ok{
-    background:rgba(2,6,23,.94)!important;color:#86efac!important;border:1px solid rgba(34,197,94,.42)!important;
-}
-.za-premium-trend-card,.za-trend-wow-card,.za-trend-card,.za-member-trend-card,[class*="trend"],
-.za-trend-chart-wrap,.za-recent-performance,.za-normalized-performance,[class*="performance"]{overflow:visible!important;}
-.za-bar-tooltip,.za-trend-tooltip,.chartjs-tooltip{
-    z-index:999999!important;background:rgba(2,6,23,.96)!important;color:#f8fafc!important;
-    border:1px solid rgba(56,189,248,.35)!important;box-shadow:0 18px 52px rgba(0,0,0,.55)!important;
-}
-[data-za-duration-seconds],.za-live-accurate-duration{
-    font-variant-numeric:tabular-nums!important;min-width:52px;display:inline-flex;justify-content:center;align-items:center;
-}
-/* ===== END FULL LIVE ACCURACY ENGINE - FINAL UI PATCH ===== */
-
-
-<script>
-/* FULL LIVE ACCURACY ENGINE V1 */
-(function(){
-  if(window.__zaFullLiveAccuracyEngineV1) return;
-  window.__zaFullLiveAccuracyEngineV1 = true;
-  function live(){return location.pathname==="/live";}
-  var oldFetch=window.fetch;
-  window.fetch=function(input,init){
-    try{
-      var url=(typeof input==="string")?input:(input&&input.url?input.url:"");
-      if(url.indexOf("/api/live-summary")!==-1 && !live()){
-        return Promise.resolve(new Response(JSON.stringify({ok:true,blocked:true,summary:{}}),{status:200,headers:{"Content-Type":"application/json"}}));
-      }
-    }catch(e){}
-    return oldFetch.apply(this,arguments);
-  };
-  function p(t){t=String(t||"").trim();var a=t.split(":").map(function(x){return parseInt(x,10)});if(a.length===2&&!isNaN(a[0])&&!isNaN(a[1]))return a[0]*60+a[1];if(a.length===3&&!isNaN(a[0])&&!isNaN(a[1])&&!isNaN(a[2]))return a[0]*3600+a[1]*60+a[2];return null;}
-  function f(sec){sec=Math.max(0,Math.floor(Number(sec)||0));var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h>0?h+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"):m+":"+String(s).padStart(2,"0");}
-  function liveRow(row){var cell=row.querySelector("[data-label='Status'],.status,.badge,td:last-child");var txt=String((cell?cell.innerText:row.innerText)||"").toLowerCase();if(txt.indexOf("left")!==-1||txt.indexOf("ended")!==-1||row.classList.contains("za-row-left-persistent"))return false;return txt.indexOf("live")!==-1||txt.indexOf("host")!==-1||txt.indexOf("present")!==-1;}
-  function durCell(row){var ex=row.querySelector("[data-za-duration-seconds]");if(ex)return ex;var cells=Array.from(row.querySelectorAll("td,span,div"));for(var i=0;i<cells.length;i++){var el=cells[i],lab=String(el.getAttribute("data-label")||el.className||"").toLowerCase(),tx=String(el.innerText||el.textContent||"").trim();if(lab.indexOf("duration")!==-1&&p(tx)!==null)return el;}for(var j=0;j<cells.length;j++){var tx2=String(cells[j].innerText||cells[j].textContent||"").trim();if(/^\d{1,3}:\d{2}(:\d{2})?$/.test(tx2))return cells[j];}return null;}
-  function elapsed(row){var m=String(row.innerText||"").match(/(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)/i);if(!m)return null;var h=parseInt(m[1],10),mi=parseInt(m[2],10),s=parseInt(m[3],10),ap=m[4].toUpperCase();if(ap==="PM"&&h!==12)h+=12;if(ap==="AM"&&h===12)h=0;var n=new Date(),j=new Date(n.getFullYear(),n.getMonth(),n.getDate(),h,mi,s);var d=Math.floor((Date.now()-j.getTime())/1000);return d>0&&d<86400?d:null;}
-  function init(){if(!live())return;document.querySelectorAll("tbody tr").forEach(function(row){var c=durCell(row);if(!c)return;c.classList.add("za-live-accurate-duration");var best=Math.max(p(c.innerText||c.textContent)||0,elapsed(row)||0);if(!c.dataset.zaDurationSeconds||best>parseInt(c.dataset.zaDurationSeconds||"0",10)){c.dataset.zaDurationSeconds=String(best);c.textContent=f(best);}});}
-  function tick(){if(!live())return;document.querySelectorAll("tbody tr").forEach(function(row){var c=durCell(row);if(!c||!liveRow(row))return;var sec=parseInt(c.dataset.zaDurationSeconds||"0",10);if(!sec||isNaN(sec))sec=Math.max(p(c.innerText||c.textContent)||0,elapsed(row)||0);sec+=1;c.dataset.zaDurationSeconds=String(sec);c.textContent=f(sec);});}
-  function dark(){document.querySelectorAll(".live-fix-conn,.za-realtime-status,.za-realtime-pill,[class*='socket'],[class*='Socket']").forEach(function(el){el.style.background="rgba(2,6,23,.94)";el.style.color="#e0f2fe";el.style.borderColor="rgba(56,189,248,.35)";});}
-  function start(){dark();if(live()){init();if(window.__zaFullAccuracyTimer)clearInterval(window.__zaFullAccuracyTimer);window.__zaFullAccuracyTimer=setInterval(function(){init();tick();dark();},1000);}}
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start);else start();
-})();
-</script>
-<!-- END FULL LIVE ACCURACY ENGINE V1 -->
-
 </style>
 
 </style>
@@ -7937,28 +7896,31 @@ _ZA_LIVE_SUMMARY_CACHE = {'ts': 0, 'payload': None}
 @app.route("/api/live-summary")
 @login_required
 def api_live_summary():
-    # FULL_LIVE_ACCURACY_BACKEND_REFERER_GUARD
+    """Live dashboard polling endpoint.
+    Returns the full live payload so /live can repaint rows every 2 seconds.
+    Blocks heavy work when accidentally called from non-live pages.
+    """
     try:
-        _ref = (request.headers.get('Referer') or '')
-        if '/live' not in _ref and request.args.get('force') != '1':
-            return jsonify({'ok': True, 'blocked': True, 'summary': {}})
+        _ref = request.headers.get("Referer") or ""
+        if "/live" not in _ref and request.args.get("force") != "1":
+            return jsonify({"ok": True, "blocked": True, "summary": {}})
     except Exception:
         pass
-    try:
-        _now_cache = time.time()
-        if _ZA_LIVE_SUMMARY_CACHE.get('payload') is not None and (_now_cache - _ZA_LIVE_SUMMARY_CACHE.get('ts', 0)) < 2.5:
-            return jsonify(_ZA_LIVE_SUMMARY_CACHE['payload'])
-    except Exception:
-        pass
-    payload = build_live_snapshot_payload(include_feed=False)
-    return jsonify({
-        "transport": "debug_api_socket_primary",
+
+    payload = build_live_snapshot_payload(include_feed=True)
+
+    response_payload = {
+        "transport": "safe_polling_primary",
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
         "server_now": payload.get("server_now"),
         "meeting": payload.get("meeting"),
         "summary": payload.get("summary"),
-    })
+        "participants": payload.get("participants", []),
+        "not_joined": payload.get("not_joined", []),
+        "feed": payload.get("feed", []),
+    }
+    return jsonify(response_payload)
 
 
 @app.route("/api/live-feed")
@@ -8021,6 +7983,32 @@ def live():
 <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
+
+            /* LIVE FINAL FIX: dark readable update pill + compact table */
+            .live-fix-conn,
+            .live-fix-conn.ok,
+            .live-fix-conn.bad{
+                background:rgba(2,6,23,.94)!important;
+                color:#e0f2fe!important;
+                border:1px solid rgba(56,189,248,.38)!important;
+                box-shadow:0 16px 44px rgba(0,0,0,.42)!important;
+            }
+            .live-fix-duration{
+                min-width:64px!important;
+                display:inline-flex!important;
+                align-items:center!important;
+                justify-content:center!important;
+                font-variant-numeric:tabular-nums!important;
+            }
+            .za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important}
+            .za-elite-bars{margin-top:54px!important;position:relative!important}
+            .za-elite-bar:hover::after{
+                bottom:calc(100% + 54px)!important;
+                background:rgba(2,6,23,.98)!important;
+                border:1px solid rgba(56,189,248,.42)!important;
+                box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
+                z-index:999999!important;
+            }
 </style>
 
 </style>
@@ -8064,7 +8052,7 @@ button[type="submit"]{margin-top:20px!important;}
                                 <td><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
                                 <td>{{ p.first_join }}</td>
                                 <td>{{ p.last_leave }}</td>
-                                <td><span class="live-fix-duration" data-base="{{ p.stored_seconds if p.is_active else p.duration_seconds }}" data-active="{{ 1 if p.is_active else 0 }}" data-current-join-ms="{{ p.current_join_epoch_ms if p.is_active else 0 }}">{{ fmt_seconds(p.duration_seconds) }}</span></td>
+                                <td><span class="live-fix-duration" data-base="{{ [p.stored_seconds, data.summary.meeting_duration_seconds]|max if p.is_active and data.summary.active_now == 1 else (p.stored_seconds if p.is_active else p.duration_seconds) }}" data-active="{{ 1 if p.is_active else 0 }}" data-current-join-ms="{{ p.current_join_epoch_ms if p.is_active else 0 }}">{{ fmt_seconds([p.duration_seconds, data.summary.meeting_duration_seconds]|max if p.is_active and data.summary.active_now == 1 else p.duration_seconds) }}</span></td>
                                 <td>{{ p.rejoins }}</td>
                                 <td><span class="badge {{ 'ok' if p.status == 'LIVE' else 'gray' }}">{{ p.status }}</span></td>
                             </tr>
@@ -8106,9 +8094,11 @@ button[type="submit"]{margin-top:20px!important;}
                 document.getElementById('lfHost').textContent=(data.summary||{}).host_present?'Present':'Absent';
                 animateLiveNumber('lfNotJoined',(data.summary||{}).not_joined_count||0);
                 const rows=data.participants||[];
+                const meetingSecForRows=(data.summary||{}).meeting_duration_seconds||0;
+                const activeRowsForDuration=rows.filter(function(x){return !!x.is_active;});
                 document.getElementById('lfEmpty').style.display=rows.length?'none':'block';
                 document.getElementById('lfTableWrap').style.display=rows.length?'block':'none';
-                document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt((p.is_active?p.stored_seconds:p.duration_seconds)||0,10)}" data-active="${p.is_active?1:0}" data-current-join-ms="${p.is_active?parseInt(p.current_join_epoch_ms||0,10):0}">${fmt(p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
+                document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt((p.is_active && activeRowsForDuration.length===1)?Math.max(parseInt(p.stored_seconds||0,10),parseInt(meetingSecForRows||0,10)):((p.is_active?p.stored_seconds:p.duration_seconds)||0),10)}" data-active="${p.is_active?1:0}" data-current-join-ms="${p.is_active?parseInt(p.current_join_epoch_ms||0,10):0}">${fmt((p.is_active && activeRowsForDuration.length===1)?Math.max(parseInt(p.duration_seconds||0,10),parseInt(meetingSecForRows||0,10)):p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
                 sortLiveRowsByDuration();
                 document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
                 document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
@@ -8117,7 +8107,7 @@ button[type="submit"]{margin-top:20px!important;}
                 try{
                     if(!data) return;
                     document.getElementById('lfConn').className='live-fix-conn ok';
-                    document.getElementById('lfConn').textContent='● Live updated '+new Date().toLocaleTimeString();
+                    document.getElementById('lfConn').textContent='● Socket updated '+new Date().toLocaleTimeString();
                     render(data);
                 }catch(e){
                     document.getElementById('lfConn').className='live-fix-conn bad';
@@ -8125,14 +8115,26 @@ button[type="submit"]{margin-top:20px!important;}
                 }
             }
             window.zaApplyLiveSnapshot=function(data){ applySocketPayload(data); };
-            window.zaLiveRefresh=function(){
-                if(window.zaSocket && window.zaSocket.connected){
-                    window.zaSocket.emit('request_live_snapshot', {source:'live_page'});
-                    return true;
-                }
-                document.getElementById('lfConn').className='live-fix-conn bad';
-                document.getElementById('lfConn').textContent='● Auto-refresh fallback active';
-                return false;
+            window.zaLiveRefresh=function(force){
+                const conn=document.getElementById('lfConn');
+                fetch('/api/live-summary?t='+Date.now()+'&force=1', {cache:'no-store', credentials:'same-origin'})
+                  .then(function(r){ return r.ok ? r.json() : Promise.reject(new Error('live-summary failed')); })
+                  .then(function(data){
+                    if(data && data.ok){
+                        if(conn){
+                            conn.className='live-fix-conn ok';
+                            conn.textContent='● Live updated '+new Date().toLocaleTimeString();
+                        }
+                        render(data);
+                    }
+                  })
+                  .catch(function(){
+                    if(conn){
+                        conn.className='live-fix-conn bad';
+                        conn.textContent='● Safe polling retrying';
+                    }
+                  });
+                return true;
             };
             window.addEventListener('za:live-snapshot', function(e){ applySocketPayload(e.detail); });
             window.addEventListener('za:socket-connected', function(){ window.zaLiveRefresh(); });
@@ -8143,7 +8145,14 @@ button[type="submit"]{margin-top:20px!important;}
                     let active=el.getAttribute('data-active')==='1';
                     let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
                     let extra=(active&&joinMs>0)?Math.max(0,Math.floor((nowMs-joinMs)/1000)):0;
-                    el.textContent=fmt(base+extra);
+                    let shown=base+extra;
+                    try{
+                        let liveRows=[...document.querySelectorAll('#lfRows tr')].filter(r=>((r.textContent||'').toLowerCase().includes('live')||((r.textContent||'').toLowerCase().includes('host'))));
+                        let meetingText=(document.getElementById('lfDuration')?.textContent||'').replace('Duration','').trim();
+                        let meetingSec=secFromText(meetingText);
+                        if(active && meetingSec && liveRows.length===1){ shown=Math.max(shown, meetingSec); }
+                    }catch(e){}
+                    el.textContent=fmt(shown);
                 });
                 if(lastPayload && lastPayload.meeting && lastPayload.meeting.start_iso){
                     let startMs=Date.parse(lastPayload.meeting.start_iso);
@@ -8152,7 +8161,7 @@ button[type="submit"]{margin-top:20px!important;}
                 }
                 sortLiveRowsByDuration();
             },1000);
-            render(lastPayload); setTimeout(function(){ if(window.zaLiveRefresh) window.zaLiveRefresh(); }, 600);
+            render(lastPayload); setTimeout(function(){ if(window.zaLiveRefresh) window.zaLiveRefresh(true); }, 350); setInterval(function(){ if(window.zaLiveRefresh) window.zaLiveRefresh(true); }, 2000);
         })();
         </script>
         """,
