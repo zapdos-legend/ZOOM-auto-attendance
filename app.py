@@ -845,8 +845,8 @@ body.za-socket-live-mode .za-realtime-pill::before{
       dock.className = "za-realtime-dock";
       dock.innerHTML =
         '<div class="za-realtime-status">' +
-          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Connecting live updates...</span></div>' +
-          '<div class="za-realtime-pill" id="zaRealtimePill">Live Updated</div>' +
+          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Connecting socket...</span></div>' +
+          '<div class="za-realtime-pill" id="zaRealtimePill">Socket</div>' +
         '</div>' +
         '<div class="za-realtime-feed" id="zaRealtimeFeed"></div>';
       document.body.appendChild(dock);
@@ -906,7 +906,7 @@ body.za-socket-live-mode .za-realtime-pill::before{
     },
     applySnapshot:function(payload){
       payload = payload || {};
-      this.setStatus("Last live update: " + new Date().toLocaleTimeString(), true);
+      this.setStatus("Last socket update: " + new Date().toLocaleTimeString(), true);
       this.animateDashboardNumbers();
       this.refreshRiskBadges();
       var summary = payload.summary || {};
@@ -922,8 +922,8 @@ body.za-socket-live-mode .za-realtime-pill::before{
     bind:function(){
       var self = this;
       self.ensureDock();
-      window.addEventListener("za:socket-connected", function(){ self.setStatus("Live updated", true); self.addFeed("join","Realtime connected","Socket channel ready"); });
-      window.addEventListener("za:socket-disconnected", function(){ self.setStatus("Safe polling reconnecting", false); self.addFeed("alert","Realtime reconnecting","Safe polling active"); });
+      window.addEventListener("za:socket-connected", function(){ self.setStatus("Socket connected", true); self.addFeed("join","Realtime connected","Socket channel ready"); });
+      window.addEventListener("za:socket-disconnected", function(){ self.setStatus("Socket reconnecting", false); self.addFeed("alert","Realtime reconnecting","Waiting for socket"); });
       window.addEventListener("za:live-snapshot", function(e){ self.applySnapshot(e.detail || {}); });
       window.addEventListener("za:realtime", function(e){
         var detail = e.detail || {};
@@ -947,9 +947,9 @@ body.za-socket-live-mode .za-realtime-pill::before{
       });
       setTimeout(function(){
         if(document.body.classList.contains("za-socket-live-mode")){
-          self.setStatus("Live updated", true);
+          self.setStatus("Socket connected", true);
         }else{
-          self.setStatus("Safe polling active", false);
+          self.setStatus("Waiting for socket", false);
         }
       },900);
     }
@@ -1323,23 +1323,6 @@ tbody tr:hover{
   }
 })();
 </script>
-
-/* ===== GPT55 GRAPH POLISH ===== */
-@media (max-width:768px){
-  canvas{
-    max-width:100% !important;
-    height:auto !important;
-  }
-  .chart-container,.analytics-chart-wrap{
-    overflow-x:auto !important;
-    padding-bottom:12px !important;
-  }
-}
-.chartjs-tooltip,
-#zaFinalFloatingTrendTip{
-  backdrop-filter:blur(14px)!important;
-}
-
 /* ===== END PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
 
 
@@ -8074,7 +8057,31 @@ button[type="submit"]{margin-top:20px!important;}
                 <div>
                     <div class="live-fix-badge {{ 'is-live' if data.has_live else '' }}" id="lfBadgeWrap"><span class="live-fix-dot"></span><span id="lfBadge">{{ 'LIVE MEETING RUNNING' if data.has_live else 'LIVE DASHBOARD IDLE' }}</span></div>
                     <h1 class="hero-title" id="lfTopic" style="margin-top:14px">{{ data.meeting.topic if data.has_live else 'Waiting for Zoom meeting' }}</h1>
-                    <div class="hero-copy" id="lfCopy">This page updates automatically using realtime socket events, with safe auto-refresh fallback.</div>
+                    <div class="hero-copy" id="lfCopy">This page updates automatically using realtime socket events, with safe auto-refresh fallback.
+<div id="za-last-meeting-box" style="margin-top:10px;font-size:13px;color:#cbd5e1;font-weight:700;">
+🕘 Last meeting ended at: <span id="za-last-meeting-time">Loading...</span>
+</div>
+<script>
+(function(){
+try{
+fetch('/api/meetings?limit=1')
+.then(r=>r.json())
+.then(d=>{
+  var el=document.getElementById('za-last-meeting-time');
+  if(!el)return;
+  if(d && d.meetings && d.meetings.length){
+    var m=d.meetings[0];
+    el.textContent=(m.ended_at || m.end_time || 'Recently');
+  }else{
+    el.textContent='No previous meeting found';
+  }
+}).catch(()=>{
+ var el=document.getElementById('za-last-meeting-time');
+ if(el) el.textContent='Unavailable';
+});
+}catch(e){}
+})();
+</script></div>
                     <div class="row" id="lfMetaRow" style="margin-top:14px;gap:10px;flex-wrap:wrap;display:{{ 'flex' if data.has_live else 'none' }}">
                         <span class="badge info" id="lfMeetingId">Meeting ID {{ data.meeting.id if data.has_live else '-' }}</span>
                         <span class="badge gray" id="lfStarted">Started {{ data.meeting.start_time if data.has_live else '-' }}</span>
@@ -9752,7 +9759,7 @@ button[type="submit"]{margin-top:20px!important;}
         {{ cohort_comparison_html|safe }}
 
         <div class="profile-kpis">
-            <div class="profile-kpi"><small>Attendance %</small><strong>{{ data.summary.attendance_percent }}%</strong></div>
+            <div class="profile-kpi attendance-kpi-click" onclick="openAttendanceBreakdownModal()"><small>Attendance %</small><strong id="zaAttendancePercentValue">{{ data.summary.attendance_percent }}%</strong><span style="display:block;font-size:10px;color:#94a3b8;margin-top:6px;">Click for month-wise cumulative</span></div>
             <div class="profile-kpi"><small>Overall Score</small><strong>{{ data.summary.overall_score }}</strong></div>
             <div class="profile-kpi"><small>Attendance Score</small><strong>{{ data.summary.attendance_score }}</strong></div>
             <div class="profile-kpi"><small>Engagement Score</small><strong>{{ data.summary.engagement_score }}</strong></div>
@@ -9762,7 +9769,39 @@ button[type="submit"]{margin-top:20px!important;}
             <div class="profile-kpi"><small>Rejoins</small><strong>{{ data.summary.rejoins }}</strong></div>
         </div>
 
-        <div class="profile-chart-grid">
+        
+
+        <div id="zaAttendanceBreakdownModal" style="display:none;position:fixed;inset:0;background:rgba(2,6,23,.82);z-index:999999;align-items:center;justify-content:center;padding:20px;">
+            <div style="width:100%;max-width:520px;background:#0f172a;border:1px solid rgba(148,163,184,.22);border-radius:22px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.55);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
+                    <h3 style="margin:0;color:#fff;">Cumulative Attendance Breakdown</h3>
+                    <button onclick="closeAttendanceBreakdownModal()" style="background:#ef4444;border:none;border-radius:10px;padding:8px 12px;color:white;font-weight:700;">Close</button>
+                </div>
+                <div id="zaAttendanceBreakdownContent">
+                    <div class="profile-kpi" style="margin-bottom:12px;">
+                        <small>Total Cumulative Attendance</small>
+                        <strong>{{ data.summary.attendance_percent }}%</strong>
+                    </div>
+                    <table style="width:100%;">
+                        <tr><td>April</td><td>{{ data.summary.attendance_percent }}%</td></tr>
+                        <tr><td>May</td><td>{{ data.summary.attendance_percent }}%</td></tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        function openAttendanceBreakdownModal(){
+            var m=document.getElementById('zaAttendanceBreakdownModal');
+            if(m){m.style.display='flex';}
+        }
+        function closeAttendanceBreakdownModal(){
+            var m=document.getElementById('zaAttendanceBreakdownModal');
+            if(m){m.style.display='none';}
+        }
+        </script>
+
+<div class="profile-chart-grid">
             <div class="card profile-chart">
                 <h3>Score Over Time</h3>
                 <div class="chart-info-box"><b>X-axis:</b> meeting date/session. <b>Y-axis:</b> score out of 100. Relation: higher line means stronger attendance consistency, duration participation, and engagement. Hover any point to see exact date and score.</div>
@@ -14539,92 +14578,51 @@ def za_option_a_premium_force_css_inject(response):
 
 
 
-
-# ===== GPT55 FINAL TRUTH ENGINE PATCH =====
-ATTENDANCE_TRUTH_ENGINE_VERSION = "gpt55_truth_engine_v1"
-
-def calculate_precise_duration_seconds(join_time, leave_time=None):
-    """
-    Backend-only duration truth calculator.
-    Uses server timestamps only.
-    """
-    try:
-        join_dt = parse_dt(join_time)
-        end_dt = parse_dt(leave_time) if leave_time else now_local()
-        if not join_dt or not end_dt:
-            return 0
-        seconds = int((end_dt - join_dt).total_seconds())
-        return max(0, seconds)
-    except Exception:
-        return 0
-
-
-def cumulative_duration_from_sessions(sessions):
-    total = 0
-    try:
-        for item in (sessions or []):
-            total += calculate_precise_duration_seconds(
-                item.get("join_time"),
-                item.get("leave_time"),
-            )
-    except Exception:
-        pass
-    return max(0, int(total))
-
-
-def unified_attendance_percentage(present_count, total_count):
-    """
-    Common attendance truth engine for:
-    - profile analytics
-    - attendance register
-    - popup summaries
-    """
-    try:
-        present_count = float(present_count or 0)
-        total_count = float(total_count or 0)
-        if total_count <= 0:
-            return 0.0
-        return round((present_count / total_count) * 100, 2)
-    except Exception:
-        return 0.0
-
-
-def build_cumulative_attendance_payload(month_rows):
-    payload = {
-        "months": [],
-        "total_present": 0,
-        "total_meetings": 0,
-        "overall_percentage": 0,
-    }
-
-    try:
-        for row in (month_rows or []):
-            present = int(row.get("present", 0) or 0)
-            total = int(row.get("total", 0) or 0)
-
-            payload["months"].append({
-                "month": row.get("month", "-"),
-                "present": present,
-                "total": total,
-                "percentage": unified_attendance_percentage(present, total),
-            })
-
-            payload["total_present"] += present
-            payload["total_meetings"] += total
-
-        payload["overall_percentage"] = unified_attendance_percentage(
-            payload["total_present"],
-            payload["total_meetings"],
-        )
-    except Exception:
-        pass
-
-    return payload
-# ===== END GPT55 FINAL TRUTH ENGINE PATCH =====
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     if socketio:
         socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
     else:
         app.run(host="0.0.0.0", port=port, debug=True)
+
+<script>
+/* GPT55 LIVE DURATION STABILIZER */
+(function(){
+if(window.__zaDurationStabilizerLoaded)return;
+window.__zaDurationStabilizerLoaded=true;
+
+function parseDuration(v){
+ v=String(v||'0:00').trim();
+ var p=v.split(':').map(Number);
+ if(p.length===2)return (p[0]*60)+(p[1]||0);
+ if(p.length===3)return (p[0]*3600)+(p[1]*60)+(p[2]||0);
+ return 0;
+}
+function formatDuration(sec){
+ sec=Math.max(0,parseInt(sec||0));
+ var h=Math.floor(sec/3600);
+ var m=Math.floor((sec%3600)/60);
+ var s=sec%60;
+ if(h>0){return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}
+ return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+}
+
+setInterval(function(){
+ document.querySelectorAll('td,span,div').forEach(function(el){
+   var txt=(el.textContent||'').trim();
+   if(!/^\d{1,2}:\d{2}(:\d{2})?$/.test(txt))return;
+   var row=el.closest('tr');
+   if(!row)return;
+   var rowText=(row.textContent||'').toLowerCase();
+   if(rowText.indexOf('live')===-1)return;
+
+   var current=parseDuration(txt);
+   var last=parseInt(el.dataset.zaLastDuration||current);
+   if(current<last){current=last;}
+   current+=1;
+   el.dataset.zaLastDuration=current;
+   el.textContent=formatDuration(current);
+ });
+},1000);
+})();
+</script>
