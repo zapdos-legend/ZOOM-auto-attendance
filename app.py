@@ -15,7 +15,7 @@ button:hover { opacity:0.9; }
 table { background: rgba(255,255,255,0.03); border-radius:10px;}
 th { position: sticky; top:0; background:#111827;}
 
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -48,7 +48,7 @@ th { position: sticky; top:0; background:#111827;}
 
 
 
-/* ===== FINAL POLISH UI FIXES ===== */
+# /* ===== FINAL POLISH UI FIXES ===== */
 .card, .glass-panel, .hero, .hero-chip, .panel, .mini-card, .analytics-card {
     background-color: rgba(15,23,42,.72) !important;
     background-image: linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.025)) !important;
@@ -96,7 +96,7 @@ th { position: sticky; top:0; background:#111827;}
 
 
 
-/* ===== FINAL FIX: CLEAR ACTIVE/INACTIVE PILL TOGGLE LIKE REFERENCE IMAGE ===== */
+# /* ===== FINAL FIX: CLEAR ACTIVE/INACTIVE PILL TOGGLE LIKE REFERENCE IMAGE ===== */
 .status-toggle-btn{
     width:170px !important;
     min-width:170px !important;
@@ -155,7 +155,7 @@ th { position: sticky; top:0; background:#111827;}
 
 
 
-/* ===== GPT-5.5 SAFE UI FIX: smoother status toggle + tooltip polish ===== */
+# /* ===== GPT-5.5 SAFE UI FIX: smoother status toggle + tooltip polish ===== */
 button.status-toggle-btn,
 .table-wrap button.status-toggle-btn,
 .card button.status-toggle-btn{
@@ -188,7 +188,7 @@ button.status-toggle-btn:hover::before{ box-shadow:0 14px 32px rgba(2,6,23,.42) 
 }
 
 
-/* ===== OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
+# /* ===== OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
 :root{
   --za-motion-fast: 180ms;
   --za-motion-base: 360ms;
@@ -310,7 +310,7 @@ button:active,.btn:active,a.btn:active{
   50%{box-shadow:0 0 24px rgba(239,68,68,.28);}
 }
 # <script>
-/* ZA_FINAL_PERFORMANCE_GUARD_V2 */
+# /* ZA_FINAL_PERFORMANCE_GUARD_V2 */
 (function(){
   if(window.__zaFinalPerformanceGuardV2) return;
   window.__zaFinalPerformanceGuardV2 = true;
@@ -336,7 +336,7 @@ button:active,.btn:active,a.btn:active{
 })();
 # # </script>
 # <script>
-/* ZA_BLOCK_LIVE_SUMMARY_NON_LIVE_PAGES */
+# /* ZA_BLOCK_LIVE_SUMMARY_NON_LIVE_PAGES */
 (function(){
   if(window.__zaLiveSummaryBlockerInstalled) return;
   window.__zaLiveSummaryBlockerInstalled = true;
@@ -360,7 +360,7 @@ button:active,.btn:active,a.btn:active{
     started:false,
     easer:function(t){ return 1 - Math.pow(1 - t, 3); },
     parseNumber:function(text){
-      var m = String(text || "").replace(/,/g,"").match(/-?\\d+(\\.\\d+)?/);
+      var m = String(text || "").replace(/,/g,"").match(/-?\\d+(\\\.\\d+)?/);
       return m ? Number(m[0]) : null;
     },
     animateNumber:function(el, target){
@@ -397,7 +397,7 @@ button:active,.btn:active,a.btn:active{
       var parts = text.split(":").map(function(x){ return parseInt(x,10); });
       if(parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0]*60+parts[1];
       if(parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) return parts[0]*3600+parts[1]*60+parts[2];
-      var m = text.match(/(\\d+)\\s*(min|mins|minute|minutes)/i);
+      var m = text.match(/(\\d+)\\\s*(min|mins|minute|minutes)/i);
       if(m) return parseInt(m[1],10)*60;
       return null;
     },
@@ -482,7 +482,7 @@ button:active,.btn:active,a.btn:active{
         card.style.animationDelay = Math.min(idx*70, 420) + "ms";
         if(!card.dataset.zaTooltip){
           var heading = card.querySelector("h1,h2,h3,h4,strong,b");
-          var raw = ((heading && heading.textContent) || card.textContent || "").replace(/\\s+/g," ").trim().slice(0,90);
+          var raw = ((heading && heading.textContent) || card.textContent || "").replace(/\\\s+/g," ").trim().slice(0,90);
           card.dataset.zaTooltip = raw ? ("This section shows: " + raw) : "This section shows important attendance insight.";
         }
       });
@@ -526,7 +526,7 @@ button:active,.btn:active,a.btn:active{
     initFlashToasts:function(){
       var alerts = document.querySelectorAll(".alert,.flash,.message,[role='alert']");
       alerts.forEach(function(a){
-        var txt = (a.textContent || "").replace(/\\s+/g," ").trim();
+        var txt = (a.textContent || "").replace(/\\\s+/g," ").trim();
         if(txt && !a.dataset.zaToasted){
           a.dataset.zaToasted="1";
           window.ZoomAttendanceMotionEngine.toast(txt.slice(0,120));
@@ -690,14 +690,14 @@ button:active,.btn:active,a.btn:active{
   }
 })();
 # # </script>
-/* ===== END OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
+# /* ===== END OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
 
 
 body.za-realtime-connected .za-live-dot{animation-duration:1s!important;}
 .badge.warn{background:rgba(245,158,11,.16)!important;color:#fde68a!important;border-color:rgba(245,158,11,.35)!important;}
 
 
-/* ===== PHASE 2 TRUE SOCKET LIVE MODE ===== */
+# /* ===== PHASE 2 TRUE SOCKET LIVE MODE ===== */
 body.za-socket-live-mode .live-fix-conn.ok{
     border-color:rgba(34,197,94,.45)!important;
     box-shadow:0 0 18px rgba(34,197,94,.20)!important;
@@ -708,7 +708,7 @@ body.za-socket-live-mode .live-fix-conn.bad{
 }
 
 
-/* ===== PHASE 2 ADVANCED REALTIME UI ===== */
+# /* ===== PHASE 2 ADVANCED REALTIME UI ===== */
 .za-realtime-dock{
   position:fixed;
   right:18px;
@@ -957,10 +957,10 @@ body.za-socket-live-mode .za-realtime-pill::before{
   }
 })();
 # # </script>
-/* ===== END PHASE 2 ADVANCED REALTIME UI ===== */
+# /* ===== END PHASE 2 ADVANCED REALTIME UI ===== */
 
 
-/* ===== LIVE UX FIX: NO DURATION FLICKER + PERSISTENT LEFT ROW ===== */
+# /* ===== LIVE UX FIX: NO DURATION FLICKER + PERSISTENT LEFT ROW ===== */
 .za-row-left-persistent,
 tr.za-row-left-persistent,
 tbody tr.za-row-left-persistent{
@@ -986,9 +986,9 @@ tbody tr.za-row-left-persistent{
 }
 
 
-/* ===== PHASE 2.1 UI POLISH ===== */
+# /* ===== PHASE 2.1 UI POLISH ===== */
 
-/* Realtime panel visibility fix */
+# /* Realtime panel visibility fix */
 .za-realtime-dock{
   position:fixed;
   top:80px;
@@ -997,14 +997,14 @@ tbody tr.za-row-left-persistent{
   z-index:99999;
 }
 
-/* Make panel clearly visible */
+# /* Make panel clearly visible */
 .za-realtime-status{
   background:linear-gradient(135deg,#0f172a,#1e293b);
   border:1px solid rgba(255,255,255,0.1);
   box-shadow:0 20px 50px rgba(0,0,0,0.5);
 }
 
-/* Feed items stronger */
+# /* Feed items stronger */
 .za-feed-item{
   background:#020617;
   border-radius:14px;
@@ -1012,22 +1012,22 @@ tbody tr.za-row-left-persistent{
   font-size:12px;
 }
 
-/* Join = green */
+# /* Join = green */
 .za-feed-item.join{
   border-left:4px solid #22c55e;
 }
 
-/* Leave = orange/red */
+# /* Leave = orange/red */
 .za-feed-item.leave{
   border-left:4px solid #f97316;
 }
 
-/* Alert = red */
+# /* Alert = red */
 .za-feed-item.alert{
   border-left:4px solid #ef4444;
 }
 
-/* Improve table readability */
+# /* Improve table readability */
 table{
   border-collapse:separate !important;
   border-spacing:0 6px !important;
@@ -1037,13 +1037,13 @@ tbody tr{
   transition:all 0.3s ease;
 }
 
-/* Hover effect */
+# /* Hover effect */
 tbody tr:hover{
   transform:scale(1.01);
   box-shadow:0 4px 15px rgba(0,0,0,0.2);
 }
 
-/* Improve row flash visibility */
+# /* Improve row flash visibility */
 .za-row-live-flash{
   animation:liveFlash 0.6s ease;
 }
@@ -1053,12 +1053,12 @@ tbody tr:hover{
   100%{background:transparent;}
 }
 
-/* Improve left row persistent */
+# /* Improve left row persistent */
 .za-row-left-persistent{
   background:rgba(239,68,68,0.2) !important;
 }
 
-/* Status badge */
+# /* Status badge */
 .live-status-badge{
   position:fixed;
   top:20px;
@@ -1073,7 +1073,7 @@ tbody tr:hover{
 }
 
 
-/* ===== PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
+# /* ===== PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
 .za-insights-panel{
   position:fixed;
   left:18px;
@@ -1319,16 +1319,16 @@ tbody tr:hover{
   }
 })();
 # # </script>
-/* ===== END PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
+# /* ===== END PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
 
 
 
 
-/* LOGIN_PASSWORD_BUTTON_GAP_FIX */
+# /* LOGIN_PASSWORD_BUTTON_GAP_FIX */
 .login-card input[type='password'], .login-card input[name='password']{margin-bottom:28px!important;}
 .login-card button[type='submit'], .login-card input[type='submit']{margin-top:14px!important;}
 
-/* ZA_FINAL_LOGIN_GAP_FIX_V2 */
+# /* ZA_FINAL_LOGIN_GAP_FIX_V2 */
 .login-card input[type="password"],
 .login-card input[name="password"],
 .auth-card input[type="password"],
@@ -1347,13 +1347,13 @@ form button[type="submit"],
     display: block !important;
 }
 
-/* FINAL LOGIN FORM SPACING PATCH */
+# /* FINAL LOGIN FORM SPACING PATCH */
 form input[name="password"]{display:block !important;margin-bottom:34px !important;}
 form input[name="password"] + button, form input[name="password"] + input[type="submit"]{display:block !important;margin-top:18px !important;}
 .login-card form, .auth-card form{display:block !important;}
 .login-card .form-actions, .auth-card .form-actions{margin-top:18px !important;}
 
-/* FINAL MEMBER ACTION BUTTON GAP PATCH */
+# /* FINAL MEMBER ACTION BUTTON GAP PATCH */
 td .btn, td button, td form{ margin-right: 12px !important; }
 td .btn:last-child, td button:last-child, td form:last-child{ margin-right: 0 !important; }
 td form{ display:inline-block !important; vertical-align:middle !important; }
@@ -1362,7 +1362,7 @@ td form{ display:inline-block !important; vertical-align:middle !important; }
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
 
-/* FINAL TREND TOOLTIP FIX: keep tooltip above bars, not covering readable data */
+# /* FINAL TREND TOOLTIP FIX: keep tooltip above bars, not covering readable data */
 .za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important}
 .za-elite-bars{margin-top:54px!important;position:relative!important}
 .za-elite-bar:hover::after{
@@ -1373,7 +1373,7 @@ button[type="submit"]{margin-top:20px!important;}
     z-index:999999!important;
 }
 
-/* FINAL TIMER + TOOLTIP FIX */
+# /* FINAL TIMER + TOOLTIP FIX */
 .live-fix-conn,.live-fix-conn.ok,.live-fix-conn.bad{
   background:rgba(2,6,23,.94)!important;
   color:#e0f2fe!important;
@@ -1411,8 +1411,8 @@ button[type="submit"]{margin-top:20px!important;}
   },true);
 })();
 # # </script>
-/* END FINAL TIMER + TOOLTIP FIX */
-# </style># </style>
+# /* END FINAL TIMER + TOOLTIP FIX */
+# </style>
 '''
 # ===== END THEME =====
 
@@ -1877,7 +1877,7 @@ button,input[type=submit],.btn{border-radius:16px!important;background:linear-gr
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 """
 
 
@@ -1892,7 +1892,7 @@ button,input[type=submit],.btn{border-radius:16px!important;background:linear-gr
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 """
 
 def page_theme_css():
@@ -6193,7 +6193,7 @@ BASE_HTML = """
         .sidebar a.live-status-idle .nav-icon{background:rgba(255,255,255,.22)!important;}
 
     
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -6226,7 +6226,7 @@ BASE_HTML = """
 
 
 
-/* ===== V9 FINAL TOGGLE + LIVE REFRESH VISIBILITY PATCH ===== */
+# /* ===== V9 FINAL TOGGLE + LIVE REFRESH VISIBILITY PATCH ===== */
 form.toggle-form,
 form.live-toggle-form{
     margin:0 !important;
@@ -6316,7 +6316,7 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 }
 
 
-/* ===== V10 AJAX TOGGLE + MEMBER PROFILE GRAPH SPACE FIX ===== */
+# /* ===== V10 AJAX TOGGLE + MEMBER PROFILE GRAPH SPACE FIX ===== */
 .status-toggle-btn.is-saving{opacity:.72 !important; pointer-events:none !important; filter:saturate(.8) !important;}
 .status-toggle-btn.is-saving::after{content:""; position:absolute; right:12px; top:50%; width:12px; height:12px; margin-top:-6px; border:2px solid rgba(255,255,255,.55); border-top-color:#fff; border-radius:50%; z-index:3; animation:toggleSpin .65s linear infinite;}
 @keyframes toggleSpin{to{transform:rotate(360deg)}}
@@ -6328,13 +6328,13 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 .chart-info-box b{color:#f8fafc;}
 .profile-alert-wide{grid-column:1 / -1 !important;}
 @media(max-width:1200px){.member-profile-layout-fix .profile-chart-grid{grid-template-columns:1fr !important}.member-profile-layout-fix .profile-chart{min-height:390px !important;height:390px !important}}
-/* ===== END V10 PATCH ===== */
+# /* ===== END V10 PATCH ===== */
 
-/* ===== END V9 PATCH ===== */
+# /* ===== END V9 PATCH ===== */
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 # <style>
 .toggle-btn {
     position: relative;
@@ -6358,7 +6358,7 @@ button[type="submit"]{margin-top:20px!important;}
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 # <style>
 button:active {
     transform: scale(0.97);
@@ -6367,7 +6367,7 @@ button:active {
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 </head>
 <body class="{{ 'dark' if session.get('theme') == 'dark' else '' }}">
 # <script>
@@ -6470,7 +6470,7 @@ button[type="submit"]{margin-top:20px!important;}
     function applyAutoTooltips(){
         const selectors = 'th, h4, .label-with-tip';
         document.querySelectorAll(selectors).forEach((el) => {
-            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\\\s+/g,' ').trim();
+            const raw = (el.dataset.tipKey || el.textContent || '').replace(/\\\\\s+/g,' ').trim();
             if (!raw || el.querySelector('.tooltip')) return;
             if (!tooltipMap[raw]) return;
             const tip = document.createElement('span');
@@ -6485,7 +6485,7 @@ button[type="submit"]{margin-top:20px!important;}
         document.querySelectorAll('.metric').forEach((el) => {
             if (el.dataset.animated === '1') return;
             const raw = (el.textContent || '').trim();
-            const match = raw.match(/^-?\\d+(?:\\.\\d+)?/);
+            const match = raw.match(/^-?\\d+(?:\\\.\\d+)?/);
             if (!match) return;
             const value = parseFloat(match[0]);
             if (!Number.isFinite(value)) return;
@@ -6689,7 +6689,7 @@ button[type="submit"]{margin-top:20px!important;}
             if (card.dataset.finalTooltipApplied === '1') return;
             const headingEl = card.querySelector('h1,h2,h3,.label,small');
             const heading = headingEl ? (headingEl.textContent || '').trim() : '';
-            const cleanHeading = heading.replace(/\\s+/g,' ');
+            const cleanHeading = heading.replace(/\\\s+/g,' ');
             const text = explanations[cleanHeading] || (cleanHeading ? `${cleanHeading}: this card shows an important system/attendance indicator.` : 'This card shows an important system/attendance indicator.');
             card.setAttribute('title', text);
             card.classList.add('smart-tooltip-card');
@@ -6700,7 +6700,7 @@ button[type="submit"]{margin-top:20px!important;}
     function removeRequestedAnalyticsSections(){
         const blocked = new Set(['Analytics Filters','Attendance Trend','Member Duration','Duration Distribution','Status Mix']);
         document.querySelectorAll('h1,h2,h3').forEach((heading) => {
-            const text = (heading.textContent || '').trim().replace(/\\s+/g,' ');
+            const text = (heading.textContent || '').trim().replace(/\\\s+/g,' ');
             if (!blocked.has(text)) return;
             const card = heading.closest('.card');
             if (card) card.remove();
@@ -6727,7 +6727,7 @@ button[type="submit"]{margin-top:20px!important;}
 })();
 # # </script>
 # <script>
-/* ===== LIVE SMOOTH PATCH: PRESERVE DURATION + LEFT ROW STATE ===== */
+# /* ===== LIVE SMOOTH PATCH: PRESERVE DURATION + LEFT ROW STATE ===== */
 (function(){
   if(window.__ZA_LIVE_SMOOTH_PATCH_V1__) return;
   window.__ZA_LIVE_SMOOTH_PATCH_V1__ = true;
@@ -6737,15 +6737,15 @@ button[type="submit"]{margin-top:20px!important;}
 
   function rowKey(row){
     if(!row) return "";
-    var txt = (row.textContent || "").toLowerCase().replace(/\\s+/g," ").trim();
-    var email = txt.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
+    var txt = (row.textContent || "").toLowerCase().replace(/\\\s+/g," ").trim();
+    var email = txt.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}/);
     if(email) return "email::" + email[0];
     var cells = row.querySelectorAll("td");
     var key = "";
     for(var i=0;i<Math.min(cells.length,2);i++){
       key += " " + (cells[i].textContent || "").trim().toLowerCase();
     }
-    return key.replace(/\\s+/g," ").trim();
+    return key.replace(/\\\s+/g," ").trim();
   }
 
   function secondsFromText(text){
@@ -6753,7 +6753,7 @@ button[type="submit"]{margin-top:20px!important;}
     var parts = text.split(":").map(function(x){ return parseInt(x,10); });
     if(parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0]*60+parts[1];
     if(parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) return parts[0]*3600+parts[1]*60+parts[2];
-    var m = text.match(/(\d+)\s*(min|mins|minute|minutes)/i);
+    var m = text.match(/(\d+)\\s*(min|mins|minute|minutes)/i);
     if(m) return parseInt(m[1],10)*60;
     return null;
   }
@@ -6883,7 +6883,7 @@ button[type="submit"]{margin-top:20px!important;}
 })();
 # # </script>
 # <script>
-/* ===== LIVE AUTO REFRESH FIX: SOCKET-FIRST + SAFE FALLBACK ===== */
+# /* ===== LIVE AUTO REFRESH FIX: SOCKET-FIRST + SAFE FALLBACK ===== */
 (function(){
   if(window.__ZA_LIVE_AUTO_REFRESH_FIX_V1__) return;
   window.__ZA_LIVE_AUTO_REFRESH_FIX_V1__ = true;
@@ -7051,8 +7051,8 @@ button[type="submit"]{margin-top:20px!important;}
 # # </script>
 {% if session.get('user_id') and active %}
 <!-- AI Level 3 Floating Bot -->
-<style>.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}
-/* TOGGLE SWITCH */
+# <style>.ai-floating-bot{position:fixed;right:22px;bottom:22px;z-index:9999}.ai-bot-orb{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#6366f1,#22d3ee);box-shadow:0 18px 50px rgba(34,211,238,.35);cursor:pointer;font-size:26px}.ai-bot-panel{display:none;position:absolute;right:0;bottom:72px;width:360px;max-width:calc(100vw - 30px);background:rgba(2,6,23,.96);border:1px solid rgba(99,102,241,.35);border-radius:22px;padding:14px;box-shadow:0 30px 90px rgba(0,0,0,.45);color:#e5e7eb}.ai-bot-panel.open{display:block}.ai-bot-panel textarea{width:100%;min-height:68px;border-radius:14px;border:1px solid rgba(99,102,241,.35);background:#020617;color:#e5e7eb;padding:10px}.ai-bot-answer{white-space:pre-wrap;background:rgba(15,23,42,.9);border-radius:14px;padding:10px;margin-top:10px;max-height:220px;overflow:auto}.ai-bot-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.ai-bot-actions button{font-size:11px;padding:7px 9px;border-radius:999px}
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -7086,7 +7086,7 @@ button[type="submit"]{margin-top:20px!important;}
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
 # </style>
-</style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}# </script>
+# </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}# </script>
 {% endif %}
 
 
@@ -7949,7 +7949,7 @@ def live():
             .live-fix-dot{width:10px;height:10px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 rgba(239,68,68,.7);animation:liveFixPulse 1.2s infinite}@keyframes liveFixPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.7)}70%{box-shadow:0 0 0 12px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
             .live-fix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px}.live-fix-stat{border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.055);padding:16px}.live-fix-label{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;font-weight:900}.live-fix-value{font-size:30px;font-weight:950;margin-top:7px}.live-fix-table td,.live-fix-table th{vertical-align:middle}.live-fix-duration{font-variant-numeric:tabular-nums;font-weight:900}.live-fix-left{opacity:.62}.live-fix-empty{text-align:center;padding:36px 16px}.live-fix-conn{font-size:12px;font-weight:900;border-radius:999px;padding:8px 12px;border:1px solid rgba(148,163,184,.24)}.live-fix-conn.ok{color:#86efac;border-color:rgba(34,197,94,.35)}.live-fix-conn.bad{color:#fecaca;border-color:rgba(239,68,68,.35)} .live-fix-badge.is-live{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.42);color:#bbf7d0}.live-fix-badge.is-live .live-fix-dot{background:#22c55e;animation:none}.live-nav-live{background:linear-gradient(135deg,#16a34a,#22c55e)!important;box-shadow:0 12px 30px rgba(34,197,94,.35)!important}.live-nav-idle{background:linear-gradient(135deg,#dc2626,#ef4444)!important;box-shadow:0 12px 30px rgba(239,68,68,.35)!important}.live-fix-badge .live-fix-dot{animation:liveFixPulse 1s infinite !important}.live-fix-badge.is-live .live-fix-dot{background:#22c55e !important;animation:liveFixGreenPulse 1s infinite !important}@keyframes liveFixGreenPulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.8);transform:scale(1)}70%{box-shadow:0 0 0 14px rgba(34,197,94,0);transform:scale(1.18)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0);transform:scale(1)}}
         
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -8008,7 +8008,7 @@ button[type="submit"]{margin-top:20px!important;}
                 box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
                 z-index:999999!important;
             }
-# </style># </style>
+# </style>
         <div class="live-fix-hero">
             <div class="live-fix-top">
                 <div>
@@ -8038,7 +8038,7 @@ fetch('/api/meetings?limit=1')
 });
 }catch(e){}
 })();
-</script></div>
+# </script></div>
                     <div class="row" id="lfMetaRow" style="margin-top:14px;gap:10px;flex-wrap:wrap;display:{{ 'flex' if data.has_live else 'none' }}">
                         <span class="badge info" id="lfMeetingId">Meeting ID {{ data.meeting.id if data.has_live else '-' }}</span>
                         <span class="badge gray" id="lfStarted">Started {{ data.meeting.start_time if data.has_live else '-' }}</span>
@@ -9344,7 +9344,7 @@ def member_profile(member_id):
             .member-profile-hero{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,.6fr);gap:16px;align-items:stretch}
             .profile-title{font-size:30px;font-weight:950;margin:0 0 8px}.profile-sub{color:#cbd5e1;font-weight:700}.profile-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}.profile-kpi{border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:14px;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.025));box-shadow:0 16px 38px rgba(2,6,23,.18)}.profile-kpi small{display:block;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.profile-kpi strong{display:block;font-size:28px;margin-top:6px}.profile-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(420px,1fr));gap:18px}.profile-chart{height:430px;position:relative}.profile-chart.profile-chart-wide{grid-column:1/-1;height:400px}.risk-pill{display:inline-flex;gap:8px;align-items:center;border-radius:999px;padding:8px 12px;font-weight:950;background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.20)}.timeline-list{display:grid;gap:8px;max-height:360px;overflow:auto}.timeline-item{border:1px solid rgba(148,163,184,.16);border-radius:14px;padding:10px;background:rgba(255,255,255,.04)}.profile-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}@media(max-width:1050px){.member-profile-hero,.profile-chart-grid{grid-template-columns:1fr}}
         
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -9377,7 +9377,7 @@ def member_profile(member_id):
 
 
 
-/* ===== OPTION A PREMIUM FORCE UI - DIRECT PROFILE ROUTE ===== */
+# /* ===== OPTION A PREMIUM FORCE UI - DIRECT PROFILE ROUTE ===== */
 #zaPremiumTrendHero{margin:18px 0 22px!important;border-radius:30px!important;overflow:hidden!important;border:1px solid rgba(125,211,252,.30)!important;background:radial-gradient(circle at 78% 0%, rgba(34,197,94,.22), transparent 28%),radial-gradient(circle at 12% 20%, rgba(56,189,248,.15), transparent 28%),linear-gradient(135deg, rgba(15,23,42,.96), rgba(30,41,59,.80))!important;box-shadow:0 30px 90px rgba(0,0,0,.48), 0 0 60px rgba(56,189,248,.13)!important;padding:24px!important;position:relative!important}
 #zaPremiumTrendHero::before{content:"";position:absolute;inset:-1px;pointer-events:none;background:linear-gradient(120deg, transparent, rgba(255,255,255,.08), transparent);transform:translateX(-100%);animation:zaPremiumShineForce 4.8s ease-in-out infinite}
 @keyframes zaPremiumShineForce{0%,55%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
@@ -9409,11 +9409,11 @@ def member_profile(member_id):
 .za-premium-mini strong{display:block!important;margin-top:4px!important;color:#f8fafc!important;font-size:18px!important;font-weight:1000!important}
 #zaMemberTrendSinglePanel{display:none!important}
 @media(max-width:900px){.za-premium-trend-grid{grid-template-columns:1fr!important}.za-premium-title{font-size:24px!important}.za-premium-bars{height:115px!important}}
-/* ===== END OPTION A PREMIUM FORCE UI - DIRECT PROFILE ROUTE ===== */
+# /* ===== END OPTION A PREMIUM FORCE UI - DIRECT PROFILE ROUTE ===== */
 
 
 
-/* ===== FINAL PREMIUM WOW TREND HERO ===== */
+# /* ===== FINAL PREMIUM WOW TREND HERO ===== */
 #zaWowTrendHero{
   margin:22px 0 24px!important;
   padding:28px!important;
@@ -9479,11 +9479,11 @@ def member_profile(member_id):
 .za-wow-mini-grid strong{display:block!important;margin-top:5px!important;color:#f8fafc!important;font-size:19px!important;font-weight:1000!important}
 #zaMemberTrendSinglePanel,#zaPremiumTrendHero{display:none!important}
 @media(max-width:900px){.za-wow-grid{grid-template-columns:1fr!important}.za-wow-title{font-size:28px!important}.za-wow-main-score{font-size:34px!important}.za-wow-bars{height:130px!important}}
-/* ===== END FINAL PREMIUM WOW TREND HERO ===== */
+# /* ===== END FINAL PREMIUM WOW TREND HERO ===== */
 
 
 
-/* ===== FINAL 100% WOW TREND UI AUTO INTEGRATED ===== */
+# /* ===== FINAL 100% WOW TREND UI AUTO INTEGRATED ===== */
 #zaFinalWowTrendHero{
   margin:22px 0 24px!important;
   padding:28px!important;
@@ -9555,11 +9555,11 @@ def member_profile(member_id):
 .za-final-wow-mini strong{display:block!important;margin-top:5px!important;color:#f8fafc!important;font-size:18px!important;font-weight:1000!important}
 #zaMemberTrendSinglePanel,#zaPremiumTrendHero,#zaWowTrendHero{display:none!important}
 @media(max-width:900px){.za-final-wow-layout{grid-template-columns:1fr!important}.za-final-wow-left h2{font-size:28px!important}.za-final-wow-score{font-size:34px!important}.za-final-wow-bars{height:130px!important}}
-/* ===== END FINAL 100% WOW TREND UI AUTO INTEGRATED ===== */
+# /* ===== END FINAL 100% WOW TREND UI AUTO INTEGRATED ===== */
 
 
 
-/* ===== 100% ELITE SAAS TREND POLISH V2 ===== */
+# /* ===== 100% ELITE SAAS TREND POLISH V2 ===== */
 #zaEliteTrendHero{
   margin:24px 0 26px!important;
   padding:30px!important;
@@ -9636,11 +9636,11 @@ def member_profile(member_id):
 .za-elite-mini strong{display:block!important;margin-top:5px!important;color:#f8fafc!important;font-size:18px!important;font-weight:1000!important}
 #zaMemberTrendSinglePanel,#zaPremiumTrendHero,#zaWowTrendHero,#zaFinalWowTrendHero{display:none!important}
 @media(max-width:900px){.za-elite-grid{grid-template-columns:1fr!important}.za-elite-left h2{font-size:29px!important}.za-elite-score{font-size:36px!important}.za-elite-bars{height:135px!important}}
-/* ===== END 100% ELITE SAAS TREND POLISH V2 ===== */
+# /* ===== END 100% ELITE SAAS TREND POLISH V2 ===== */
 
 
 
-/* ===== COHORT COMPARISON UI V1 ===== */
+# /* ===== COHORT COMPARISON UI V1 ===== */
 #zaCohortComparison{
   margin:18px 0 24px!important;
   padding:24px!important;
@@ -9678,11 +9678,11 @@ def member_profile(member_id):
 .za-cohort-bottom li:last-child{border-bottom:0!important}
 .za-cohort-bottom li b{color:#f8fafc!important}
 @media(max-width:900px){.za-cohort-head,.za-cohort-bottom{grid-template-columns:1fr!important;display:grid!important}.za-cohort-rank-pill{text-align:left!important}}
-/* ===== END COHORT COMPARISON UI V1 ===== */
+# /* ===== END COHORT COMPARISON UI V1 ===== */
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
         <div class="member-profile-layout-fix"><div class="member-profile-hero">
             <div class="hero">
                 <div class="profile-sub">Member Profile / Deep Insights</div>
@@ -10159,7 +10159,7 @@ def analytics():
         .month-year-box{background:#fff8df;border:1px solid #e4c779;border-radius:10px;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}.month-year-box h4{margin:0 0 6px;font-size:12px}.month-year-box label{display:flex;gap:7px;align-items:center;font-size:12px;margin:4px 0}.month-year-box input{height:auto}.register-table-wrap{max-height:72vh;overflow:auto;border-radius:18px;border:1px solid rgba(148,163,184,.22)}.register-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}.register-table th,.register-table td{min-width:44px;text-align:center;padding:9px 10px;border-bottom:1px solid rgba(148,163,184,.16);border-right:1px solid rgba(148,163,184,.12)}.register-table th{position:sticky;top:0;z-index:4;background:#111827}.register-table .sticky-member{position:sticky;left:0;z-index:5;min-width:230px;text-align:left;background:#111827}.register-table td.sticky-member{z-index:3;background:rgba(15,23,42,.98);font-weight:800;cursor:pointer}.reg-cell{font-weight:900;border-radius:9px;color:#08111f}.reg-p{background:#22c55e}.reg-l{background:#facc15}.reg-a{background:#ef4444;color:#fff}.reg-u{background:#94a3b8}.reg-empty{color:#94a3b8}.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(2,6,23,.68);z-index:999;align-items:center;justify-content:center;padding:18px}.modal-backdrop.show{display:flex}.modal-card{max-width:460px;width:100%;background:#0f172a;border:1px solid rgba(148,163,184,.3);border-radius:22px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
         @media(max-width:1180px){.dash-showcase{grid-template-columns:1fr}.dash-mini-sidebar,.side-help{position:static}.analytics-layout,.bottom-grid,.participant-chart-grid{grid-template-columns:1fr}.dash-main-title{flex-direction:column}.dash-title-pill{width:100%;font-size:18px}.control-stack{border-left:0;padding-left:0}}
         
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -10192,7 +10192,7 @@ def analytics():
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 # <style>
         /* Compact graph analytics: remove helper panels and give charts more space */
         .dash-mini-sidebar,.dash-actions,.side-help{display:none!important;}
@@ -10212,7 +10212,7 @@ button[type="submit"]{margin-top:20px!important;}
         @keyframes analyticsFadeIn{from{opacity:.72;transform:translateY(6px)}to{opacity:1;transform:none}}
         html{scroll-behavior:smooth}
         
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -10245,7 +10245,7 @@ button[type="submit"]{margin-top:20px!important;}
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
         <div class="analytics-tab-shell" id="analyticsTabsV3">
             <nav class="analytics-tab-nav" aria-label="Analytics sections">
                 <a class="active" href="#analyticsOverview">Overview</a>
@@ -11223,7 +11223,7 @@ def attendance_register():
         @media print{.sidebar,.topbar,.reg-side-note,.reg-feature-box,.reg-controls,.reg-month-nav{display:none!important}.main{margin:0!important}.register-book{box-shadow:none;background:#fff;padding:0}.register-heading span{color:#000;background:#fff;border:1px solid #000}.register-table-wrap{max-height:none;overflow:visible}.register-table th{position:static}.register-table .sticky-member{position:static}}
         @media(max-width:1180px){.reg-dashboard-shell{grid-template-columns:1fr}.reg-side-note,.reg-feature-box{position:static}.register-heading span{font-size:17px;padding:8px 14px}}
         
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -11256,7 +11256,7 @@ def attendance_register():
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 # <style>
         /* Premium readable register theme: keeps book structure, fixes color clarity and spacing */
         .reg-dashboard-shell{grid-template-columns:minmax(0,1fr)!important;}
@@ -11306,7 +11306,7 @@ button[type="submit"]{margin-top:20px!important;}
         .reg-pagination a,.reg-pagination span{padding:7px 10px;border-radius:8px;background:#0f172a;border:1px solid rgba(96,165,250,.35);color:#dbeafe;text-decoration:none}
         .reg-pagination .disabled{opacity:.45}
         
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -11339,7 +11339,7 @@ button[type="submit"]{margin-top:20px!important;}
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
         <div class="reg-dashboard-shell">
             <aside class="reg-side-note">
                 <b>MONTHLY REGISTER VIEW</b>
@@ -11520,7 +11520,7 @@ def attendance_register_export_excel():
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 # <style>
 button:active {
     transform: scale(0.97);
@@ -11529,7 +11529,7 @@ button:active {
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 </head><body><table border='1'>""")
     output.write(f"<tr><th colspan='{len(data['days']) + 7}'>Attendance Register - {data['month_name']} {data['year']}</th></tr>")
     output.write("<tr><th>Member</th><th>Total</th>" + "".join(f"<th>{d}</th>" for d in data["days"]) + "<th>P</th><th>L</th><th>A</th><th>U</th><th>%</th></tr>")
@@ -12339,7 +12339,7 @@ def push_setup():
             .push-status {{ margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.04); white-space: pre-wrap; }}
             a.push-link {{ color: #c4b5fd; text-decoration: none; }}
         
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -12372,7 +12372,7 @@ def push_setup():
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 # <style>
 .toggle-btn {
     position: relative;
@@ -12396,7 +12396,7 @@ button[type="submit"]{margin-top:20px!important;}
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 # <style>
 button:active {
     transform: scale(0.97);
@@ -12405,7 +12405,7 @@ button:active {
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 </head>
     <body>
         <div class="push-wrap">
@@ -12567,7 +12567,7 @@ def notification_control():
 # <style>
         .notif-shell{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:18px;align-items:start}.notif-card{background:linear-gradient(145deg,rgba(15,23,42,.96),rgba(2,6,23,.98));border:1px solid rgba(99,102,241,.28);border-radius:24px;padding:22px;box-shadow:0 24px 70px rgba(0,0,0,.42)}.notif-title{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:18px}.notif-title h2{margin:0;font-size:24px}.notif-title p{margin:5px 0 0;color:#94a3b8}.notif-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.notif-box{background:rgba(15,23,42,.9);border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:16px}.notif-box h3{margin:0 0 12px;font-size:16px}.toggle-row,.check-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.10)}.toggle-row:last-child,.check-row:last-child{border-bottom:0}.notif-input,.notif-textarea{width:100%;border-radius:12px;border:1px solid rgba(96,165,250,.28);background:#08111f;color:#e5e7eb;padding:11px 12px}.notif-textarea{min-height:120px;resize:vertical}.switch{position:relative;width:52px;height:28px}.switch input{display:none}.slider{position:absolute;inset:0;background:#334155;border-radius:999px;cursor:pointer;transition:.2s}.slider:before{content:"";position:absolute;width:22px;height:22px;left:3px;top:3px;background:white;border-radius:50%;transition:.2s}.switch input:checked + .slider{background:linear-gradient(90deg,#2563eb,#7c3aed)}.switch input:checked + .slider:before{transform:translateX(24px)}.notif-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.notif-actions button{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed)}.notif-actions .secondary{background:#1e293b}.notif-actions .success{background:#16a34a}.notif-log{max-height:620px;overflow:auto}.log-item{border-bottom:1px solid rgba(148,163,184,.12);padding:12px 0}.log-title{font-weight:950;color:#f8fafc}.log-meta{font-size:12px;color:#94a3b8;margin-top:4px}.log-msg{font-size:13px;color:#cbd5e1;margin-top:6px;line-height:1.45}.pill-ok{background:rgba(34,197,94,.14);color:#86efac;border:1px solid rgba(34,197,94,.28);padding:5px 8px;border-radius:999px;font-size:12px;font-weight:900}@media(max-width:1100px){.notif-shell{grid-template-columns:1fr}.notif-grid{grid-template-columns:1fr}}
         
-/* TOGGLE SWITCH */
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -12600,7 +12600,7 @@ def notification_control():
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
         <div class="hero"><div class="hero-grid"><div><div class="badge">Notification Control Center</div><h1 class="hero-title">Smart alert delivery controls</h1><div class="hero-copy">Enable or disable Email/Push, select alert types, customize messages, test delivery, and review alert logs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Email</div><div class="big">{{ 'ON' if settings.email_enabled else 'OFF' }}</div></div><div class="hero-chip"><div class="small">Push</div><div class="big">{{ 'ON' if settings.push_enabled else 'OFF' }}</div></div></div></div></div>
         {% if result_message %}<div class="card" style="margin-bottom:16px">{{ result_message }}</div>{% endif %}
         <div class="notif-shell"><form method="post" class="notif-card"><div class="notif-title"><div><h2>Controls</h2><p>Connected with your existing smart alert system.</p></div><span class="pill-ok">No spam: state-change only</span></div><div class="notif-grid"><div class="notif-box"><h3>Delivery Channels</h3><label class="toggle-row"><span>Email alerts</span><span class="switch"><input type="checkbox" name="email_enabled" {% if settings.email_enabled %}checked{% endif %}><span class="slider"></span></span></label><label class="toggle-row"><span>Push alerts</span><span class="switch"><input type="checkbox" name="push_enabled" {% if settings.push_enabled %}checked{% endif %}><span class="slider"></span></span></label><div style="margin-top:12px"><label class="small">Test email receiver</label><input class="notif-input" name="test_email_to" value="{{ settings.test_email_to }}" placeholder="your@email.com"></div></div><div class="notif-box"><h3>Alert Types</h3>{% for key,label in alert_labels.items() %}<label class="check-row"><span>{{ label }}</span><input type="checkbox" name="alert_types" value="{{ key }}" {% if key in settings.alert_types %}checked{% endif %}></label>{% endfor %}</div><div class="notif-box"><h3>Timing Control</h3>{% for key,label in [('before','Before meeting'),('during','During meeting'),('after','After meeting')] %}<label class="check-row"><span>{{ label }}</span><input type="checkbox" name="timings" value="{{ key }}" {% if key in settings.timings %}checked{% endif %}></label>{% endfor %}</div><div class="notif-box"><h3>Message Template</h3><textarea class="notif-textarea" name="message_template">{{ settings.message_template }}</textarea><div class="muted" style="font-size:12px;margin-top:8px">Available: {title}, {message}, {state}, {alert_type}, {member_name}, {meeting_topic}</div></div></div><div class="notif-actions"><button type="submit" name="action" value="save">Save Controls</button><button type="submit" class="success" name="action" value="test_email">Test Email</button><button type="submit" class="secondary" name="action" value="test_push">Test Push</button></div></form><div class="notif-card notif-log"><div class="notif-title"><div><h2>Alert Logs</h2><p>Latest smart alert state-change records.</p></div></div>{% if logs %}{% for log in logs %}<div class="log-item"><div class="log-title">{{ log.title }}</div><div class="log-meta">{{ fmt_dt(log.created_at) }} · {{ log.alert_type }} · {{ log.previous_state or '-' }} → {{ log.current_state }} · Email {{ '✓' if log.email_sent else '×' }} · Push {{ log.push_sent }}</div><div class="log-msg">{{ log.message }}</div></div>{% endfor %}{% else %}<div class="muted">No alert logs yet.</div>{% endif %}</div></div>
@@ -12615,7 +12615,7 @@ def appearance():
         <div class="hero"><div class="hero-grid"><div><div class="badge info" style="margin-bottom:12px">Appearance Engine</div><h1 class="hero-title">🎨 Appearance Studio</h1><div class="hero-copy">One-click full system theme switching with premium skeleton loading, animation control, glow effects, and Chart.js theme sync.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Themes</div><div class="big">8</div></div><div class="hero-chip"><div class="small">Storage</div><div class="big">Local</div></div></div></div></div>
         <div class="appearance-controls"><div class="appearance-control"><label>Animation Level</label><select id="animationLevelSelect"><option value="off">Off</option><option value="minimal">Minimal</option><option value="smooth">Smooth</option><option value="full">Full</option></select><div class="muted" style="margin-top:8px">Saved in browser using localStorage. Affects transitions, hover motion, and loading polish.</div></div><div class="appearance-control"><label>Premium Skeleton Preview</label><div class="premium-skeleton-grid" style="margin-top:10px"><div class="premium-skeleton premium-skeleton-card"></div><div><div class="premium-skeleton premium-skeleton-line long"></div><div class="premium-skeleton premium-skeleton-line medium"></div><div class="premium-skeleton premium-skeleton-line short"></div></div></div></div></div>
         <div class="appearance-studio-grid">{% for key, name, desc, p1, p2, p3 in themes %}<div class="appearance-card" data-theme-apply="{{ key }}" style="--p1:{{ p1 }};--p2:{{ p2 }};--p3:{{ p3 }}"><div class="preview-band"></div><h3>{{ name }}</h3><p>{{ desc }}</p><div class="row" style="margin-top:14px"><span class="badge info">Click to Apply</span></div></div>{% endfor %}</div>
-        <script>document.addEventListener('DOMContentLoaded',function(){if(window.setupAppearanceEngineV8){window.setupAppearanceEngineV8();}});# </script>
+# <script>document.addEventListener('DOMContentLoaded',function(){if(window.setupAppearanceEngineV8){window.setupAppearanceEngineV8();}});# </script>
     """, themes=themes)
     return page("Appearance Studio", body, "appearance")
 
@@ -12636,7 +12636,7 @@ def _ai_percent(num, den):
 def _ai_parse_threshold(query, default=AI_LEVEL3_LOW_ATTENDANCE_DEFAULT):
     import re
     q = (query or '').lower()
-    for pattern in [r'(?:below|less than|under|<)\s*(\d{1,3})\s*%?', r'(\d{1,3})\s*%\s*(?:attendance|attend)']:
+    for pattern in [r'(?:below|less than|under|<)\\s*(\d{1,3})\\s*%?', r'(\d{1,3})\\s*%\\s*(?:attendance|attend)']:
         m = re.search(pattern, q)
         if m:
             return float(max(0, min(100, int(m.group(1)))))
@@ -12645,7 +12645,7 @@ def _ai_parse_threshold(query, default=AI_LEVEL3_LOW_ATTENDANCE_DEFAULT):
 def _ai_parse_days(query, default=None):
     import re
     q = (query or '').lower()
-    m = re.search(r'last\\\s+(\d{1,3})\\\s+(?:day|days)', q)
+    m = re.search(r'last\\\\s+(\d{1,3})\\\\s+(?:day|days)', q)
     if m:
         return max(1, min(365, int(m.group(1))))
     if 'last week' in q or 'past week' in q:
@@ -12897,8 +12897,8 @@ def ai_intelligence():
         print(f"AI Level 4 section skipped safely: {exc}"); preds=[]; recs=[]
     high=len([p for p in preds if p.get('absence_probability',0)>=70]); med=len([p for p in preds if 45<=p.get('absence_probability',0)<70]); consistent=len([p for p in preds if p.get('behavior_tag')=='Consistent']); risky=len([p for p in preds if p.get('behavior_tag')=='Risky'])
     body=render_template_string("""
-    <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}.l4-pill{display:inline-flex;border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px}.l4-high{background:rgba(239,68,68,.18);color:#fecaca;border:1px solid rgba(239,68,68,.35)}.l4-med{background:rgba(245,158,11,.18);color:#fde68a;border:1px solid rgba(245,158,11,.35)}.l4-low{background:rgba(34,197,94,.14);color:#bbf7d0;border:1px solid rgba(34,197,94,.28)}.l4-actions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.l4-actions button,.l4-actions a{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed);text-decoration:none}.l4-actions .danger{background:linear-gradient(90deg,#dc2626,#f97316)}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}
-/* TOGGLE SWITCH */
+# <style>.ai-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.ai-card{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.18);border-radius:22px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.28)}.ai-big{font-size:30px;font-weight:950}.ai-chat{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px}.ai-msg{white-space:pre-wrap;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);padding:12px;border-radius:16px;margin:10px 0}.ai-input{width:100%;border-radius:14px;border:1px solid rgba(99,102,241,.3);background:#020617;color:#e5e7eb;padding:13px}.ai-suggest{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.ai-suggest button{border:0;border-radius:999px;padding:9px 12px;background:rgba(99,102,241,.2);color:#c7d2fe;font-weight:800}.risk-critical{color:#fecaca}.risk-warning{color:#fde68a}.risk-healthy{color:#bbf7d0}.heat{overflow:auto}.heat table{border-collapse:separate;border-spacing:4px;width:100%}.heat td,.heat th{font-size:12px;padding:8px;border-radius:8px;text-align:center}.h-PRESENT,.h-HOST{background:#166534;color:#dcfce7}.h-LATE{background:#92400e;color:#fef3c7}.h-ABSENT{background:#7f1d1d;color:#fee2e2}.h-NO_DATA{background:#334155;color:#cbd5e1}.l4-pill{display:inline-flex;border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px}.l4-high{background:rgba(239,68,68,.18);color:#fecaca;border:1px solid rgba(239,68,68,.35)}.l4-med{background:rgba(245,158,11,.18);color:#fde68a;border:1px solid rgba(245,158,11,.35)}.l4-low{background:rgba(34,197,94,.14);color:#bbf7d0;border:1px solid rgba(34,197,94,.28)}.l4-actions{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.l4-actions button,.l4-actions a{border:0;border-radius:12px;padding:11px 14px;font-weight:900;color:white;background:linear-gradient(90deg,#2563eb,#7c3aed);text-decoration:none}.l4-actions .danger{background:linear-gradient(90deg,#dc2626,#f97316)}@media(max-width:1100px){.ai-grid{grid-template-columns:1fr 1fr}.ai-chat{grid-template-columns:1fr}}@media(max-width:700px){.ai-grid{grid-template-columns:1fr}}
+# /* TOGGLE SWITCH */
 .toggle-switch {
     position: relative;
     width: 120px;
@@ -12931,7 +12931,7 @@ def ai_intelligence():
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
     <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Intelligence Center</div><h1 class="hero-title">🧠 AI Intelligence + Level 4</h1><div class="hero-copy">Smart assistant, current-month member intelligence, risk heatmap, prediction engine, behavioral tags, auto-actions, and smart reports — merged into one dashboard.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Basis</div><div class="big" style="font-size:18px">{{ basis }}</div></div></div></div></div>
     <div class="ai-grid"><div class="ai-card"><div class="small">Critical Members</div><div class="ai-big risk-critical">{{ critical }}</div></div><div class="ai-card"><div class="small">Warning Members</div><div class="ai-big risk-warning">{{ warning }}</div></div><div class="ai-card"><div class="small">High Absence Risk</div><div class="ai-big risk-critical">{{ high }}</div></div><div class="ai-card"><div class="small">Latest Meeting Health</div><div class="ai-big">{{ latest_score }}/100</div></div></div>
     <div class="ai-chat" style="margin-top:18px"><div class="ai-card"><h2>🤖 Smart Assistant</h2><div id="aiGreeting" class="ai-msg">Analyzing your latest attendance data...</div><div class="ai-suggest"><button type="button" onclick="aiAsk('Who is at risk?')">At-risk members</button><button type="button" onclick="aiAsk('List all members below 50% attendance')">Below 50%</button><button type="button" onclick="aiAsk('Show top performers')">Top performers</button><button type="button" onclick="aiAsk('Why attendance dropped?')">Why dropped?</button><button type="button" onclick="aiAsk('Summarize last meeting')">Last meeting</button><button type="button" onclick="aiAsk('Show predictions')">Predictions</button><button type="button" onclick="aiAsk('Show behavioral tags')">Behavior tags</button><button type="button" onclick="aiAsk('Send reminder to them')">Remind them</button><button type="button" onclick="location.href='/ai-level4/report.pdf'">Smart PDF</button><button type="button" onclick="location.href='/ai-level4/report.csv'">Smart CSV</button></div><input id="aiLevel3Input" class="ai-input" placeholder="Ask attendance question..." onkeydown="if(event.key==='Enter'){aiAsk(this.value)}"><div style="margin-top:10px"><button type="button" onclick="aiAsk(document.getElementById('aiLevel3Input').value)">Ask AI</button></div><div id="aiLevel3Answer" class="ai-msg">Ready.</div></div><div class="ai-card"><h2>💡 Insights</h2>{% for i in insights %}<div class="ai-msg"><b>{{ i.title }}</b><br><span class="small">{{ i.category }} · {{ i.severity }}</span><br>{{ i.message }}<br><b>Recommendation:</b> {{ i.recommendation }}</div>{% endfor %}</div></div>
@@ -12939,7 +12939,7 @@ button[type="submit"]{margin-top:20px!important;}
     <div class="ai-card" style="margin-top:18px"><h2>🔮 Prediction + Behavioral Intelligence</h2><div class="l4-actions"><button type="button" onclick="l4Run(false)">Preview Auto Actions</button><button type="button" class="danger" onclick="if(confirm('Send reminders to high-risk members?'))l4Run(true)">Execute Reminders</button><a href="/ai-level4/report.pdf">Smart PDF</a><a href="/ai-level4/report.csv">Smart CSV</a></div><div id="l4ActionResult" class="ai-msg">Ready.</div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Attendance %</th><th>Absence Risk</th><th>Prediction</th><th>Behavior Tag</th><th>Recommendation</th></tr></thead><tbody>{% for p in preds %}<tr><td>{{ p.name }}</td><td>{{ p.attendance_pct }}%</td><td><span class="l4-pill {{ 'l4-high' if p.absence_probability >= 70 else 'l4-med' if p.absence_probability >= 45 else 'l4-low' }}">{{ p.absence_probability }}%</span></td><td>{{ p.prediction }}</td><td>{{ p.behavior_tag }}</td><td>{{ p.recommendation }}</td></tr>{% endfor %}</tbody></table></div></div>
     <div class="ai-card heat" style="margin-top:18px"><h2>🧠 Risk Heatmap</h2><table><thead><tr><th>Member</th>{% for mt in heat_meetings %}<th>{{ fmt_date(mt.start_time) }}</th>{% endfor %}</tr></thead><tbody>{% for row in heat %}<tr><th>{{ row.name }}</th>{% for c in row.cells %}<td class="h-{{ c }}">{{ 'P' if c in ['PRESENT','HOST'] else 'L' if c=='LATE' else 'A' if c=='ABSENT' else '-' }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
     <div class="ai-card" style="margin-top:18px"><h2>🔥 Smart Alert Panel</h2>{% if logs %}{% for l in logs %}<div class="ai-msg"><b>{{ l.title }}</b><br>{{ l.message }}<br><span class="small">{{ fmt_dt(l.created_at) }} · {{ l.current_state }}</span></div>{% endfor %}{% else %}<div class="muted">No smart alert logs yet.</div>{% endif %}</div>
-    <script>function aiAsk(q){if(!q||!q.trim())return;const box=document.getElementById('aiLevel3Answer');box.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(async r=>{let d=await r.json().catch(()=>({response:'AI response parse failed.'}));if(!r.ok){throw new Error(d.response||('HTTP '+r.status));}return d;}).then(d=>{box.innerText=d.response||'No answer found.';}).catch(err=>{box.innerText='AI assistant error: '+(err.message||err)+'. Please check Render logs if this repeats.';});}function l4Run(execute){const box=document.getElementById('l4ActionResult');box.innerText=execute?'Executing safe reminders...':'Checking preview...';fetch('/api/ai-level4/auto-actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execute:execute,max_members:20})}).then(r=>r.json()).then(d=>{box.innerText=`Mode: ${d.mode}\nTargets: ${d.target_count}\nSent: ${d.sent||0}\nSkipped: ${d.skipped||0}\nFailed: ${(d.failed||[]).join(', ')||'None'}`;}).catch(()=>{box.innerText='Auto action failed. Check logs.';});}fetch('/api/ai-insights-level3').then(r=>r.json()).then(d=>{let ins=(d.insights||[]).slice(0,2).map(x=>'• '+x.message).join('\n');document.getElementById('aiGreeting').innerText=ins||'No critical insight right now.';}).catch(()=>{});# </script>
+# <script>function aiAsk(q){if(!q||!q.trim())return;const box=document.getElementById('aiLevel3Answer');box.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(async r=>{let d=await r.json().catch(()=>({response:'AI response parse failed.'}));if(!r.ok){throw new Error(d.response||('HTTP '+r.status));}return d;}).then(d=>{box.innerText=d.response||'No answer found.';}).catch(err=>{box.innerText='AI assistant error: '+(err.message||err)+'. Please check Render logs if this repeats.';});}function l4Run(execute){const box=document.getElementById('l4ActionResult');box.innerText=execute?'Executing safe reminders...':'Checking preview...';fetch('/api/ai-level4/auto-actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execute:execute,max_members:20})}).then(r=>r.json()).then(d=>{box.innerText=`Mode: ${d.mode}\nTargets: ${d.target_count}\nSent: ${d.sent||0}\nSkipped: ${d.skipped||0}\nFailed: ${(d.failed||[]).join(', ')||'None'}`;}).catch(()=>{box.innerText='Auto action failed. Check logs.';});}fetch('/api/ai-insights-level3').then(r=>r.json()).then(d=>{let ins=(d.insights||[]).slice(0,2).map(x=>'• '+x.message).join('\n');document.getElementById('aiGreeting').innerText=ins||'No critical insight right now.';}).catch(()=>{});# </script>
     """, insights=insights, members=members, critical=critical, warning=warning, latest_score=latest_score, avg_duration=avg_duration, logs=logs, heat=heat, heat_meetings=heat_meetings, fmt_date=fmt_date, fmt_dt=fmt_dt, basis=basis, preds=preds, recs=recs, high=high, med=med, consistent=consistent, risky=risky)
     return page('AI Intelligence', body, 'ai_intelligence')
 
@@ -13208,7 +13208,7 @@ def _ai_answer_absentees_last_meeting():
 
 def _ai_answer_late_more_than(q):
     import re
-    m=re.search(r'(?:more than|greater than|over|>)\s*(\d+)', q.lower())
+    m=re.search(r'(?:more than|greater than|over|>)\\s*(\d+)', q.lower())
     n=int(m.group(1)) if m else 3
     members=[]
     try:
@@ -13985,7 +13985,7 @@ ZA_FINAL_DYNAMIC_TREND_ASSET = r"""
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 <script id="za-final-dynamic-trend-script">
 (function(){
   if(window.__ZA_FINAL_DYNAMIC_TREND_V5__) return;
@@ -14378,7 +14378,7 @@ def _za_premium_trend_html(member_id):
 # ===== OPTION A PREMIUM CSS INJECTION - SAFE FRONTEND ONLY =====
 ZA_OPTION_A_PREMIUM_CSS = r"""
 <style id="za-premium-force-style">
-/* ===== OPTION A PREMIUM FORCE UI ===== */
+# /* ===== OPTION A PREMIUM FORCE UI ===== */
 #zaPremiumTrendHero{
   margin:18px 0 22px!important;
   border-radius:30px!important;
@@ -14432,11 +14432,11 @@ ZA_OPTION_A_PREMIUM_CSS = r"""
 .za-premium-mini strong{display:block!important;margin-top:4px!important;color:#f8fafc!important;font-size:18px!important;font-weight:1000!important;}
 #zaMemberTrendSinglePanel{display:none!important;}
 @media(max-width:900px){.za-premium-trend-grid{grid-template-columns:1fr!important}.za-premium-title{font-size:24px!important}.za-premium-bars{height:115px!important}}
-/* ===== END OPTION A PREMIUM FORCE UI ===== */
+# /* ===== END OPTION A PREMIUM FORCE UI ===== */
 # <style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-# </style># </style>
+# </style>
 """
 
 @app.after_request
@@ -14472,7 +14472,7 @@ if __name__ == "__main__":
     else:
         app.run(host="0.0.0.0", port=port, debug=True)
 # <script>
-/* GPT55 LIVE DURATION STABILIZER */
+# /* GPT55 LIVE DURATION STABILIZER */
 (function(){
 if(window.__zaDurationStabilizerLoaded)return;
 window.__zaDurationStabilizerLoaded=true;
