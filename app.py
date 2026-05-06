@@ -845,8 +845,8 @@ body.za-socket-live-mode .za-realtime-pill::before{
       dock.className = "za-realtime-dock";
       dock.innerHTML =
         '<div class="za-realtime-status">' +
-          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Connecting socket...</span></div>' +
-          '<div class="za-realtime-pill" id="zaRealtimePill">Socket</div>' +
+          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Connecting live updates...</span></div>' +
+          '<div class="za-realtime-pill" id="zaRealtimePill">Live Updated</div>' +
         '</div>' +
         '<div class="za-realtime-feed" id="zaRealtimeFeed"></div>';
       document.body.appendChild(dock);
@@ -906,7 +906,7 @@ body.za-socket-live-mode .za-realtime-pill::before{
     },
     applySnapshot:function(payload){
       payload = payload || {};
-      this.setStatus("Last socket update: " + new Date().toLocaleTimeString(), true);
+      this.setStatus("Last live update: " + new Date().toLocaleTimeString(), true);
       this.animateDashboardNumbers();
       this.refreshRiskBadges();
       var summary = payload.summary || {};
@@ -922,8 +922,8 @@ body.za-socket-live-mode .za-realtime-pill::before{
     bind:function(){
       var self = this;
       self.ensureDock();
-      window.addEventListener("za:socket-connected", function(){ self.setStatus("Socket connected", true); self.addFeed("join","Realtime connected","Socket channel ready"); });
-      window.addEventListener("za:socket-disconnected", function(){ self.setStatus("Socket reconnecting", false); self.addFeed("alert","Realtime reconnecting","Waiting for socket"); });
+      window.addEventListener("za:socket-connected", function(){ self.setStatus("Live updated", true); self.addFeed("join","Realtime connected","Socket channel ready"); });
+      window.addEventListener("za:socket-disconnected", function(){ self.setStatus("Safe polling reconnecting", false); self.addFeed("alert","Realtime reconnecting","Safe polling active"); });
       window.addEventListener("za:live-snapshot", function(e){ self.applySnapshot(e.detail || {}); });
       window.addEventListener("za:realtime", function(e){
         var detail = e.detail || {};
@@ -947,9 +947,9 @@ body.za-socket-live-mode .za-realtime-pill::before{
       });
       setTimeout(function(){
         if(document.body.classList.contains("za-socket-live-mode")){
-          self.setStatus("Socket connected", true);
+          self.setStatus("Live updated", true);
         }else{
-          self.setStatus("Waiting for socket", false);
+          self.setStatus("Safe polling active", false);
         }
       },900);
     }
@@ -1323,6 +1323,23 @@ tbody tr:hover{
   }
 })();
 </script>
+
+/* ===== GPT55 GRAPH POLISH ===== */
+@media (max-width:768px){
+  canvas{
+    max-width:100% !important;
+    height:auto !important;
+  }
+  .chart-container,.analytics-chart-wrap{
+    overflow-x:auto !important;
+    padding-bottom:12px !important;
+  }
+}
+.chartjs-tooltip,
+#zaFinalFloatingTrendTip{
+  backdrop-filter:blur(14px)!important;
+}
+
 /* ===== END PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
 
 
@@ -14521,6 +14538,89 @@ def za_option_a_premium_force_css_inject(response):
 
 
 
+
+
+# ===== GPT55 FINAL TRUTH ENGINE PATCH =====
+ATTENDANCE_TRUTH_ENGINE_VERSION = "gpt55_truth_engine_v1"
+
+def calculate_precise_duration_seconds(join_time, leave_time=None):
+    """
+    Backend-only duration truth calculator.
+    Uses server timestamps only.
+    """
+    try:
+        join_dt = parse_dt(join_time)
+        end_dt = parse_dt(leave_time) if leave_time else now_local()
+        if not join_dt or not end_dt:
+            return 0
+        seconds = int((end_dt - join_dt).total_seconds())
+        return max(0, seconds)
+    except Exception:
+        return 0
+
+
+def cumulative_duration_from_sessions(sessions):
+    total = 0
+    try:
+        for item in (sessions or []):
+            total += calculate_precise_duration_seconds(
+                item.get("join_time"),
+                item.get("leave_time"),
+            )
+    except Exception:
+        pass
+    return max(0, int(total))
+
+
+def unified_attendance_percentage(present_count, total_count):
+    """
+    Common attendance truth engine for:
+    - profile analytics
+    - attendance register
+    - popup summaries
+    """
+    try:
+        present_count = float(present_count or 0)
+        total_count = float(total_count or 0)
+        if total_count <= 0:
+            return 0.0
+        return round((present_count / total_count) * 100, 2)
+    except Exception:
+        return 0.0
+
+
+def build_cumulative_attendance_payload(month_rows):
+    payload = {
+        "months": [],
+        "total_present": 0,
+        "total_meetings": 0,
+        "overall_percentage": 0,
+    }
+
+    try:
+        for row in (month_rows or []):
+            present = int(row.get("present", 0) or 0)
+            total = int(row.get("total", 0) or 0)
+
+            payload["months"].append({
+                "month": row.get("month", "-"),
+                "present": present,
+                "total": total,
+                "percentage": unified_attendance_percentage(present, total),
+            })
+
+            payload["total_present"] += present
+            payload["total_meetings"] += total
+
+        payload["overall_percentage"] = unified_attendance_percentage(
+            payload["total_present"],
+            payload["total_meetings"],
+        )
+    except Exception:
+        pass
+
+    return payload
+# ===== END GPT55 FINAL TRUTH ENGINE PATCH =====
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
