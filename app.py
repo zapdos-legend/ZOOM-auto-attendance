@@ -438,7 +438,7 @@ button:active,.btn:active,a.btn:active{
 
       if(window.__zaDurationTimer){ clearInterval(window.__zaDurationTimer); window.__zaDurationTimer=null; }
 
-      window.__zaDurationTimer_DISABLED = setInterval(function(){
+      window.__zaDurationTimer = setInterval(function(){
         document.querySelectorAll("[data-za-duration-seconds]").forEach(function(el){
           var row = el.closest("tr");
           if(!row) return;
@@ -14628,3 +14628,76 @@ if __name__ == "__main__":
         socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
     else:
         app.run(host="0.0.0.0", port=port, debug=True)
+
+
+# ================= GPT55 FINAL LIVE TRUTH PATCH =================
+
+def unified_attendance_percentage(present_count=0, late_count=0, absent_count=0):
+    try:
+        present_count = int(present_count or 0)
+        late_count = int(late_count or 0)
+        absent_count = int(absent_count or 0)
+
+        total = present_count + late_count + absent_count
+        if total <= 0:
+            return 0.0
+
+        effective_present = present_count + (late_count * 0.5)
+
+        percentage = round((effective_present / total) * 100, 2)
+
+        return max(0.0, min(100.0, percentage))
+    except Exception:
+        return 0.0
+
+
+def build_cumulative_attendance_payload(month_rows):
+    payload = {
+        "months": [],
+        "grand_total_percentage": 0.0,
+        "total_present": 0,
+        "total_late": 0,
+        "total_absent": 0,
+    }
+
+    total_present = 0
+    total_late = 0
+    total_absent = 0
+
+    for row in (month_rows or []):
+        present = int(row.get("present_count", 0) or 0)
+        late = int(row.get("late_count", 0) or 0)
+        absent = int(row.get("absent_count", 0) or 0)
+
+        month_percentage = unified_attendance_percentage(
+            present,
+            late,
+            absent
+        )
+
+        payload["months"].append({
+            "month": row.get("month", "-"),
+            "attendance_percentage": month_percentage,
+            "present_count": present,
+            "late_count": late,
+            "absent_count": absent,
+        })
+
+        total_present += present
+        total_late += late
+        total_absent += absent
+
+    payload["total_present"] = total_present
+    payload["total_late"] = total_late
+    payload["total_absent"] = total_absent
+
+    payload["grand_total_percentage"] = unified_attendance_percentage(
+        total_present,
+        total_late,
+        total_absent
+    )
+
+    return payload
+
+LAST_MEETING_ENDED_CACHE = globals().get("LAST_MEETING_ENDED_CACHE", None)
+
