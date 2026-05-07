@@ -8043,11 +8043,7 @@ def api_live_feed():
 @app.route("/live")
 @login_required
 def live():
-    return jsonify({
-        "ok": True,
-        "disabled": True,
-        "transport": "snapshot_only_mode"
-    })
+    initial_payload = build_live_snapshot_payload(include_feed=True)
     body = render_template_string(
         """
         <style>
