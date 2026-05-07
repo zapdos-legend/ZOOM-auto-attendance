@@ -1486,6 +1486,19 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 load_dotenv()
 
+
+
+# ===== GPT55 FINAL LIVE FIX ENGINE =====
+LAST_MEETING_META = {
+    "ended_at": None
+}
+
+def za_store_last_meeting_end():
+    try:
+        LAST_MEETING_META["ended_at"] = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+    except Exception:
+        pass
+
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
 
@@ -14701,3 +14714,187 @@ def build_cumulative_attendance_payload(month_rows):
 
 LAST_MEETING_ENDED_CACHE = globals().get("LAST_MEETING_ENDED_CACHE", None)
 
+
+# ===== GPT55 FINAL LIVE UI FIX =====
+try:
+    DARK_THEME_CSS += r'''
+<style>
+/* FIX TOOLTIP OVER BAR */
+.chartjs-tooltip,
+div[id*="tooltip"],
+.chart-tooltip,
+.analytics-tooltip{
+    z-index:999999 !important;
+    position:relative !important;
+}
+canvas{
+    overflow:visible !important;
+}
+
+/* LAST MEETING ENDED CARD */
+.za-last-meeting-ended{
+    margin-top:14px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:12px 16px;
+    border-radius:16px;
+    background:rgba(15,23,42,.72);
+    border:1px solid rgba(239,68,68,.22);
+    color:#f8fafc;
+    font-weight:800;
+    font-size:13px;
+    box-shadow:0 10px 28px rgba(0,0,0,.25);
+}
+.za-last-meeting-ended b{
+    color:#fca5a5;
+}
+
+/* FORCE DURATION TEXT ABOVE */
+.live-fix-duration,
+[data-za-duration-seconds]{
+    position:relative !important;
+    z-index:9999 !important;
+    font-variant-numeric:tabular-nums !important;
+}
+</style>
+
+<script>
+/* GPT55 TRUE LIVE DURATION ENGINE */
+(function(){
+    if(window.__GPT55_DURATION_ENGINE__) return;
+    window.__GPT55_DURATION_ENGINE__ = true;
+
+    function secondsFromText(v){
+        if(!v) return 0;
+        var p = String(v).trim().split(":").map(Number);
+        if(p.length===2) return (p[0]*60)+p[1];
+        if(p.length===3) return (p[0]*3600)+(p[1]*60)+p[2];
+        return 0;
+    }
+
+    function format(sec){
+        sec = Math.max(0, parseInt(sec||0));
+        var h = Math.floor(sec/3600);
+        var m = Math.floor((sec%3600)/60);
+        var s = sec%60;
+
+        if(h>0){
+            return String(h).padStart(2,"0")+":"+
+                   String(m).padStart(2,"0")+":"+
+                   String(s).padStart(2,"0");
+        }
+
+        return String(m).padStart(2,"0")+":"+
+               String(s).padStart(2,"0");
+    }
+
+    function bindDurations(){
+        document.querySelectorAll("td,span,div").forEach(function(el){
+
+            var txt = (el.textContent||"").trim();
+
+            if(!/^\\d{1,2}:\\d{2}(:\\d{2})?$/.test(txt)) return;
+
+            if(el.dataset.gpt55Bound==="1") return;
+
+            el.dataset.gpt55Bound="1";
+
+            var base = secondsFromText(txt);
+
+            el.dataset.gpt55Base = String(base);
+            el.dataset.gpt55Start = String(Date.now());
+
+            el.setAttribute("data-za-duration-seconds", base);
+        });
+    }
+
+    function tick(){
+        document.querySelectorAll("[data-gpt55-bound='1'],[data-gpt55bound='1'],[data-gpt55-base]").forEach(function(el){
+
+            var row = el.closest("tr");
+            if(!row) return;
+
+            var rowTxt = (row.textContent||"").toLowerCase();
+
+            var isLive =
+                rowTxt.includes("live") ||
+                rowTxt.includes("joined") ||
+                rowTxt.includes("host") ||
+                rowTxt.includes("present");
+
+            if(!isLive) return;
+
+            var base = parseInt(el.dataset.gpt55Base||"0");
+            var start = parseInt(el.dataset.gpt55Start||Date.now());
+
+            var sec = base + Math.floor((Date.now()-start)/1000);
+
+            el.textContent = format(sec);
+        });
+
+        var meetDuration = document.querySelectorAll(".live-fix-duration");
+
+        meetDuration.forEach(function(el){
+
+            if(el.dataset.gpt55MeetingBound!=="1"){
+
+                el.dataset.gpt55MeetingBound="1";
+                el.dataset.gpt55MeetingBase = secondsFromText(el.textContent);
+                el.dataset.gpt55MeetingStart = Date.now();
+            }
+
+            var base = parseInt(el.dataset.gpt55MeetingBase||"0");
+            var start = parseInt(el.dataset.gpt55MeetingStart||Date.now());
+
+            var sec = base + Math.floor((Date.now()-start)/1000);
+
+            el.textContent = "Duration "+format(sec);
+        });
+    }
+
+    function injectLastMeeting(){
+        if(location.pathname !== "/live") return;
+
+        var noLive = document.body.innerText.includes("NO LIVE MEETING");
+
+        if(!noLive) return;
+
+        if(document.querySelector(".za-last-meeting-ended")) return;
+
+        var hero = document.querySelector(".hero,.live-hero,.live-main-card,.glass-panel");
+
+        if(!hero) return;
+
+        var ended = localStorage.getItem("za_last_meeting_end");
+
+        if(!ended) return;
+
+        var div = document.createElement("div");
+        div.className = "za-last-meeting-ended";
+        div.innerHTML = "<span>🛑</span><span>Last meeting ended at <b>"+ended+"</b></span>";
+
+        hero.appendChild(div);
+    }
+
+    function captureMeetingEnd(){
+        var live = document.body.innerText.includes("LIVE MEETING RUNNING");
+
+        if(!live){
+            var now = new Date();
+            localStorage.setItem("za_last_meeting_end", now.toLocaleString());
+        }
+    }
+
+    setInterval(function(){
+        bindDurations();
+        tick();
+        captureMeetingEnd();
+        injectLastMeeting();
+    },1000);
+
+})();
+</script>
+'''
+except Exception:
+    pass
