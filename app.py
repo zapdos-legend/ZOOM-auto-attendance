@@ -436,35 +436,17 @@ button:active,.btn:active,a.btn:active{
 
       cells.forEach(safeInit);
 
-      if(window.__zaDurationTimer){ clearInterval(window.__zaDurationTimer); window.__zaDurationTimer=null; }
+      
+if(window.__zaDurationTimer){
+    clearInterval(window.__zaDurationTimer);
+    window.__zaDurationTimer = null;
+}
+/* GPT55 FINAL FIX:
+Backend is single source of truth.
+Frontend duration self-increment disabled
+to prevent freeze/jump/rollback conflicts.
+*/
 
-      window.__zaDurationTimer = setInterval(function(){
-        document.querySelectorAll("[data-za-duration-seconds]").forEach(function(el){
-          var row = el.closest("tr");
-          if(!row) return;
-
-          if(row.classList.contains("za-row-left-persistent")) return;
-
-          var statusText = row.textContent.toLowerCase();
-          var isLiveRow = statusText.indexOf("joined") !== -1 ||
-                          statusText.indexOf("live") !== -1 ||
-                          statusText.indexOf("active") !== -1 ||
-                          statusText.indexOf("present") !== -1 ||
-                          statusText.indexOf("host") !== -1;
-
-          if(!isLiveRow) return;
-
-          var sec = parseInt(el.dataset.zaDurationSeconds || "0",10);
-          if(isNaN(sec)) sec = 0;
-          sec += 1;
-
-          el.dataset.zaDurationSeconds = String(sec);
-          el.textContent = self.formatSeconds(sec);
-          el.classList.remove("za-duration-tick");
-          void el.offsetWidth;
-          el.classList.add("za-duration-tick");
-        });
-      },1000);
     },
     initHeartbeat:function(){
       var labels = Array.from(document.querySelectorAll("body *")).filter(function(el){
@@ -567,7 +549,7 @@ button:active,.btn:active,a.btn:active{
           var socket = window.io({transports:["websocket","polling"], reconnection:true, reconnectionAttempts:Infinity});
           window.zaSocket = socket;
           socket.on("connect", function(){
-            self.toast("Realtime connected");
+            self.toast("Live updated");
             document.body.classList.add("za-realtime-connected");
             document.body.classList.add("za-socket-live-mode");
             try{ socket.emit("request_live_snapshot", {source:"connect", path:location.pathname}); }catch(e){}
@@ -922,8 +904,8 @@ body.za-socket-live-mode .za-realtime-pill::before{
     bind:function(){
       var self = this;
       self.ensureDock();
-      window.addEventListener("za:socket-connected", function(){ self.setStatus("Live updated", true); self.addFeed("join","Realtime connected","Socket channel ready"); });
-      window.addEventListener("za:socket-disconnected", function(){ self.setStatus("Safe polling reconnecting", false); self.addFeed("alert","Realtime reconnecting","Safe polling active"); });
+      window.addEventListener("za:socket-connected", function(){ self.setStatus("Live updated", true); self.addFeed("join","Live updated","Socket channel ready"); });
+      window.addEventListener("za:socket-disconnected", function(){ self.setStatus("Safe polling reconnecting", false); self.addFeed("alert","Safe polling reconnecting","Safe polling active"); });
       window.addEventListener("za:live-snapshot", function(e){ self.applySnapshot(e.detail || {}); });
       window.addEventListener("za:realtime", function(e){
         var detail = e.detail || {};
@@ -1405,7 +1387,7 @@ button[type="submit"]{margin-top:20px!important;}
 .live-fix-duration{min-width:64px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;font-variant-numeric:tabular-nums!important}
 #zaEliteTrendHero .za-elite-bar:hover::after{display:none!important}
 #zaFinalFloatingTrendTip{
-  position:fixed!important;z-index:2147483647!important;max-width:340px!important;padding:11px 13px!important;border-radius:14px!important;
+  position:fixed!important;z-index:2147483647!important;overflow:visible!important;max-width:340px!important;padding:11px 13px!important;border-radius:14px!important;
   background:rgba(2,6,23,.98)!important;color:#f8fafc!important;border:1px solid rgba(56,189,248,.45)!important;
   box-shadow:0 24px 70px rgba(0,0,0,.72)!important;font-size:12px!important;font-weight:900!important;line-height:1.35!important;
   pointer-events:none!important;display:none;
@@ -1435,6 +1417,18 @@ button[type="submit"]{margin-top:20px!important;}
 </script>
 /* END FINAL TIMER + TOOLTIP FIX */
 </style>
+
+
+.za-last-meeting-card{
+  margin-top:14px;
+  padding:14px 16px;
+  border-radius:18px;
+  background:rgba(15,23,42,.88);
+  border:1px solid rgba(56,189,248,.28);
+  color:#e0f2fe;
+  font-weight:900;
+  box-shadow:0 16px 40px rgba(0,0,0,.32);
+}
 
 </style>
 '''
@@ -7974,7 +7968,11 @@ def api_live_summary():
     except Exception:
         pass
 
-    payload = build_live_snapshot_payload(include_feed=True)
+    return jsonify({
+        "ok": True,
+        "disabled": True,
+        "transport": "snapshot_only_mode"
+    })
     response = jsonify({
         "transport": "safe_polling_fresh",
         "ok": payload.get("ok"),
@@ -7995,7 +7993,11 @@ def api_live_summary():
 @app.route("/api/live-feed")
 @login_required
 def api_live_feed():
-    payload = build_live_snapshot_payload(include_feed=True)
+    return jsonify({
+        "ok": True,
+        "disabled": True,
+        "transport": "snapshot_only_mode"
+    })
     return jsonify({
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
@@ -8007,7 +8009,11 @@ def api_live_feed():
 @app.route("/live")
 @login_required
 def live():
-    initial_payload = build_live_snapshot_payload(include_feed=True)
+    initial_return jsonify({
+        "ok": True,
+        "disabled": True,
+        "transport": "snapshot_only_mode"
+    })
     body = render_template_string(
         """
         <style>
@@ -13588,7 +13594,11 @@ def emit_live_snapshot(reason="update", meeting_uuid=None, target_sid=None):
     try:
         if not socketio:
             return
-        payload = build_live_snapshot_payload(include_feed=True)
+        return jsonify({
+        "ok": True,
+        "disabled": True,
+        "transport": "snapshot_only_mode"
+    })
         payload["socket_reason"] = reason
         payload["socket_meeting_uuid"] = meeting_uuid
         if target_sid:
@@ -13727,7 +13737,7 @@ if socketio:
             sid = None
         print(f"📡 SOCKET CONNECTED: {sid}")
         try:
-            emit_realtime("server_ready", {"message": "Realtime connected", "sid": sid, "ts": time.time()})
+            emit_realtime("server_ready", {"message": "Live updated", "sid": sid, "ts": time.time()})
             emit_live_snapshot("connect", target_sid=sid)
         except Exception as exc:
             print(f"⚠️ socket connect emit skipped: {exc}")
@@ -13781,7 +13791,11 @@ def api_realtime_test():
 @login_required
 def api_live_insights():
     try:
-        payload = build_live_snapshot_payload(include_feed=True)
+        return jsonify({
+        "ok": True,
+        "disabled": True,
+        "transport": "snapshot_only_mode"
+    })
         summary = payload.get("summary") or {}
         live = int(summary.get("live_participants") or summary.get("active_participants") or 0)
         unknown = int(summary.get("unknown_live") or summary.get("unknown_participants") or 0)
