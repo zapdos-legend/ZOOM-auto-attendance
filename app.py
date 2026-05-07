@@ -439,13 +439,33 @@ button:active,.btn:active,a.btn:active{
       
 if(window.__zaDurationTimer){
     clearInterval(window.__zaDurationTimer);
-    window.__zaDurationTimer = null;
 }
-/* GPT55 FINAL FIX:
-Backend is single source of truth.
-Frontend duration self-increment disabled
-to prevent freeze/jump/rollback conflicts.
-*/
+
+window.__zaDurationTimer = setInterval(function(){
+    document.querySelectorAll(".za-duration-stable").forEach(function(el){
+        var sec = parseInt(el.dataset.zaDurationSeconds || "0", 10);
+
+        if(isNaN(sec)){ sec = 0; }
+
+        sec += 1;
+
+        el.dataset.zaDurationSeconds = String(sec);
+
+        var h = Math.floor(sec/3600);
+        var m = Math.floor((sec%3600)/60);
+        var s = sec%60;
+
+        var txt = h > 0
+            ? h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0")
+            : m + ":" + String(s).padStart(2,"0");
+
+        el.textContent = txt;
+
+        el.classList.remove("za-duration-tick");
+        void el.offsetWidth;
+        el.classList.add("za-duration-tick");
+    });
+},1000);
 
     },
     initHeartbeat:function(){
@@ -1416,6 +1436,41 @@ button[type="submit"]{margin-top:20px!important;}
 })();
 </script>
 /* END FINAL TIMER + TOOLTIP FIX */
+
+/* ===== GPT55 FINAL TOOLTIP FRONT LAYER FIX ===== */
+.chart-container,
+.analytics-chart-wrap,
+.member-chart-wrap,
+canvas{
+    overflow: visible !important;
+}
+
+.chartjs-tooltip,
+.chart-tooltip,
+div[id*="tooltip"]{
+    z-index: 999999 !important;
+    position: absolute !important;
+    pointer-events: none !important;
+}
+
+.card,
+.analytics-card,
+.panel{
+    overflow: visible !important;
+}
+
+
+/* GPT55 LAST MEETING STATUS */
+.last-meeting-ended-card{
+    margin-top:12px;
+    padding:10px 14px;
+    border-radius:14px;
+    background:rgba(15,23,42,.72);
+    border:1px solid rgba(148,163,184,.18);
+    color:#cbd5e1;
+    font-weight:800;
+}
+
 </style>
 
 
@@ -7968,11 +8023,8 @@ def api_live_summary():
     except Exception:
         pass
 
-    return jsonify({
-        "ok": True,
-        "disabled": True,
-        "transport": "snapshot_only_mode"
-    })
+    payload = build_live_snapshot_payload(include_feed=True)
+
     response = jsonify({
         "transport": "safe_polling_fresh",
         "ok": payload.get("ok"),
@@ -7984,26 +8036,29 @@ def api_live_summary():
         "not_joined": payload.get("not_joined", []),
         "feed": payload.get("feed", []),
     })
+
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+
     return response
 
 
 @app.route("/api/live-feed")
 @login_required
 def api_live_feed():
-    return jsonify({
-        "ok": True,
-        "disabled": True,
-        "transport": "snapshot_only_mode"
-    })
-    return jsonify({
+    payload = build_live_snapshot_payload(include_feed=True)
+
+    response = jsonify({
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
         "server_now": payload.get("server_now"),
         "feed": payload.get("feed", []),
     })
+
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+
+    return response
 
 
 @app.route("/live")
