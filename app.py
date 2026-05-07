@@ -6792,7 +6792,7 @@ button[type="submit"]{margin-top:20px!important;}
 
   function rowKey(row){
     if(!row) return "";
-    var txt = (row.textContent || "").toLowerCase().replace(/\s+/g," ").trim();
+    var txt = (row.textContent || "").toLowerCase().replace(/\\s+/g," ").trim();
     var email = txt.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
     if(email) return "email::" + email[0];
     var cells = row.querySelectorAll("td");
@@ -6800,7 +6800,7 @@ button[type="submit"]{margin-top:20px!important;}
     for(var i=0;i<Math.min(cells.length,2);i++){
       key += " " + (cells[i].textContent || "").trim().toLowerCase();
     }
-    return key.replace(/\s+/g," ").trim();
+    return key.replace(/\\s+/g," ").trim();
   }
 
   function secondsFromText(text){
@@ -8009,7 +8009,7 @@ def api_live_feed():
 @app.route("/live")
 @login_required
 def live():
-    initial_return jsonify({
+    return jsonify({
         "ok": True,
         "disabled": True,
         "transport": "snapshot_only_mode"
