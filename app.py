@@ -311,50 +311,9 @@ button:active,.btn:active,a.btn:active{
 }
 
 
-<script>
-/* ZA_FINAL_PERFORMANCE_GUARD_V2 */
-(function(){
-  if(window.__zaFinalPerformanceGuardV2) return;
-  window.__zaFinalPerformanceGuardV2 = true;
-  var isLivePage = location.pathname === "/live";
-  var oldFetch = window.fetch;
-  window.fetch = function(input, init){
-    try{
-      var url = (typeof input === "string") ? input : (input && input.url ? input.url : "");
-      if(url.indexOf("/api/live-summary") !== -1 && !isLivePage){
-        return Promise.resolve(new Response(JSON.stringify({ok:true,blocked:true,summary:{}}), {
-          status:200,
-          headers:{"Content-Type":"application/json"}
-        }));
-      }
-    }catch(e){}
-    return oldFetch.apply(this, arguments);
-  };
-  if(!isLivePage){
-    window.io = function(){
-      return {on:function(){return this;},emit:function(){return this;},connected:false,disconnect:function(){}};
-    };
-  }
-})();
-</script>
 
-<script>
-/* ZA_BLOCK_LIVE_SUMMARY_NON_LIVE_PAGES */
-(function(){
-  if(window.__zaLiveSummaryBlockerInstalled) return;
-  window.__zaLiveSummaryBlockerInstalled = true;
-  var oldFetch = window.fetch;
-  window.fetch = function(input, init){
-    try{
-      var url = (typeof input === "string") ? input : (input && input.url ? input.url : "");
-      if(url.indexOf("/api/live-summary") !== -1 && location.pathname !== "/live"){
-        return Promise.resolve(new Response(JSON.stringify({ok:true,blocked:true,summary:{}}), {status:200,headers:{"Content-Type":"application/json"}}));
-      }
-    }catch(e){}
-    return oldFetch.apply(this, arguments);
-  };
-})();
-</script>
+
+
 
 <script>
 (function(){
@@ -441,31 +400,40 @@ if(window.__zaDurationTimer){
     clearInterval(window.__zaDurationTimer);
 }
 
-window.__zaDurationTimer = setInterval(function(){
-    document.querySelectorAll(".za-duration-stable").forEach(function(el){
-        var sec = parseInt(el.dataset.zaDurationSeconds || "0", 10);
 
-        if(isNaN(sec)){ sec = 0; }
+/* ===== GPT55 LIVE DURATION ENGINE ===== */
+window.__zaStableDurationEngine = window.__zaStableDurationEngine || false;
 
-        sec += 1;
+if(!window.__zaStableDurationEngine){
+    window.__zaStableDurationEngine = true;
 
-        el.dataset.zaDurationSeconds = String(sec);
+    setInterval(function(){
 
-        var h = Math.floor(sec/3600);
-        var m = Math.floor((sec%3600)/60);
-        var s = sec%60;
+        document.querySelectorAll(".za-duration-stable").forEach(function(el){
 
-        var txt = h > 0
-            ? h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0")
-            : m + ":" + String(s).padStart(2,"0");
+            var current = parseInt(el.dataset.zaDurationSeconds || "0",10);
 
-        el.textContent = txt;
+            if(isNaN(current)){ current = 0; }
 
-        el.classList.remove("za-duration-tick");
-        void el.offsetWidth;
-        el.classList.add("za-duration-tick");
-    });
-},1000);
+            current += 1;
+
+            el.dataset.zaDurationSeconds = current;
+
+            var h = Math.floor(current/3600);
+            var m = Math.floor((current%3600)/60);
+            var s = current%60;
+
+            var txt = h > 0
+                ? h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0")
+                : m + ":" + String(s).padStart(2,"0");
+
+            el.textContent = txt;
+
+        });
+
+    },1000);
+}
+
 
     },
     initHeartbeat:function(){
@@ -695,7 +663,6 @@ window.__zaDurationTimer = setInterval(function(){
     window.ZoomAttendanceMotionEngine.start();
   }
 })();
-</script>
 /* ===== END OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
 
 
@@ -1469,6 +1436,18 @@ div[id*="tooltip"]{
     border:1px solid rgba(148,163,184,.18);
     color:#cbd5e1;
     font-weight:800;
+}
+
+
+/* ===== GPT55 TOOLTIP FIX ===== */
+.chartjs-tooltip,
+div[id*="chartjs"],
+canvas + div,
+.analytics-card,
+.chart-container{
+    z-index: 999999 !important;
+    overflow: visible !important;
+    position: relative !important;
 }
 
 </style>
