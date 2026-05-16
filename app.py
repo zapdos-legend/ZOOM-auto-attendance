@@ -1,6 +1,5 @@
 import time as _t
 LAZY_ANALYTICS = True
-BACKEND_TRUTH_DURATION_ENGINE_APPLIED = True
 # UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED = True
 # UI_UPDATE_V6_GLOBAL_THEME_SYSTEM_APPLIED = True
 
@@ -1849,22 +1848,6 @@ def init_db():
             )
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS participant_sessions (
-                    id SERIAL PRIMARY KEY,
-                    meeting_uuid TEXT NOT NULL,
-                    participant_key TEXT NOT NULL,
-                    participant_name TEXT,
-                    participant_email TEXT,
-                    join_time TIMESTAMPTZ NOT NULL,
-                    leave_time TIMESTAMPTZ,
-                    duration_seconds INTEGER NOT NULL DEFAULT 0,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                )
-                """
-            )
-            cur.execute(
-                """
                 CREATE TABLE IF NOT EXISTS activity_log (
                     id SERIAL PRIMARY KEY,
                     username TEXT,
@@ -1970,19 +1953,6 @@ def init_db():
             ensure_column(conn, "attendance", "final_status", "TEXT")
             ensure_column(conn, "attendance", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
             ensure_column(conn, "attendance", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
-
-        if table_exists(conn, "participant_sessions"):
-            ensure_column(conn, "participant_sessions", "meeting_uuid", "TEXT NOT NULL DEFAULT ''")
-            ensure_column(conn, "participant_sessions", "participant_key", "TEXT NOT NULL DEFAULT ''")
-            ensure_column(conn, "participant_sessions", "participant_name", "TEXT")
-            ensure_column(conn, "participant_sessions", "participant_email", "TEXT")
-            ensure_column(conn, "participant_sessions", "join_time", "TIMESTAMPTZ")
-            ensure_column(conn, "participant_sessions", "leave_time", "TIMESTAMPTZ")
-            ensure_column(conn, "participant_sessions", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")
-            ensure_column(conn, "participant_sessions", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
-            ensure_column(conn, "participant_sessions", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
-            ensure_index(conn, "idx_participant_sessions_meeting_key", "CREATE INDEX idx_participant_sessions_meeting_key ON participant_sessions(meeting_uuid, participant_key)")
-            ensure_index(conn, "idx_participant_sessions_open", "CREATE INDEX idx_participant_sessions_open ON participant_sessions(meeting_uuid, participant_key) WHERE leave_time IS NULL")
 
         if table_exists(conn, "activity_log"):
             ensure_column(conn, "activity_log", "username", "TEXT")
@@ -2178,85 +2148,21 @@ def get_row_visible_span_seconds(row, end_time=None):
     return max(int((last_point_dt - first_join_dt).total_seconds()), 0)
 
 
-def calculate_live_duration(conn=None, meeting_uuid=None, participant_key_value=None, attendance_row=None, at_time=None, end_time=None):
-    """Backend source of truth for participant duration.
+def get_row_effective_total_seconds(row, end_time=None):
+    total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
+    current_join_dt = parse_dt(row.get("current_join"))
+    end_dt = parse_dt(end_time)
+    if current_join_dt:
+        if end_dt and current_join_dt > end_dt:
+            current_join_dt = end_dt
+        if end_dt and current_join_dt:
+            total_seconds += max(int((end_dt - current_join_dt).total_seconds()), 0)
 
-    Rules:
-    - completed sessions are summed from participant_sessions.duration_seconds
-    - an open session contributes now/current end minus join_time
-    - if sessions are unavailable, safely falls back to attendance.total_seconds + current_join delta
-    - result is monotonic, never negative, and bounded by visible join span when available
-    """
-    row = attendance_row or {}
-    meeting_uuid = meeting_uuid or row.get("meeting_uuid")
-    participant_key_value = participant_key_value or row.get("participant_key")
-    end_dt = parse_dt(end_time) or parse_dt(at_time) or now_local()
-    total_seconds = None
-    owns_conn = False
-
-    try:
-        if conn is None:
-            conn = db()
-            owns_conn = True
-
-        if meeting_uuid and participant_key_value and table_exists(conn, "participant_sessions"):
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT join_time, leave_time, COALESCE(duration_seconds,0) AS duration_seconds
-                    FROM participant_sessions
-                    WHERE meeting_uuid=%s AND participant_key=%s
-                    ORDER BY join_time ASC, id ASC
-                    """,
-                    (meeting_uuid, participant_key_value),
-                )
-                sessions = cur.fetchall()
-
-            total = 0
-            for session_row in sessions or []:
-                join_dt = parse_dt(session_row.get("join_time"))
-                leave_dt = parse_dt(session_row.get("leave_time"))
-                stored = cast_setting_value(session_row.get("duration_seconds") or 0, int)
-                if leave_dt:
-                    if stored > 0:
-                        total += stored
-                    elif join_dt and leave_dt >= join_dt:
-                        total += max(int((leave_dt - join_dt).total_seconds()), 0)
-                elif join_dt:
-                    effective_end = end_dt
-                    if effective_end < join_dt:
-                        effective_end = join_dt
-                    total += max(int((effective_end - join_dt).total_seconds()), 0)
-
-            if sessions:
-                total_seconds = total
-    except Exception as exc:
-        print(f"⚠️ calculate_live_duration session fallback: {exc}")
-    finally:
-        if owns_conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    if total_seconds is None:
-        total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
-        current_join_dt = parse_dt(row.get("current_join"))
-        if current_join_dt:
-            effective_end = end_dt
-            if effective_end < current_join_dt:
-                effective_end = current_join_dt
-            total_seconds += max(int((effective_end - current_join_dt).total_seconds()), 0)
-
-    visible_span_seconds = get_row_visible_span_seconds(row, end_dt)
+    visible_span_seconds = get_row_visible_span_seconds(row, end_time)
     if visible_span_seconds is not None and total_seconds > visible_span_seconds:
         total_seconds = visible_span_seconds
 
-    return max(int(total_seconds or 0), 0)
-
-
-def get_row_effective_total_seconds(row, end_time=None):
-    return calculate_live_duration(attendance_row=row, end_time=end_time)
+    return max(total_seconds, 0)
 
 
 def get_meeting_rows_last_activity(attendance_rows):
@@ -2381,7 +2287,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                         SET participant_name=%s,
                             participant_email=%s,
                             first_join=COALESCE(first_join, %s),
-                            current_join=COALESCE(current_join, %s),
+                            current_join=%s,
                             rejoin_count=%s,
                             is_member=%s,
                             member_id=%s,
@@ -2411,7 +2317,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                         SET participant_name=%s,
                             participant_email=%s,
                             first_join=COALESCE(first_join, %s),
-                            current_join=COALESCE(current_join, %s),
+                            current_join=%s,
                             rejoin_count=%s,
                             is_member=%s,
                             member_id=%s,
@@ -2431,20 +2337,6 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                             is_host_db_value,
                             row["id"],
                         ),
-                    )
-
-                # Backend truth duration engine: create exactly one open session per live participant.
-                if table_exists(conn, "participant_sessions"):
-                    cur.execute(
-                        """
-                        INSERT INTO participant_sessions(meeting_uuid, participant_key, participant_name, participant_email, join_time, duration_seconds, updated_at)
-                        SELECT %s, %s, %s, %s, %s, 0, NOW()
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM participant_sessions
-                            WHERE meeting_uuid=%s AND participant_key=%s AND leave_time IS NULL
-                        )
-                        """,
-                        (meeting_uuid, key, participant_name, participant_email, event_time, meeting_uuid, key),
                     )
             else:
                 total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
@@ -2466,34 +2358,6 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                 )
                 if visible_span_seconds is not None and total_seconds > visible_span_seconds:
                     total_seconds = visible_span_seconds
-
-                # Backend truth duration engine: close open session(s) and recalculate from sessions.
-                if table_exists(conn, "participant_sessions"):
-                    cur.execute(
-                        """
-                        UPDATE participant_sessions
-                        SET leave_time=%s,
-                            duration_seconds=GREATEST(EXTRACT(EPOCH FROM (%s - join_time))::INTEGER, 0),
-                            updated_at=NOW()
-                        WHERE meeting_uuid=%s AND participant_key=%s AND leave_time IS NULL
-                        """,
-                        (event_time, event_time, meeting_uuid, key),
-                    )
-                    truth_row = dict(row)
-                    truth_row.update({
-                        "meeting_uuid": meeting_uuid,
-                        "participant_key": key,
-                        "last_leave": event_time,
-                        "current_join": None,
-                    })
-                    total_seconds = calculate_live_duration(
-                        conn=conn,
-                        meeting_uuid=meeting_uuid,
-                        participant_key_value=key,
-                        attendance_row=truth_row,
-                        at_time=event_time,
-                        end_time=event_time,
-                    )
 
                 if has_meeting_pk:
                     cur.execute(
@@ -7088,7 +6952,7 @@ def build_live_snapshot_payload(include_feed=True):
             "first_join": fmt_time_ampm(p.get("first_join")) if p.get("first_join") else "-",
             "last_leave": fmt_time_ampm(p.get("last_leave")) if p.get("last_leave") else ("Live now" if is_active_now else "-"),
             "duration_seconds": int(live_total or 0),
-            "stored_seconds": int(live_total or 0),
+            "stored_seconds": int(p.get("total_seconds") or 0),
             "current_join_epoch_ms": int(current_join.timestamp() * 1000) if current_join else 0,
             "duration_min": mins_from_seconds(live_total),
             "rejoins": p.get("rejoin_count") or 0,
@@ -7336,7 +7200,7 @@ button[type="submit"]{margin-top:20px!important;}
                                 <td><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
                                 <td>{{ p.first_join }}</td>
                                 <td>{{ p.last_leave }}</td>
-                                <td><span class="live-fix-duration" data-base="{{ p.duration_seconds }}" data-active="{{ 1 if p.is_active else 0 }}" data-backend-seconds="{{ p.duration_seconds }}">{{ fmt_seconds(p.duration_seconds) }}</span></td>
+                                <td><span class="live-fix-duration" data-base="{{ [p.stored_seconds, data.summary.meeting_duration_seconds]|max if p.is_active and data.summary.active_now == 1 else (p.stored_seconds if p.is_active else p.duration_seconds) }}" data-active="{{ 1 if p.is_active else 0 }}" data-current-join-ms="{{ p.current_join_epoch_ms if p.is_active else 0 }}">{{ fmt_seconds([p.duration_seconds, data.summary.meeting_duration_seconds]|max if p.is_active and data.summary.active_now == 1 else p.duration_seconds) }}</span></td>
                                 <td>{{ p.rejoins }}</td>
                                 <td><span class="badge {{ 'ok' if p.status == 'LIVE' else 'gray' }}">{{ p.status }}</span></td>
                             </tr>
@@ -7359,6 +7223,7 @@ button[type="submit"]{margin-top:20px!important;}
             let lastPayload = {{ data|tojson }};
             let pollBusy = false;
             let pollTimer = null;
+            let durationTimer = null;
 
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
@@ -7378,10 +7243,16 @@ button[type="submit"]{margin-top:20px!important;}
             function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);if(el.textContent!==String(next))el.textContent=String(next);}
             function normalizeActiveDuration(el){
                 if(!el) return;
-                const backendSeconds=parseInt(el.getAttribute('data-backend-seconds')||el.getAttribute('data-base')||'0',10);
-                const txt=fmt(backendSeconds);
+                let base=parseInt(el.getAttribute('data-base')||'0',10);
+                let active=el.getAttribute('data-active')==='1';
+                let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
+                let shown=base;
+                if(active && joinMs>0){ shown=base+Math.max(0,Math.floor((Date.now()-joinMs)/1000)); }
+                const meetingSec=secFromText((document.getElementById('lfDuration')?.textContent||'').replace('Duration','').trim());
+                if(active && meetingSec>0){ shown=Math.min(shown, meetingSec); }
+                const txt=fmt(shown);
                 if(el.textContent!==txt) el.textContent=txt;
-                el.dataset.finalLiveSeconds=String(backendSeconds);
+                el.dataset.finalLiveSeconds=String(shown);
             }
             function sortLiveRowsByDuration(){const body=document.getElementById('lfRows');if(!body)return;[...body.querySelectorAll('tr')].sort((a,b)=>secFromText(b.querySelector('.live-fix-duration')?.textContent)-secFromText(a.querySelector('.live-fix-duration')?.textContent)).forEach(r=>body.appendChild(r));}
 
@@ -7400,16 +7271,16 @@ button[type="submit"]{margin-top:20px!important;}
                     setCell(row,'type','<span class="badge '+cls(p.type)+'">'+esc(p.type)+'</span>',p.type);
                     setCell(row,'first_join',esc(p.first_join),p.first_join);
                     setCell(row,'last_leave',esc(p.last_leave),p.last_leave);
-                    const baseSeconds=parseInt(p.duration_seconds||p.stored_seconds||0,10);
+                    const baseSeconds=parseInt((p.is_active && activeRows.length===1)?Math.max(parseInt(p.stored_seconds||0,10),meetingSec):((p.is_active?p.stored_seconds:p.duration_seconds)||0),10);
                     let durationCell=row.querySelector('[data-col="duration"]');
                     if(!durationCell){ durationCell=document.createElement('td'); durationCell.setAttribute('data-col','duration'); row.appendChild(durationCell); }
                     let span=durationCell.querySelector('.live-fix-duration');
                     if(!span){ span=document.createElement('span'); span.className='live-fix-duration'; durationCell.appendChild(span); }
                     span.setAttribute('data-base', String(baseSeconds));
                     span.setAttribute('data-active', p.is_active?'1':'0');
-                    span.setAttribute('data-current-join-ms', '0');
-                    span.setAttribute('data-backend-seconds', String(baseSeconds));
-                    normalizeActiveDuration(span);
+                    span.setAttribute('data-current-join-ms', p.is_active?String(parseInt(p.current_join_epoch_ms||0,10)):'0');
+                    if(!p.is_active){ span.textContent=fmt(p.duration_seconds); span.dataset.finalLiveSeconds=String(parseInt(p.duration_seconds||0,10)); }
+                    else { normalizeActiveDuration(span); }
                     setCell(row,'rejoins',esc(p.rejoins),p.rejoins);
                     setCell(row,'status','<span class="badge '+(p.status==='LIVE'?'ok':'gray')+'">'+esc(p.status)+'</span>',p.status);
                 });
@@ -7474,8 +7345,16 @@ button[type="submit"]{margin-top:20px!important;}
             render(lastPayload);
             setTimeout(function(){ pollLiveSnapshot('initial'); },350);
             pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },2000);
-            // Backend truth mode: browser does not calculate live duration.
-            window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); });
+            durationTimer=setInterval(function(){
+                document.querySelectorAll('.live-fix-duration').forEach(normalizeActiveDuration);
+                if(lastPayload && lastPayload.meeting && lastPayload.meeting.start_iso){
+                    const startMs=Date.parse(lastPayload.meeting.start_iso);
+                    const sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((Date.now()-startMs)/1000));
+                    setText('lfDuration','Duration '+fmt(sec));
+                }
+                sortLiveRowsByDuration();
+            },1000);
+            window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); if(durationTimer) clearInterval(durationTimer); });
         })();
         </script>
         """,
@@ -13969,8 +13848,142 @@ canvas{
 }
 </style>
 
-<!-- Backend truth duration mode: removed old GPT55 frontend duration timer.
-     Browser only displays duration values returned by /api/live-snapshot. -->
+<script>
+/* GPT55 TRUE LIVE DURATION ENGINE */
+(function(){
+    if(window.__GPT55_DURATION_ENGINE__) return;
+    window.__GPT55_DURATION_ENGINE__ = true;
+
+    function secondsFromText(v){
+        if(!v) return 0;
+        var p = String(v).trim().split(":").map(Number);
+        if(p.length===2) return (p[0]*60)+p[1];
+        if(p.length===3) return (p[0]*3600)+(p[1]*60)+p[2];
+        return 0;
+    }
+
+    function format(sec){
+        sec = Math.max(0, parseInt(sec||0));
+        var h = Math.floor(sec/3600);
+        var m = Math.floor((sec%3600)/60);
+        var s = sec%60;
+
+        if(h>0){
+            return String(h).padStart(2,"0")+":"+
+                   String(m).padStart(2,"0")+":"+
+                   String(s).padStart(2,"0");
+        }
+
+        return String(m).padStart(2,"0")+":"+
+               String(s).padStart(2,"0");
+    }
+
+    function bindDurations(){
+        document.querySelectorAll("td,span,div").forEach(function(el){
+
+            var txt = (el.textContent||"").trim();
+
+            if(!/^\\d{1,2}:\\d{2}(:\\d{2})?$/.test(txt)) return;
+
+            if(el.dataset.gpt55Bound==="1") return;
+
+            el.dataset.gpt55Bound="1";
+
+            var base = secondsFromText(txt);
+
+            el.dataset.gpt55Base = String(base);
+            el.dataset.gpt55Start = String(Date.now());
+
+            el.setAttribute("data-za-duration-seconds", base);
+        });
+    }
+
+    function tick(){
+        document.querySelectorAll("[data-gpt55-bound='1'],[data-gpt55bound='1'],[data-gpt55-base]").forEach(function(el){
+
+            var row = el.closest("tr");
+            if(!row) return;
+
+            var rowTxt = (row.textContent||"").toLowerCase();
+
+            var isLive =
+                rowTxt.includes("live") ||
+                rowTxt.includes("joined") ||
+                rowTxt.includes("host") ||
+                rowTxt.includes("present");
+
+            if(!isLive) return;
+
+            var base = parseInt(el.dataset.gpt55Base||"0");
+            var start = parseInt(el.dataset.gpt55Start||Date.now());
+
+            var sec = base + Math.floor((Date.now()-start)/1000);
+
+            el.textContent = format(sec);
+        });
+
+        var meetDuration = document.querySelectorAll(".live-fix-duration");
+
+        meetDuration.forEach(function(el){
+
+            if(el.dataset.gpt55MeetingBound!=="1"){
+
+                el.dataset.gpt55MeetingBound="1";
+                el.dataset.gpt55MeetingBase = secondsFromText(el.textContent);
+                el.dataset.gpt55MeetingStart = Date.now();
+            }
+
+            var base = parseInt(el.dataset.gpt55MeetingBase||"0");
+            var start = parseInt(el.dataset.gpt55MeetingStart||Date.now());
+
+            var sec = base + Math.floor((Date.now()-start)/1000);
+
+            el.textContent = "Duration "+format(sec);
+        });
+    }
+
+    function injectLastMeeting(){
+        if(location.pathname !== "/live") return;
+
+        var noLive = document.body.innerText.includes("NO LIVE MEETING");
+
+        if(!noLive) return;
+
+        if(document.querySelector(".za-last-meeting-ended")) return;
+
+        var hero = document.querySelector(".hero,.live-hero,.live-main-card,.glass-panel");
+
+        if(!hero) return;
+
+        var ended = localStorage.getItem("za_last_meeting_end");
+
+        if(!ended) return;
+
+        var div = document.createElement("div");
+        div.className = "za-last-meeting-ended";
+        div.innerHTML = "<span>🛑</span><span>Last meeting ended at <b>"+ended+"</b></span>";
+
+        hero.appendChild(div);
+    }
+
+    function captureMeetingEnd(){
+        var live = document.body.innerText.includes("LIVE MEETING RUNNING");
+
+        if(!live){
+            var now = new Date();
+            localStorage.setItem("za_last_meeting_end", now.toLocaleString());
+        }
+    }
+
+    setInterval(function(){
+        bindDurations();
+        tick();
+        captureMeetingEnd();
+        injectLastMeeting();
+    },1000);
+
+})();
+</script>
 '''
 except Exception:
     pass
