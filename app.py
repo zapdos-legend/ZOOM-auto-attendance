@@ -395,45 +395,6 @@ button:active,.btn:active,a.btn:active{
 
       cells.forEach(safeInit);
 
-      
-if(window.__zaDurationTimer){
-    clearInterval(window.__zaDurationTimer);
-}
-
-
-/* ===== GPT55 LIVE DURATION ENGINE ===== */
-window.__zaStableDurationEngine = window.__zaStableDurationEngine || false;
-
-if(!window.__zaStableDurationEngine){
-    window.__zaStableDurationEngine = true;
-
-    setInterval(function(){
-
-        document.querySelectorAll(".za-duration-stable").forEach(function(el){
-
-            var current = parseInt(el.dataset.zaDurationSeconds || "0",10);
-
-            if(isNaN(current)){ current = 0; }
-
-            current += 1;
-
-            el.dataset.zaDurationSeconds = current;
-
-            var h = Math.floor(current/3600);
-            var m = Math.floor((current%3600)/60);
-            var s = current%60;
-
-            var txt = h > 0
-                ? h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0")
-                : m + ":" + String(s).padStart(2,"0");
-
-            el.textContent = txt;
-
-        });
-
-    },1000);
-}
-
 
     },
     initHeartbeat:function(){
@@ -529,67 +490,7 @@ if(!window.__zaStableDurationEngine){
     },
 
     initRealtimeSocket:function(){
-      var self = this;
-      function bind(){
-        if(!window.io || window.__zaSocketBound) return;
-        try{
-          window.__zaSocketBound = true;
-          var socket = window.io({transports:["websocket","polling"], reconnection:true, reconnectionAttempts:Infinity});
-          window.zaSocket = socket;
-          socket.on("connect", function(){
-            self.toast("Live updated");
-            document.body.classList.add("za-realtime-connected");
-            document.body.classList.add("za-socket-live-mode");
-            try{ socket.emit("request_live_snapshot", {source:"connect", path:location.pathname}); }catch(e){}
-            window.dispatchEvent(new CustomEvent("za:socket-connected", {detail:{connected:true}}));
-          });
-          socket.on("disconnect", function(){
-            document.body.classList.remove("za-realtime-connected");
-            document.body.classList.remove("za-socket-live-mode");
-            window.dispatchEvent(new CustomEvent("za:socket-disconnected", {detail:{connected:false}}));
-          });
-          socket.on("live_snapshot", function(payload){
-            payload = payload || {};
-            window.__zaLastSocketSnapshot = payload;
-            window.dispatchEvent(new CustomEvent("za:live-snapshot", {detail:payload}));
-            if(typeof window.zaApplyLiveSnapshot === "function"){
-              try{ window.zaApplyLiveSnapshot(payload); }catch(e){}
-            }
-          });
-          socket.on("live_summary", function(payload){
-            payload = payload || {};
-            window.dispatchEvent(new CustomEvent("za:live-summary", {detail:payload}));
-            if(typeof window.zaApplyLiveSummary === "function"){
-              try{ window.zaApplyLiveSummary(payload); }catch(e){}
-            }
-          });
-          ["live_update","participant_join","participant_leave","meeting_finalized","smart_alert","risk_update"].forEach(function(evt){
-            socket.on(evt, function(payload){
-              payload = payload || {};
-              var label = payload.message || payload.name || payload.event || evt.replace(/_/g," ");
-              if(evt === "participant_join") self.toast("Joined: " + label);
-              else if(evt === "participant_leave") self.toast("Left: " + label);
-              else if(evt === "smart_alert") self.toast("Alert: " + label);
-              else if(evt === "risk_update") self.toast("Risk updated");
-              window.dispatchEvent(new CustomEvent("za:realtime", {detail:{event:evt, payload:payload}}));
-              if(window.zaSocket && window.zaSocket.connected){
-                try{ window.zaSocket.emit("request_live_snapshot", {source:"event", event:evt}); }catch(e){}
-              } else if(typeof window.zaLiveRefresh === "function"){
-                try{ window.zaLiveRefresh(true); }catch(e){}
-              }
-            });
-          });
-        }catch(e){}
-      }
-      return; // Safe Polling Mode: do not bind Socket.IO on Render
-      if(!document.getElementById("za-socketio-client")){
-        var s=document.createElement("script");
-        s.id="za-socketio-client";
-        return; // Safe Polling Mode: Socket.IO client disabled on Render
-        s.onload=bind;
-        s.onerror=function(){ window.__zaSocketBound=false; };
-        document.head.appendChild(s);
-      }
+      return; // Stabilization: Socket.IO client/fallback code disabled. /live uses /api/live-snapshot polling only.
     },
     initRiskBadges:function(){
       function applyBadgeToRow(name, status, score){
@@ -629,6 +530,7 @@ if(!window.__zaStableDurationEngine){
       }
     },
     initLivePollingPolish:function(){
+      if(location.pathname !== '/live') return;
       if(window.__zaLivePolishTimer) clearInterval(window.__zaLivePolishTimer);
       window.__zaLivePolishTimer = setInterval(function(){
         document.querySelectorAll("tbody tr").forEach(function(row,idx){
@@ -681,256 +583,7 @@ body.za-socket-live-mode .live-fix-conn.bad{
 }
 
 
-/* ===== PHASE 2 ADVANCED REALTIME UI ===== */
-.za-realtime-dock{
-  position:fixed;
-  right:18px;
-  top:88px;
-  width:320px;
-  max-width:calc(100vw - 36px);
-  z-index:99998;
-  pointer-events:none;
-}
-.za-realtime-status{
-  pointer-events:auto;
-  border:1px solid rgba(148,163,184,.22);
-  background:rgba(15,23,42,.92);
-  backdrop-filter:blur(14px);
-  border-radius:18px;
-  padding:12px 14px;
-  box-shadow:0 18px 48px rgba(0,0,0,.35);
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  margin-bottom:10px;
-}
-.za-realtime-status strong{
-  display:block;
-  font-size:13px;
-  color:#e5e7eb;
-}
-.za-realtime-status span{
-  font-size:11px;
-  font-weight:900;
-  color:#94a3b8;
-}
-.za-realtime-pill{
-  display:inline-flex;
-  align-items:center;
-  gap:7px;
-  border-radius:999px;
-  padding:6px 9px;
-  font-size:11px;
-  font-weight:950;
-  border:1px solid rgba(148,163,184,.2);
-  background:rgba(30,41,59,.72);
-  color:#cbd5e1;
-}
-.za-realtime-pill::before{
-  content:"";
-  width:8px;
-  height:8px;
-  border-radius:999px;
-  background:#ef4444;
-  box-shadow:0 0 0 0 rgba(239,68,68,.55);
-  animation:zaSocketPulse 1.5s infinite;
-}
-body.za-socket-live-mode .za-realtime-pill{
-  color:#bbf7d0;
-  border-color:rgba(34,197,94,.35);
-  background:rgba(22,163,74,.12);
-}
-body.za-socket-live-mode .za-realtime-pill::before{
-  background:#22c55e;
-  box-shadow:0 0 0 0 rgba(34,197,94,.55);
-}
-@keyframes zaSocketPulse{
-  0%{transform:scale(1);box-shadow:0 0 0 0 currentColor;}
-  70%{transform:scale(1.25);box-shadow:0 0 0 10px rgba(34,197,94,0);}
-  100%{transform:scale(1);box-shadow:0 0 0 0 rgba(34,197,94,0);}
-}
-.za-realtime-feed{
-  pointer-events:auto;
-  max-height:280px;
-  overflow:auto;
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-}
-.za-feed-item{
-  border:1px solid rgba(148,163,184,.18);
-  background:rgba(15,23,42,.86);
-  border-radius:16px;
-  padding:10px 12px;
-  box-shadow:0 16px 36px rgba(0,0,0,.28);
-  animation:zaFeedIn .38s cubic-bezier(.16,1,.3,1) both;
-}
-.za-feed-item.join{border-color:rgba(34,197,94,.34);}
-.za-feed-item.leave{border-color:rgba(245,158,11,.34);}
-.za-feed-item.alert{border-color:rgba(239,68,68,.42);animation:zaFeedIn .38s cubic-bezier(.16,1,.3,1) both, zaCritical 1.4s ease-in-out 2;}
-.za-feed-item strong{display:block;color:#e5e7eb;font-size:12px;margin-bottom:3px;}
-.za-feed-item small{display:block;color:#94a3b8;font-weight:800;font-size:10px;}
-@keyframes zaFeedIn{
-  from{opacity:0;transform:translateX(22px) scale(.98);}
-  to{opacity:1;transform:translateX(0) scale(1);}
-}
-.za-row-live-flash{
-  animation:zaRowFlash 1.05s ease both;
-}
-@keyframes zaRowFlash{
-  0%{background:rgba(34,197,94,.22);}
-  100%{background:transparent;}
-}
-.za-row-left-flash{
-  animation:zaRowLeftFlash 1.05s ease both;
-}
-@keyframes zaRowLeftFlash{
-  0%{background:rgba(245,158,11,.20);}
-  100%{background:transparent;}
-}
-.za-realtime-updated{
-  animation:zaRealtimeUpdated .75s cubic-bezier(.16,1,.3,1) both;
-}
-@keyframes zaRealtimeUpdated{
-  0%{transform:scale(1);filter:brightness(1);}
-  40%{transform:scale(1.035);filter:brightness(1.2);}
-  100%{transform:scale(1);filter:brightness(1);}
-}
-@media (max-width: 760px){
-  .za-realtime-dock{right:10px;left:10px;top:auto;bottom:12px;width:auto;}
-  .za-realtime-feed{max-height:190px;}
-}
-<script>
-(function(){
-  if(location.pathname !== '/live'){ return; }
-  if(window.ZoomAttendanceAdvancedRealtimeUI){ return; }
-  window.ZoomAttendanceAdvancedRealtimeUI = {
-    maxFeed:8,
-    ensureDock:function(){
-      var dock = document.querySelector(".za-realtime-dock");
-      if(dock) return dock;
-      dock = document.createElement("div");
-      dock.className = "za-realtime-dock";
-      dock.innerHTML =
-        '<div class="za-realtime-status">' +
-          '<div><strong>Realtime Engine</strong><span id="zaRealtimeSub">Connecting live updates...</span></div>' +
-          '<div class="za-realtime-pill" id="zaRealtimePill">Live Updated</div>' +
-        '</div>' +
-        '<div class="za-realtime-feed" id="zaRealtimeFeed"></div>';
-      document.body.appendChild(dock);
-      return dock;
-    },
-    setStatus:function(text, connected){
-      this.ensureDock();
-      var sub = document.getElementById("zaRealtimeSub");
-      var pill = document.getElementById("zaRealtimePill");
-      if(sub) sub.textContent = text || "";
-      if(pill) pill.textContent = connected ? "Live" : "Reconnect";
-    },
-    addFeed:function(type, title, detail){
-      this.ensureDock();
-      var feed = document.getElementById("zaRealtimeFeed");
-      if(!feed) return;
-      var item = document.createElement("div");
-      item.className = "za-feed-item " + (type || "info");
-      item.innerHTML = "<strong></strong><small></small>";
-      item.querySelector("strong").textContent = title || "Realtime update";
-      item.querySelector("small").textContent = detail || new Date().toLocaleTimeString();
-      feed.insertBefore(item, feed.firstChild);
-      while(feed.children.length > this.maxFeed){ feed.removeChild(feed.lastChild); }
-    },
-    flashMatchingRows:function(name, left){
-      if(!name) return;
-      var needle = String(name).toLowerCase();
-
-      document.querySelectorAll("tbody tr").forEach(function(row){
-        var txt = (row.textContent || "").toLowerCase();
-
-        if(txt.indexOf(needle) !== -1){
-          row.classList.remove("za-row-live-flash","za-row-left-flash");
-
-          if(left){
-            row.classList.add("za-row-left-persistent");
-            row.classList.add("za-row-left-flash");
-          }else{
-            row.classList.remove("za-row-left-persistent");
-            row.classList.add("za-row-live-flash");
-          }
-        }
-      });
-    },
-    refreshRiskBadges:function(){
-      if(window.ZoomAttendanceMotionEngine && typeof window.ZoomAttendanceMotionEngine.initRiskBadges === "function"){
-        document.querySelectorAll("[data-za-risk-bound]").forEach(function(row){ row.dataset.zaRiskBound = ""; });
-        try{ window.ZoomAttendanceMotionEngine.initRiskBadges(); }catch(e){}
-      }
-    },
-    animateDashboardNumbers:function(){
-      document.querySelectorAll(".card strong,.mini-card strong,.analytics-card strong,.activity-clean-card strong,.stat-value,.metric-value,.kpi-value").forEach(function(el){
-        el.classList.remove("za-realtime-updated");
-        void el.offsetWidth;
-        el.classList.add("za-realtime-updated");
-      });
-    },
-    applySnapshot:function(payload){
-      payload = payload || {};
-      this.setStatus("Last live update: " + new Date().toLocaleTimeString(), true);
-      this.animateDashboardNumbers();
-      this.refreshRiskBadges();
-      var summary = payload.summary || {};
-      if(payload.socket_reason){
-        this.addFeed("info", "Live snapshot refreshed", "Reason: " + payload.socket_reason);
-      }
-      if(summary.live_participants !== undefined){
-        var text = "Participants: " + summary.live_participants;
-        if(summary.members_live !== undefined) text += " | Members: " + summary.members_live;
-        this.setStatus(text, true);
-      }
-    },
-    bind:function(){
-      var self = this;
-      self.ensureDock();
-      window.addEventListener("za:socket-connected", function(){ self.setStatus("Live updated", true); self.addFeed("join","Live updated","Socket channel ready"); });
-      window.addEventListener("za:socket-disconnected", function(){ self.setStatus("Safe polling reconnecting", false); self.addFeed("alert","Safe polling reconnecting","Safe polling active"); });
-      window.addEventListener("za:live-snapshot", function(e){ self.applySnapshot(e.detail || {}); });
-      window.addEventListener("za:realtime", function(e){
-        var detail = e.detail || {};
-        var evt = detail.event || "";
-        var payload = detail.payload || {};
-        var name = payload.name || payload.participant_name || payload.message || "Participant";
-        if(evt === "participant_join"){
-          self.addFeed("join", name + " joined", payload.time || new Date().toLocaleTimeString());
-          self.flashMatchingRows(name, false);
-        }else if(evt === "participant_leave"){
-          self.addFeed("leave", name + " left", payload.time || new Date().toLocaleTimeString());
-          self.flashMatchingRows(name, true);
-        }else if(evt === "meeting_finalized"){
-          self.addFeed("leave", "Meeting finalized", payload.ended_at || new Date().toLocaleTimeString());
-        }else if(evt === "smart_alert"){
-          self.addFeed("alert", payload.title || "Smart alert", payload.message || new Date().toLocaleTimeString());
-        }else if(evt === "risk_update"){
-          self.addFeed("info", "Risk intelligence updated", new Date().toLocaleTimeString());
-          self.refreshRiskBadges();
-        }
-      });
-      setTimeout(function(){
-        if(document.body.classList.contains("za-socket-live-mode")){
-          self.setStatus("Live updated", true);
-        }else{
-          self.setStatus("Safe polling active", false);
-        }
-      },900);
-    }
-  };
-  if(document.readyState === "loading"){
-    document.addEventListener("DOMContentLoaded", function(){ window.ZoomAttendanceAdvancedRealtimeUI.bind(); });
-  }else{
-    window.ZoomAttendanceAdvancedRealtimeUI.bind();
-  }
-})();
-</script>
-/* ===== END PHASE 2 ADVANCED REALTIME UI ===== */
+/* PHASE 2 ADVANCED REALTIME UI removed during stabilization: duplicate realtime UI/socket listeners. */
 
 
 /* ===== LIVE UX FIX: NO DURATION FLICKER + PERSISTENT LEFT ROW ===== */
@@ -1046,270 +699,7 @@ tbody tr:hover{
 }
 
 
-/* ===== PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
-.za-insights-panel{
-  position:fixed;
-  left:18px;
-  bottom:18px;
-  width:360px;
-  max-width:calc(100vw - 36px);
-  z-index:99998;
-  border:1px solid rgba(148,163,184,.22);
-  background:rgba(15,23,42,.93);
-  backdrop-filter:blur(16px);
-  border-radius:22px;
-  box-shadow:0 24px 62px rgba(0,0,0,.42);
-  overflow:hidden;
-  color:#e5e7eb;
-}
-.za-insights-head{
-  padding:14px 16px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  border-bottom:1px solid rgba(148,163,184,.16);
-  background:linear-gradient(135deg,rgba(99,102,241,.18),rgba(14,165,233,.10));
-}
-.za-insights-head strong{
-  font-size:14px;
-  font-weight:950;
-}
-.za-insights-head span{
-  font-size:11px;
-  color:#93c5fd;
-  font-weight:900;
-}
-.za-insights-body{
-  padding:14px 16px;
-  display:grid;
-  gap:10px;
-}
-.za-insight-row{
-  border:1px solid rgba(148,163,184,.16);
-  background:rgba(2,6,23,.38);
-  border-radius:16px;
-  padding:10px 12px;
-  animation:zaInsightIn .42s cubic-bezier(.16,1,.3,1) both;
-}
-.za-insight-row strong{
-  display:block;
-  font-size:12px;
-  margin-bottom:4px;
-}
-.za-insight-row small{
-  display:block;
-  color:#94a3b8;
-  line-height:1.4;
-  font-weight:750;
-}
-.za-insight-row.good{border-left:4px solid #22c55e;}
-.za-insight-row.warn{border-left:4px solid #f59e0b;}
-.za-insight-row.danger{border-left:4px solid #ef4444;}
-@keyframes zaInsightIn{
-  from{opacity:0;transform:translateY(8px) scale(.98);}
-  to{opacity:1;transform:translateY(0) scale(1);}
-}
-.za-mini-live-graph{
-  height:74px;
-  width:100%;
-  border-radius:16px;
-  background:rgba(15,23,42,.62);
-  border:1px solid rgba(148,163,184,.16);
-  overflow:hidden;
-  position:relative;
-}
-.za-mini-live-graph svg{
-  width:100%;
-  height:100%;
-  display:block;
-}
-.za-mini-live-graph path{
-  fill:none;
-  stroke:#38bdf8;
-  stroke-width:3;
-  stroke-linecap:round;
-  stroke-linejoin:round;
-  filter:drop-shadow(0 0 8px rgba(56,189,248,.38));
-  transition:d .45s cubic-bezier(.16,1,.3,1);
-}
-.za-mini-live-graph .area{
-  fill:rgba(56,189,248,.12);
-  stroke:none;
-}
-.za-alert-chip{
-  display:inline-flex;
-  align-items:center;
-  gap:7px;
-  border-radius:999px;
-  padding:6px 10px;
-  font-size:11px;
-  font-weight:950;
-  border:1px solid rgba(148,163,184,.18);
-}
-.za-alert-chip.good{background:rgba(34,197,94,.12);color:#bbf7d0;}
-.za-alert-chip.warn{background:rgba(245,158,11,.12);color:#fde68a;}
-.za-alert-chip.danger{background:rgba(239,68,68,.12);color:#fecaca;animation:zaCritical 1.4s ease-in-out infinite;}
-@media (max-width:760px){
-  .za-insights-panel{left:10px;right:10px;bottom:12px;width:auto;max-height:42vh;overflow:auto;}
-}
-<script>
-(function(){
-  if(location.pathname !== '/live'){ return; }
-  if(window.ZoomAttendancePhase22){ return; }
-  window.ZoomAttendancePhase22 = {
-    points:[],
-    lastRiskLevel:"good",
-    ensure:function(){
-      var panel=document.querySelector(".za-insights-panel");
-      if(panel) return panel;
-      panel=document.createElement("div");
-      panel.className="za-insights-panel";
-      panel.innerHTML=
-        '<div class="za-insights-head">'+
-          '<div><strong>AI-Style Live Insights</strong><br><span id="zaInsightSub">Watching meeting health</span></div>'+
-          '<div class="za-alert-chip good" id="zaInsightHealth">Healthy</div>'+
-        '</div>'+
-        '<div class="za-insights-body">'+
-          '<div class="za-mini-live-graph" id="zaMiniGraph"></div>'+
-          '<div id="zaInsightRows"></div>'+
-        '</div>';
-      document.body.appendChild(panel);
-      this.drawGraph();
-      return panel;
-    },
-    scoreSnapshot:function(payload){
-      payload=payload||{};
-      var summary=payload.summary||{};
-      var live=Number(summary.live_participants || summary.active_participants || summary.total_live || 0);
-      var members=Number(summary.members_live || summary.live_members || 0);
-      var unknown=Number(summary.unknown_live || summary.unknown_participants || 0);
-      var absent=Number(summary.absent_members || summary.absent || 0);
-      var score=80;
-      if(live<=0) score-=25;
-      if(unknown>0) score-=Math.min(25, unknown*8);
-      if(absent>0) score-=Math.min(20, absent*4);
-      if(members>0 && live>0) score+=8;
-      score=Math.max(0,Math.min(100,score));
-      return {score:score,live:live,members:members,unknown:unknown,absent:absent};
-    },
-    level:function(score){
-      if(score>=75) return "good";
-      if(score>=45) return "warn";
-      return "danger";
-    },
-    label:function(level){
-      return level==="good" ? "Healthy" : (level==="warn" ? "Warning" : "Critical");
-    },
-    addPoint:function(score){
-      this.points.push(score);
-      if(this.points.length>28) this.points.shift();
-      this.drawGraph();
-    },
-    drawGraph:function(){
-      this.ensure();
-      var box=document.getElementById("zaMiniGraph");
-      if(!box) return;
-      var pts=this.points.length?this.points:[80,80,80,80];
-      var w=340,h=74,pad=8;
-      var step=(w-pad*2)/Math.max(pts.length-1,1);
-      var path="";
-      var area="";
-      pts.forEach(function(v,i){
-        var x=pad+i*step;
-        var y=h-pad-(Math.max(0,Math.min(100,v))/100)*(h-pad*2);
-        path+=(i===0?"M":"L")+x.toFixed(1)+" "+y.toFixed(1)+" ";
-      });
-      area=path+"L "+(pad+(pts.length-1)*step).toFixed(1)+" "+(h-pad)+" L "+pad+" "+(h-pad)+" Z";
-      box.innerHTML='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none"><path class="area" d="'+area+'"></path><path d="'+path+'"></path></svg>';
-    },
-    renderInsights:function(payload){
-      this.ensure();
-      var s=this.scoreSnapshot(payload);
-      var lvl=this.level(s.score);
-      this.lastRiskLevel=lvl;
-      this.addPoint(s.score);
-
-      var chip=document.getElementById("zaInsightHealth");
-      if(chip){
-        chip.className="za-alert-chip "+lvl;
-        chip.textContent=this.label(lvl)+" "+Math.round(s.score);
-      }
-      var sub=document.getElementById("zaInsightSub");
-      if(sub) sub.textContent="Participants: "+s.live+" | Unknown: "+s.unknown;
-
-      var rows=[];
-      if(s.live<=0){
-        rows.push({level:"warn",title:"No active participant detected",body:"Live meeting appears idle. The dashboard is watching for the next join event."});
-      }else{
-        rows.push({level:"good",title:"Live participation active",body:s.live+" participant(s) are currently reflected in the live stream."});
-      }
-      if(s.unknown>0){
-        rows.push({level:"danger",title:"Unknown participant attention",body:s.unknown+" unknown participant(s) detected. Verify member mapping if needed."});
-      }
-      if(s.score<50){
-        rows.push({level:"danger",title:"Predictive warning",body:"Meeting health is low. Recommended action: check host presence and participant continuity."});
-      }else if(s.score<75){
-        rows.push({level:"warn",title:"Watch zone",body:"Attendance quality is acceptable but needs monitoring."});
-      }else{
-        rows.push({level:"good",title:"Stable meeting health",body:"No critical attendance risk detected right now."});
-      }
-
-      var container=document.getElementById("zaInsightRows");
-      if(container){
-        container.innerHTML=rows.slice(0,4).map(function(r){
-          return '<div class="za-insight-row '+r.level+'"><strong>'+r.title+'</strong><small>'+r.body+'</small></div>';
-        }).join("");
-      }
-
-      if(lvl==="danger" && window.ZoomAttendanceAdvancedRealtimeUI){
-        try{ window.ZoomAttendanceAdvancedRealtimeUI.addFeed("alert","Predictive alert","Meeting health dropped below safe level"); }catch(e){}
-      }
-    },
-    bind:function(){
-      var self=this;
-      self.ensure();
-      window.addEventListener("za:live-snapshot",function(e){ self.renderInsights(e.detail||{}); });
-      window.addEventListener("za:live-summary",function(e){ self.renderInsights(e.detail||{}); });
-      window.addEventListener("za:realtime",function(e){
-        var d=e.detail||{};
-        if(d.event==="participant_join" || d.event==="participant_leave" || d.event==="meeting_finalized"){
-          setTimeout(function(){
-            if(window.__zaLastSocketSnapshot) self.renderInsights(window.__zaLastSocketSnapshot);
-          },180);
-        }
-      });
-      setTimeout(function(){
-        if(window.__zaLastSocketSnapshot) self.renderInsights(window.__zaLastSocketSnapshot);
-        else self.renderInsights({summary:{live_participants:0,unknown_live:0}});
-      },900);
-    }
-  };
-  if(document.readyState==="loading"){
-    document.addEventListener("DOMContentLoaded",function(){ window.ZoomAttendancePhase22.bind(); });
-  }else{
-    window.ZoomAttendancePhase22.bind();
-  }
-})();
-</script>
-
-/* ===== GPT55 GRAPH POLISH ===== */
-@media (max-width:768px){
-  canvas{
-    max-width:100% !important;
-    height:auto !important;
-  }
-  .chart-container,.analytics-chart-wrap{
-    overflow-x:auto !important;
-    padding-bottom:12px !important;
-  }
-}
-.chartjs-tooltip,
-#zaFinalFloatingTrendTip{
-  backdrop-filter:blur(14px)!important;
-}
-
-/* ===== END PHASE 2.2 ELITE INSIGHTS + LIVE GRAPH UI ===== */
+/* PHASE 2.2 ELITE INSIGHTS removed during stabilization: duplicate live summary/snapshot listeners. */
 
 
 
@@ -1379,30 +769,7 @@ button[type="submit"]{margin-top:20px!important;}
   box-shadow:0 24px 70px rgba(0,0,0,.72)!important;font-size:12px!important;font-weight:900!important;line-height:1.35!important;
   pointer-events:none!important;display:none;
 }
-<script>
-(function(){
-  if(window.__zaFinalFloatingTrendTip) return;
-  window.__zaFinalFloatingTrendTip = true;
-  function ensureTip(){
-    var tip=document.getElementById("zaFinalFloatingTrendTip");
-    if(!tip){tip=document.createElement("div");tip.id="zaFinalFloatingTrendTip";document.body.appendChild(tip);}
-    return tip;
-  }
-  document.addEventListener("mouseover",function(e){
-    var bar=e.target.closest&&e.target.closest(".za-elite-bar"); if(!bar)return;
-    var tip=ensureTip(); tip.textContent=bar.getAttribute("data-tip")||""; tip.style.display="block";
-  },true);
-  document.addEventListener("mousemove",function(e){
-    var bar=e.target.closest&&e.target.closest(".za-elite-bar"); if(!bar)return;
-    var tip=ensureTip(); tip.style.left=Math.min(window.innerWidth-360,Math.max(16,e.clientX+16))+"px"; tip.style.top=Math.max(90,e.clientY-76)+"px";
-  },true);
-  document.addEventListener("mouseout",function(e){
-    var bar=e.target.closest&&e.target.closest(".za-elite-bar"); if(!bar)return;
-    ensureTip().style.display="none";
-  },true);
-})();
-</script>
-/* END FINAL TIMER + TOOLTIP FIX */
+/* END FINAL TIMER + TOOLTIP FIX: duplicate floating tooltip script removed. */
 
 /* ===== GPT55 FINAL TOOLTIP FRONT LAYER FIX ===== */
 .chart-container,
@@ -6744,7 +6111,6 @@ button[type="submit"]{margin-top:20px!important;}
     }
     window.zaApplyLiveSummary = function(data){ updateGlobalLiveNavState(data); };
     window.addEventListener('za:live-snapshot', function(e){ updateGlobalLiveNavState(e.detail || {}); });
-    window.addEventListener('za:live-summary', function(e){ updateGlobalLiveNavState(e.detail || {}); });
 
 
 
@@ -6815,330 +6181,7 @@ button[type="submit"]{margin-top:20px!important;}
 
 
 
-<script>
-/* ===== LIVE SMOOTH PATCH: PRESERVE DURATION + LEFT ROW STATE ===== */
-(function(){
-  if(window.__ZA_LIVE_SMOOTH_PATCH_V1__) return;
-  window.__ZA_LIVE_SMOOTH_PATCH_V1__ = true;
-
-  var durationMemory = {};
-  var leftMemory = {};
-
-  function rowKey(row){
-    if(!row) return "";
-    var txt = (row.textContent || "").toLowerCase().replace(/\\s+/g," ").trim();
-    var email = txt.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
-    if(email) return "email::" + email[0];
-    var cells = row.querySelectorAll("td");
-    var key = "";
-    for(var i=0;i<Math.min(cells.length,2);i++){
-      key += " " + (cells[i].textContent || "").trim().toLowerCase();
-    }
-    return key.replace(/\\s+/g," ").trim();
-  }
-
-  function secondsFromText(text){
-    text = String(text || "").trim();
-    var parts = text.split(":").map(function(x){ return parseInt(x,10); });
-    if(parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0]*60+parts[1];
-    if(parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) return parts[0]*3600+parts[1]*60+parts[2];
-    var m = text.match(/(\d+)\s*(min|mins|minute|minutes)/i);
-    if(m) return parseInt(m[1],10)*60;
-    return null;
-  }
-
-  function formatSeconds(sec){
-    sec = Math.max(0, parseInt(sec || 0, 10));
-    var h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
-    if(h > 0) return h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
-    return m + ":" + String(s).padStart(2,"0");
-  }
-
-  function rememberState(){
-    document.querySelectorAll("tbody tr").forEach(function(row){
-      var key = rowKey(row);
-      if(!key) return;
-
-      if(row.classList.contains("za-row-left-persistent")){
-        leftMemory[key] = true;
-      }
-
-      row.querySelectorAll("td,span,div").forEach(function(el){
-        var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
-        var text = (el.textContent || "").trim();
-        var sec = secondsFromText(text);
-        if(sec !== null && (label.indexOf("duration") !== -1 || /^\d{1,3}:\d{2}(:\d{2})?$/.test(text))){
-          var memKey = key + "::duration";
-          var old = durationMemory[memKey] || 0;
-          if(sec > old) durationMemory[memKey] = sec;
-        }
-      });
-    });
-  }
-
-  function restoreState(){
-    document.querySelectorAll("tbody tr").forEach(function(row){
-      var key = rowKey(row);
-      if(!key) return;
-
-      if(leftMemory[key]){
-        row.classList.add("za-row-left-persistent");
-      }
-
-      row.querySelectorAll("td,span,div").forEach(function(el){
-        var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
-        var text = (el.textContent || "").trim();
-        var sec = secondsFromText(text);
-        if(sec !== null && (label.indexOf("duration") !== -1 || /^\d{1,3}:\d{2}(:\d{2})?$/.test(text))){
-          var memKey = key + "::duration";
-          var remembered = durationMemory[memKey] || 0;
-          if(remembered > sec){
-            el.textContent = formatSeconds(remembered);
-            el.dataset.zaDurationSeconds = String(remembered);
-          }else{
-            durationMemory[memKey] = sec;
-            el.dataset.zaDurationSeconds = String(sec);
-          }
-          el.classList.add("za-duration-stable");
-        }
-      });
-    });
-
-    if(window.ZoomAttendanceMotionEngine && typeof window.ZoomAttendanceMotionEngine.initDurations === "function"){
-      try{ window.ZoomAttendanceMotionEngine.initDurations(); }catch(e){}
-    }
-  }
-
-  function markLeftByName(name){
-    if(!name) return;
-    var needle = String(name).toLowerCase();
-    document.querySelectorAll("tbody tr").forEach(function(row){
-      if((row.textContent || "").toLowerCase().indexOf(needle) !== -1){
-        row.classList.add("za-row-left-persistent");
-        leftMemory[rowKey(row)] = true;
-      }
-    });
-  }
-
-  function markJoinedByName(name){
-    if(!name) return;
-    var needle = String(name).toLowerCase();
-    document.querySelectorAll("tbody tr").forEach(function(row){
-      if((row.textContent || "").toLowerCase().indexOf(needle) !== -1){
-        row.classList.remove("za-row-left-persistent");
-        delete leftMemory[rowKey(row)];
-      }
-    });
-  }
-
-  window.addEventListener("za:realtime", function(e){
-    var detail = e.detail || {};
-    var evt = detail.event || "";
-    var payload = detail.payload || {};
-    var name = payload.name || payload.participant_name || payload.message || "";
-    if(evt === "participant_leave") markLeftByName(name);
-    if(evt === "participant_join") markJoinedByName(name);
-  });
-
-  window.addEventListener("za:live-snapshot", function(){
-    rememberState();
-    setTimeout(restoreState, 0);
-    setTimeout(restoreState, 80);
-  });
-
-  var nativeFetch = window.fetch;
-  window.fetch = function(){
-    var args = arguments;
-    var url = String(args[0] || "");
-    var isLiveSnapshot = url.indexOf("/api/live-snapshot") !== -1;
-    if(isLiveSnapshot) rememberState();
-    return nativeFetch.apply(this, args).then(function(resp){
-      if(isLiveSnapshot){
-        setTimeout(restoreState, 0);
-        setTimeout(restoreState, 120);
-      }
-      return resp;
-    });
-  };
-
-  document.addEventListener("DOMContentLoaded", function(){
-    rememberState();
-    restoreState();
-    setInterval(function(){
-      rememberState();
-      restoreState();
-    }, 1000);
-  });
-})();
-</script>
-
-<script>
-/* ===== LIVE AUTO REFRESH FIX: SOCKET-FIRST + SAFE FALLBACK ===== */
-(function(){
-  if(window.__ZA_LIVE_AUTO_REFRESH_FIX_V1__) return;
-  window.__ZA_LIVE_AUTO_REFRESH_FIX_V1__ = true;
-
-  var lastSnapshotAt = 0;
-  var socketStarted = false;
-  var fallbackBusy = false;
-
-  function dispatchSnapshot(payload){
-    payload = payload || {};
-    lastSnapshotAt = Date.now();
-    window.__zaLastSocketSnapshot = payload;
-    try{ window.dispatchEvent(new CustomEvent("za:live-snapshot", {detail:payload})); }catch(e){}
-    if(typeof window.zaApplyLiveSnapshot === "function"){
-      try{ window.zaApplyLiveSnapshot(payload); }catch(e){}
-    }
-  }
-
-  function dispatchSummary(payload){
-    payload = payload || {};
-    try{ window.dispatchEvent(new CustomEvent("za:live-summary", {detail:payload})); }catch(e){}
-    if(typeof window.zaApplyLiveSummary === "function"){
-      try{ window.zaApplyLiveSummary(payload); }catch(e){}
-    }
-  }
-
-  async function fetchLiveSnapshotFallback(reason){
-    if(fallbackBusy) return;
-    fallbackBusy = true;
-    try{
-      var res = await fetch("/api/live-snapshot?t=" + Date.now() + "&source=" + encodeURIComponent(reason || "fallback"), {
-        cache:"no-store",
-        credentials:"same-origin"
-      });
-      if(res.ok){
-        var payload = await res.json();
-        payload.socket_reason = payload.socket_reason || ("fallback_" + (reason || "timer"));
-        dispatchSnapshot(payload);
-        if(typeof window.ZoomAttendanceMotionEngine !== "undefined" && window.ZoomAttendanceMotionEngine.toast){
-          // No noisy toast every 2s. Only update silently.
-        }
-      }
-    }catch(e){
-      var conn = document.getElementById("lfConn");
-      if(conn){
-        conn.className = "live-fix-conn bad";
-        conn.textContent = "● Reconnecting live stream";
-      }
-    }finally{
-      fallbackBusy = false;
-    }
-  }
-
-  function requestSocketSnapshot(reason){
-    if(window.zaSocket && window.zaSocket.connected){
-      try{
-        window.zaSocket.emit("request_live_snapshot", {source: reason || "client_request", path: location.pathname});
-        return true;
-      }catch(e){}
-    }
-    return false;
-  }
-
-  function bindSocket(){
-    if(socketStarted || !window.io) return;
-    socketStarted = true;
-    try{
-      var socket = window.io({
-        transports:["websocket","polling"],
-        reconnection:true,
-        reconnectionAttempts:Infinity,
-        timeout:12000
-      });
-      window.zaSocket = socket;
-
-      socket.on("connect", function(){
-        document.body.classList.add("za-realtime-connected");
-        document.body.classList.add("za-socket-live-mode");
-        try{ window.dispatchEvent(new CustomEvent("za:socket-connected", {detail:{connected:true}})); }catch(e){}
-        requestSocketSnapshot("connect");
-      });
-
-      socket.on("disconnect", function(){
-        document.body.classList.remove("za-realtime-connected");
-        document.body.classList.remove("za-socket-live-mode");
-        try{ window.dispatchEvent(new CustomEvent("za:socket-disconnected", {detail:{connected:false}})); }catch(e){}
-      });
-
-      socket.on("live_snapshot", function(payload){ dispatchSnapshot(payload); });
-      socket.on("live_summary", function(payload){ dispatchSummary(payload); });
-
-      ["live_update","participant_join","participant_leave","meeting_finalized","smart_alert","risk_update","server_ready"].forEach(function(evt){
-        socket.on(evt, function(payload){
-          try{ window.dispatchEvent(new CustomEvent("za:realtime", {detail:{event:evt, payload:payload || {}}})); }catch(e){}
-          requestSocketSnapshot(evt);
-        });
-      });
-    }catch(e){
-      socketStarted = false;
-    }
-  }
-
-  function ensureSocketClient(){
-    return; // Safe Polling Mode: do not bind Socket.IO on Render
-    if(document.getElementById("za-socketio-client-global")){
-      setTimeout(bindSocket, 300);
-      return;
-    }
-    var s = document.createElement("script");
-    s.id = "za-socketio-client-global";
-    return; // Safe Polling Mode: Socket.IO client disabled on Render
-    s.onload = bindSocket;
-    s.onerror = function(){ socketStarted = false; };
-    document.head.appendChild(s);
-  }
-
-  window.zaLiveRefresh = function(){
-    if(requestSocketSnapshot("manual_or_live_page")) return true;
-    fetchLiveSnapshotFallback("manual_or_live_page");
-    return false;
-  };
-
-  document.addEventListener("DOMContentLoaded", function(){
-    ensureSocketClient();
-
-    // Initial live-page paint correction.
-    if(location.pathname.indexOf("/live") !== -1){
-      setTimeout(function(){
-        if(!requestSocketSnapshot("live_initial")){
-          fetchLiveSnapshotFallback("live_initial");
-        }
-      }, 500);
-    }
-
-    // Safe fallback: only fetch when socket has not supplied a fresh snapshot.
-    // This restores automatic refresh while keeping socket as primary transport.
-    setInterval(function(){
-      if(location.pathname.indexOf("/live") === -1) return;
-      var socketOk = !!(window.zaSocket && window.zaSocket.connected);
-      var stale = !lastSnapshotAt || (Date.now() - lastSnapshotAt > 3500);
-      if(socketOk){
-        requestSocketSnapshot("live_timer_socket");
-        // If socket is connected but server/event does not reply, fallback next cycle.
-        if(stale && Date.now() - lastSnapshotAt > 7000){
-          fetchLiveSnapshotFallback("socket_stale");
-        }
-      }else{
-        fetchLiveSnapshotFallback("socket_disconnected");
-      }
-    }, 2000);
-
-    // Global nav, low-frequency safe refresh if socket hasn't supplied a summary.
-    setInterval(function(){
-      if(window.zaSocket && window.zaSocket.connected){
-        requestSocketSnapshot("nav_summary");
-      }else{
-        fetch("/api/live-summary?t=" + Date.now(), {cache:"no-store", credentials:"same-origin"})
-          .then(function(r){ return r.ok ? r.json() : null; })
-          .then(function(data){ if(data) dispatchSummary(data); })
-          .catch(function(){});
-      }
-    }, 6000);
-  });
-})();
-</script>
+<!-- Stabilization: duplicate global live smooth/auto-refresh scripts removed. /live owns live polling via /api/live-snapshot. -->
 
 
 
@@ -8174,142 +7217,144 @@ button[type="submit"]{margin-top:20px!important;}
 
         <script>
         (function(){
+            if(window.__ZA_LIVE_STABILIZED_ENGINE_V1__) return;
+            window.__ZA_LIVE_STABILIZED_ENGINE_V1__ = true;
+
             let lastPayload = {{ data|tojson }};
-            let tickBase = Date.now();
+            let pollBusy = false;
+            let pollTimer = null;
+            let durationTimer = null;
+
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
-            function secFromText(t){const p=String(t||'').trim().split(':').map(Number);if(p.length!==3||p.some(isNaN))return 0;return p[0]*3600+p[1]*60+p[2];}
-            function finalLiveSecFromText(t){
-                t=String(t||'').trim();
-                let p=t.split(':').map(Number);
-                if(p.length===3&&!p.some(isNaN))return p[0]*3600+p[1]*60+p[2];
-                if(p.length===2&&!p.some(isNaN))return p[0]*60+p[1];
-                return 0;
+            function secFromText(t){const p=String(t||'').trim().split(':').map(Number);if(p.length===3&&!p.some(isNaN))return p[0]*3600+p[1]*60+p[2];if(p.length===2&&!p.some(isNaN))return p[0]*60+p[1];return 0;}
+            function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
+            function rowId(p){return String(p.participant_id || p.user_id || p.email || p.name || '').toLowerCase().replace(/[^a-z0-9_-]+/g,'_') || ('row_'+Math.random().toString(36).slice(2));}
+            function setText(id, value){const el=document.getElementById(id); if(el && el.textContent!==String(value)) el.textContent=String(value);}
+            function setDisplay(id, value){const el=document.getElementById(id); if(el && el.style.display!==value) el.style.display=value;}
+            function setCell(row, col, html, textValue){
+                let cell=row.querySelector('[data-col="'+col+'"]');
+                if(!cell){ cell=document.createElement('td'); cell.setAttribute('data-col', col); row.appendChild(cell); }
+                const val=String(textValue ?? html ?? '');
+                if(cell.dataset.val !== val){ cell.innerHTML=html; cell.dataset.val=val; }
+                return cell;
             }
-            function finalLiveMeetingSeconds(){
-                try{
-                    let raw=(document.getElementById('lfDuration')?.textContent||'').replace('Duration','').trim();
-                    return finalLiveSecFromText(raw);
-                }catch(e){return 0;}
-            }
-            function finalLiveNormalizeDurations(){
-                try{
-                    let meetingSec=finalLiveMeetingSeconds();
-                    let rows=[...document.querySelectorAll('#lfRows tr')];
-                    let liveRows=rows.filter(function(r){
-                        let t=(r.textContent||'').toLowerCase();
-                        return t.includes('live') || t.includes('host') || t.includes('present');
-                    });
-                    rows.forEach(function(row){
-                        let el=row.querySelector('.live-fix-duration');
-                        if(!el)return;
-                        let isActive=el.getAttribute('data-active')==='1';
-                        let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
-                        let base=parseInt(el.getAttribute('data-base')||'0',10);
-                        let shown=finalLiveSecFromText(el.textContent);
-                        if(isActive){
-                            let elapsed=(joinMs>0)?Math.max(0,Math.floor((Date.now()-joinMs)/1000)):shown;
-                            shown=Math.max(shown,base+elapsed);
-                            if(meetingSec>0){
-                                shown=Math.min(shown,meetingSec);
-                                if(liveRows.length===1){ shown=meetingSec; }
-                            }
-                        }
-                        el.dataset.finalLiveSeconds=String(shown);
-                        el.textContent=fmt(shown);
-                    });
-                }catch(e){}
+            function setBadgeClass(el, className){ if(el && el.className!==className) el.className=className; }
+            function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);if(el.textContent!==String(next))el.textContent=String(next);}
+            function normalizeActiveDuration(el){
+                if(!el) return;
+                let base=parseInt(el.getAttribute('data-base')||'0',10);
+                let active=el.getAttribute('data-active')==='1';
+                let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
+                let shown=base;
+                if(active && joinMs>0){ shown=base+Math.max(0,Math.floor((Date.now()-joinMs)/1000)); }
+                const meetingSec=secFromText((document.getElementById('lfDuration')?.textContent||'').replace('Duration','').trim());
+                if(active && meetingSec>0){ shown=Math.min(shown, meetingSec); }
+                const txt=fmt(shown);
+                if(el.textContent!==txt) el.textContent=txt;
+                el.dataset.finalLiveSeconds=String(shown);
             }
             function sortLiveRowsByDuration(){const body=document.getElementById('lfRows');if(!body)return;[...body.querySelectorAll('tr')].sort((a,b)=>secFromText(b.querySelector('.live-fix-duration')?.textContent)-secFromText(a.querySelector('.live-fix-duration')?.textContent)).forEach(r=>body.appendChild(r));}
-            function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);const start=parseInt(el.textContent||'0',10)||0;if(start===next){el.textContent=next;return;}const t0=performance.now(),dur=520;function step(t){const p=Math.min((t-t0)/dur,1);const eased=1-Math.pow(1-p,3);el.textContent=Math.round(start+(next-start)*eased);if(p<1)requestAnimationFrame(step);else el.textContent=next;}requestAnimationFrame(step);}
-            function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
+
+            function updateParticipantRows(rows, summary){
+                const tbody=document.getElementById('lfRows'); if(!tbody) return;
+                const seen=new Set();
+                const meetingSec=parseInt((summary||{}).meeting_duration_seconds||0,10);
+                const activeRows=(rows||[]).filter(p=>!!p.is_active);
+                (rows||[]).forEach(function(p){
+                    const id=rowId(p); seen.add(id);
+                    let row=tbody.querySelector('tr[data-row-id="'+id+'"]');
+                    if(!row){ row=document.createElement('tr'); row.setAttribute('data-row-id', id); tbody.appendChild(row); }
+                    row.classList.toggle('live-fix-left', !p.is_active);
+                    const nameHtml='<b>'+esc(p.name)+'</b>'+(p.is_host?' <span class="badge info">HOST</span>':'');
+                    setCell(row,'name',nameHtml,p.name+'|'+(p.is_host?'host':''));
+                    setCell(row,'type','<span class="badge '+cls(p.type)+'">'+esc(p.type)+'</span>',p.type);
+                    setCell(row,'first_join',esc(p.first_join),p.first_join);
+                    setCell(row,'last_leave',esc(p.last_leave),p.last_leave);
+                    const baseSeconds=parseInt((p.is_active && activeRows.length===1)?Math.max(parseInt(p.stored_seconds||0,10),meetingSec):((p.is_active?p.stored_seconds:p.duration_seconds)||0),10);
+                    let durationCell=row.querySelector('[data-col="duration"]');
+                    if(!durationCell){ durationCell=document.createElement('td'); durationCell.setAttribute('data-col','duration'); row.appendChild(durationCell); }
+                    let span=durationCell.querySelector('.live-fix-duration');
+                    if(!span){ span=document.createElement('span'); span.className='live-fix-duration'; durationCell.appendChild(span); }
+                    span.setAttribute('data-base', String(baseSeconds));
+                    span.setAttribute('data-active', p.is_active?'1':'0');
+                    span.setAttribute('data-current-join-ms', p.is_active?String(parseInt(p.current_join_epoch_ms||0,10)):'0');
+                    if(!p.is_active){ span.textContent=fmt(p.duration_seconds); span.dataset.finalLiveSeconds=String(parseInt(p.duration_seconds||0,10)); }
+                    else { normalizeActiveDuration(span); }
+                    setCell(row,'rejoins',esc(p.rejoins),p.rejoins);
+                    setCell(row,'status','<span class="badge '+(p.status==='LIVE'?'ok':'gray')+'">'+esc(p.status)+'</span>',p.status);
+                });
+                [...tbody.querySelectorAll('tr[data-row-id]')].forEach(function(row){ if(!seen.has(row.getAttribute('data-row-id'))) row.remove(); });
+                sortLiveRowsByDuration();
+            }
+
+            function renderFeed(items){
+                const el=document.getElementById('lfFeed'); if(!el) return;
+                const html=(items||[]).length?(items||[]).map(i=>'<div class="list-row"><div><div style="font-weight:900">'+esc(i.name)+'</div><div class="muted">'+esc(i.label)+' · '+esc(i.time)+'</div></div><span class="badge '+(i.kind==='join'?'ok':'gray')+'">'+esc(i.tag)+'</span></div>').join(''):'<div class="muted">No join/leave events yet.</div>';
+                if(el.dataset.html!==html){ el.innerHTML=html; el.dataset.html=html; }
+            }
+            function renderMissing(items){
+                const el=document.getElementById('lfMissing'); if(!el) return;
+                const html=(items||[]).length?(items||[]).map(m=>'<div class="list-row"><div><div style="font-weight:900">'+esc(m.name)+'</div><div class="muted">'+esc(m.contact)+'</div></div><span class="badge danger">Not joined</span></div>').join(''):'<div class="muted">No pending registered member.</div>';
+                if(el.dataset.html!==html){ el.innerHTML=html; el.dataset.html=html; }
+            }
+
             function render(data){
-                lastPayload=data; tickBase=Date.now();
-                document.getElementById('lfBadge').textContent=data.has_live?'LIVE MEETING RUNNING':'NO LIVE MEETING';
-                document.getElementById('lfBadgeWrap').classList.toggle('is-live', !!data.has_live);
-                document.getElementById('lfMetaRow').style.display=data.has_live?'flex':'none';
+                if(!data) return; lastPayload=data;
+                const summary=data.summary||{};
+                setText('lfBadge', data.has_live?'LIVE MEETING RUNNING':'NO LIVE MEETING');
+                const badge=document.getElementById('lfBadgeWrap'); if(badge) badge.classList.toggle('is-live', !!data.has_live);
+                setDisplay('lfMetaRow', data.has_live?'flex':'none');
                 const liveNav=[...document.querySelectorAll('.sidebar a')].find(a=>a.getAttribute('href')&&a.getAttribute('href').includes('/live'));
                 if(liveNav){liveNav.classList.toggle('live-nav-live',!!data.has_live); liveNav.classList.toggle('live-nav-idle',!data.has_live);}
-                document.getElementById('lfTopic').textContent=data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting';
-                document.getElementById('lfMeetingId').textContent='Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-');
-                document.getElementById('lfStarted').textContent='Started '+(data.has_live?(data.meeting.start_time||'-'):'-');
-                document.getElementById('lfDuration').textContent='Duration '+fmt((data.summary||{}).meeting_duration_seconds||0);
-                animateLiveNumber('lfActive',(data.summary||{}).active_now||0);
-                animateLiveNumber('lfKnown',(data.summary||{}).known_count||0);
-                animateLiveNumber('lfUnknown',(data.summary||{}).unknown_count||0);
-                document.getElementById('lfHost').textContent=(data.summary||{}).host_present?'Present':'Absent';
-                animateLiveNumber('lfNotJoined',(data.summary||{}).not_joined_count||0);
+                setText('lfTopic', data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting');
+                setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
+                setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
+                setText('lfDuration','Duration '+fmt(summary.meeting_duration_seconds||0));
+                animateLiveNumber('lfActive',summary.active_now||0);
+                animateLiveNumber('lfKnown',summary.known_count||0);
+                animateLiveNumber('lfUnknown',summary.unknown_count||0);
+                setText('lfHost',summary.host_present?'Present':'Absent');
+                animateLiveNumber('lfNotJoined',summary.not_joined_count||0);
                 const rows=data.participants||[];
-                const meetingSecForRows=(data.summary||{}).meeting_duration_seconds||0;
-                const activeRowsForDuration=rows.filter(function(x){return !!x.is_active;});
-                document.getElementById('lfEmpty').style.display=rows.length?'none':'block';
-                document.getElementById('lfTableWrap').style.display=rows.length?'block':'none';
-                document.getElementById('lfRows').innerHTML=rows.map(p=>`<tr class="${p.is_active?'':'live-fix-left'}"><td><b>${esc(p.name)}</b>${p.is_host?' <span class="badge info">HOST</span>':''}</td><td><span class="badge ${cls(p.type)}">${esc(p.type)}</span></td><td>${esc(p.first_join)}</td><td>${esc(p.last_leave)}</td><td><span class="live-fix-duration" data-base="${parseInt((p.is_active && activeRowsForDuration.length===1)?Math.max(parseInt(p.stored_seconds||0,10),parseInt(meetingSecForRows||0,10)):((p.is_active?p.stored_seconds:p.duration_seconds)||0),10)}" data-active="${p.is_active?1:0}" data-current-join-ms="${p.is_active?parseInt(p.current_join_epoch_ms||0,10):0}">${fmt((p.is_active && activeRowsForDuration.length===1)?Math.max(parseInt(p.duration_seconds||0,10),parseInt(meetingSecForRows||0,10)):p.duration_seconds)}</span></td><td>${esc(p.rejoins)}</td><td><span class="badge ${p.status==='LIVE'?'ok':'gray'}">${esc(p.status)}</span></td></tr>`).join('');
-                finalLiveNormalizeDurations();
-                sortLiveRowsByDuration();
-                document.getElementById('lfFeed').innerHTML=(data.feed||[]).length?(data.feed||[]).map(i=>`<div class="list-row"><div><div style="font-weight:900">${esc(i.name)}</div><div class="muted">${esc(i.label)} · ${esc(i.time)}</div></div><span class="badge ${i.kind==='join'?'ok':'gray'}">${esc(i.tag)}</span></div>`).join(''):'<div class="muted">No join/leave events yet.</div>';
-                document.getElementById('lfMissing').innerHTML=(data.not_joined||[]).length?(data.not_joined||[]).map(m=>`<div class="list-row"><div><div style="font-weight:900">${esc(m.name)}</div><div class="muted">${esc(m.contact)}</div></div><span class="badge danger">Not joined</span></div>`).join(''):'<div class="muted">No pending registered member.</div>';
+                setDisplay('lfEmpty',rows.length?'none':'block');
+                setDisplay('lfTableWrap',rows.length?'block':'none');
+                updateParticipantRows(rows, summary);
+                renderFeed(data.feed||[]);
+                renderMissing(data.not_joined||[]);
+                const conn=document.getElementById('lfConn');
+                if(conn){ conn.className='live-fix-conn ok'; conn.textContent='● Live updated '+new Date().toLocaleTimeString(); }
             }
-            function applySocketPayload(data){
+
+            async function pollLiveSnapshot(reason){
+                if(location.pathname !== '/live' || pollBusy) return;
+                pollBusy=true;
                 try{
-                    if(!data) return;
-                    document.getElementById('lfConn').className='live-fix-conn ok';
-                    document.getElementById('lfConn').textContent='● Live updated '+new Date().toLocaleTimeString();
+                    const res=await fetch('/api/live-snapshot?t='+Date.now()+'&source='+encodeURIComponent(reason||'live_page'), {cache:'no-store', credentials:'same-origin'});
+                    if(!res.ok) throw new Error('live-snapshot failed');
+                    const data=await res.json();
                     render(data);
                 }catch(e){
-                    document.getElementById('lfConn').className='live-fix-conn bad';
-                    document.getElementById('lfConn').textContent='● Socket render retrying';
-                }
+                    const conn=document.getElementById('lfConn');
+                    if(conn){ conn.className='live-fix-conn bad'; conn.textContent='● Safe polling retrying'; }
+                }finally{ pollBusy=false; }
             }
-            window.zaApplyLiveSnapshot=function(data){ applySocketPayload(data); };
-            window.zaLiveRefresh=function(force){
-                const conn=document.getElementById('lfConn');
-                fetch('/api/live-summary?t='+Date.now()+'&force=1', {cache:'no-store', credentials:'same-origin'})
-                  .then(function(r){ return r.ok ? r.json() : Promise.reject(new Error('live-summary failed')); })
-                  .then(function(data){
-                    if(data && data.ok){
-                        if(conn){
-                            conn.className='live-fix-conn ok';
-                            conn.textContent='● Live updated '+new Date().toLocaleTimeString();
-                        }
-                        render(data);
-                    }
-                  })
-                  .catch(function(){
-                    if(conn){
-                        conn.className='live-fix-conn bad';
-                        conn.textContent='● Safe polling retrying';
-                    }
-                  });
-                return true;
-            };
-            window.addEventListener('za:live-snapshot', function(e){ applySocketPayload(e.detail); });
-            window.addEventListener('za:socket-connected', function(){ window.zaLiveRefresh(); });
-            setInterval(function(){
-                const nowMs=Date.now();
-                document.querySelectorAll('.live-fix-duration').forEach(function(el){
-                    let base=parseInt(el.getAttribute('data-base')||'0',10);
-                    let active=el.getAttribute('data-active')==='1';
-                    let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
-                    let extra=(active&&joinMs>0)?Math.max(0,Math.floor((nowMs-joinMs)/1000)):0;
-                    let shown=base+extra;
-                    try{
-                        let liveRows=[...document.querySelectorAll('#lfRows tr')].filter(r=>((r.textContent||'').toLowerCase().includes('live')||((r.textContent||'').toLowerCase().includes('host'))));
-                        let meetingText=(document.getElementById('lfDuration')?.textContent||'').replace('Duration','').trim();
-                        let meetingSec=secFromText(meetingText);
-                        if(active && meetingSec && liveRows.length===1){ shown=Math.max(shown, meetingSec); }
-                    }catch(e){}
-                    el.textContent=fmt(shown);
-                });
+
+            window.zaApplyLiveSnapshot=function(data){ render(data); };
+            window.zaLiveRefresh=function(){ pollLiveSnapshot('manual'); return true; };
+            render(lastPayload);
+            setTimeout(function(){ pollLiveSnapshot('initial'); },350);
+            pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },2000);
+            durationTimer=setInterval(function(){
+                document.querySelectorAll('.live-fix-duration').forEach(normalizeActiveDuration);
                 if(lastPayload && lastPayload.meeting && lastPayload.meeting.start_iso){
-                    let startMs=Date.parse(lastPayload.meeting.start_iso);
-                    let sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((nowMs-startMs)/1000));
-                    document.getElementById('lfDuration').textContent='Duration '+fmt(sec);
+                    const startMs=Date.parse(lastPayload.meeting.start_iso);
+                    const sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((Date.now()-startMs)/1000));
+                    setText('lfDuration','Duration '+fmt(sec));
                 }
-                finalLiveNormalizeDurations();
                 sortLiveRowsByDuration();
             },1000);
-            render(lastPayload); setTimeout(function(){ if(window.zaLiveRefresh) window.zaLiveRefresh(true); }, 350); setInterval(function(){ if(window.zaLiveRefresh) window.zaLiveRefresh(true); }, 2000);
+            window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); if(durationTimer) clearInterval(durationTimer); });
         })();
         </script>
         """,
