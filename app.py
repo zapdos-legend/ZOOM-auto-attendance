@@ -894,6 +894,34 @@ def za_store_last_meeting_end():
     except Exception:
         pass
 
+
+
+# ===== LAST MEETING ENDED DB TRUTH ENGINE =====
+def get_last_meeting_ended():
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT topic,end_time
+                FROM meetings
+                WHERE status='ended'
+                OR end_time IS NOT NULL
+                ORDER BY end_time DESC
+                LIMIT 1
+                """)
+                row=cur.fetchone()
+                if not row:
+                    return {"topic":"No previous meeting","ended_date":"-","ended_time":"-"}
+                dt=parse_dt(row.get("end_time"))
+                return {
+                    "topic": row.get("topic") or "Untitled Meeting",
+                    "ended_date": dt.strftime("%d-%m-%Y") if dt else "-",
+                    "ended_time": dt.strftime("%I:%M %p") if dt else "-"
+                }
+    except Exception:
+        return {"topic":"No previous meeting","ended_date":"-","ended_time":"-"}
+# ===== END LAST MEETING ENDED DB TRUTH ENGINE =====
+
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
 
