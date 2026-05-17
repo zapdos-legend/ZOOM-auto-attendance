@@ -355,48 +355,6 @@ button:active,.btn:active,a.btn:active{
         if(n !== null && Math.abs(n) < 1000000) self.animateNumber(el,n);
       });
     },
-    secondsFromText:function(text){
-      text = String(text || "").trim();
-      var parts = text.split(":").map(function(x){ return parseInt(x,10); });
-      if(parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0]*60+parts[1];
-      if(parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) return parts[0]*3600+parts[1]*60+parts[2];
-      var m = text.match(/(\\d+)\\s*(min|mins|minute|minutes)/i);
-      if(m) return parseInt(m[1],10)*60;
-      return null;
-    },
-    formatSeconds:function(sec){
-      sec = Math.max(0, parseInt(sec || 0, 10));
-      var h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
-      if(h > 0) return h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
-      return m + ":" + String(s).padStart(2,"0");
-    },
-    initDurations:function(){
-      var self = this;
-
-      function safeInit(el){
-        if(!el) return;
-        el.classList.add("za-duration-stable");
-
-        var parsed = self.secondsFromText(el.textContent);
-        if(parsed === null) return;
-
-        var oldVal = parseInt(el.dataset.zaDurationSeconds || "-1", 10);
-        if(isNaN(oldVal) || parsed > oldVal){
-          el.dataset.zaDurationSeconds = String(parsed);
-        }
-        el.dataset.zaDurationLocked = "1";
-      }
-
-      var cells = Array.from(document.querySelectorAll("td,span,div")).filter(function(el){
-        var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
-        var text = (el.textContent || "").trim();
-        return (label.indexOf("duration") !== -1 || /^\\d{1,3}:\\d{2}(:\\d{2})?$/.test(text)) && self.secondsFromText(text) !== null;
-      }).slice(0,160);
-
-      cells.forEach(safeInit);
-
-
-    },
     initHeartbeat:function(){
       var labels = Array.from(document.querySelectorAll("body *")).filter(function(el){
         var t = (el.textContent || "").trim().toLowerCase();
@@ -548,7 +506,6 @@ button:active,.btn:active,a.btn:active{
       this.initCards();
       this.initButtons();
       this.initCounters();
-      this.initDurations();
       this.initHeartbeat();
       this.initFlashToasts();
       this.initTrends();
@@ -598,23 +555,6 @@ tbody tr.za-row-left-persistent{
 .za-row-left-persistent td{
     background: rgba(239,68,68,0.10) !important;
 }
-.za-duration-stable{
-    transition: opacity .18s ease, transform .18s ease;
-    font-variant-numeric: tabular-nums;
-}
-.za-duration-stable.za-duration-tick{
-    animation: zaDurationTick .22s ease both;
-}
-@keyframes zaDurationTick{
-    0%{transform:translateY(0);opacity:1;}
-    50%{transform:translateY(-1px);opacity:.92;}
-    100%{transform:translateY(0);opacity:1;}
-}
-
-
-/* ===== PHASE 2.1 UI POLISH ===== */
-
-/* Realtime panel visibility fix */
 .za-realtime-dock{
   position:fixed;
   top:80px;
@@ -998,6 +938,14 @@ def fmt_time_ampm(dt):
 
 def mins_from_seconds(value):
     return round((value or 0) / 60, 2)
+
+
+def format_live_duration(seconds):
+    try:
+        seconds = max(int(seconds or 0), 0)
+    except Exception:
+        seconds = 0
+    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
 
 
 def member_display_name(row):
@@ -2163,6 +2111,14 @@ def get_row_effective_total_seconds(row, end_time=None):
         total_seconds = visible_span_seconds
 
     return max(total_seconds, 0)
+
+
+def calculate_live_duration(row, end_time=None):
+    """Backend-only live duration truth for /live and live API payloads."""
+    try:
+        return int(get_row_effective_total_seconds(row or {}, end_time))
+    except Exception:
+        return 0
 
 
 def get_meeting_rows_last_activity(attendance_rows):
@@ -6928,6 +6884,7 @@ def build_live_snapshot_payload(include_feed=True):
                 "total_tracked": 0,
                 "host_present": False,
                 "meeting_duration_seconds": 0,
+                "meeting_duration_display": format_live_duration(0),
                 "risk": "Idle",
             },
             "participants": [],
@@ -6953,7 +6910,7 @@ def build_live_snapshot_payload(include_feed=True):
         is_active_now = p.get("current_join") is not None
         is_known = bool(p.get("is_member"))
         is_host = bool(p.get("is_host"))
-        live_total = get_row_effective_total_seconds(p, server_now)
+        live_total = calculate_live_duration(p, server_now)
         live_status = "LIVE" if is_active_now else "LEFT"
         category = "HOST" if is_host else ("MEMBER" if is_known else "UNKNOWN")
         if is_active_now:
@@ -6970,7 +6927,6 @@ def build_live_snapshot_payload(include_feed=True):
             unknown_total += 1
 
         row_id = str(p.get("id") or p.get("participant_key") or p.get("participant_name") or "")
-        current_join = parse_dt(p.get("current_join"))
         participant_payload.append({
             "id": row_id,
             "name": p.get("participant_name") or "-",
@@ -6983,12 +6939,10 @@ def build_live_snapshot_payload(include_feed=True):
             "first_join": fmt_time_ampm(p.get("first_join")) if p.get("first_join") else "-",
             "last_leave": fmt_time_ampm(p.get("last_leave")) if p.get("last_leave") else ("Live now" if is_active_now else "-"),
             "duration_seconds": int(live_total or 0),
-            "stored_seconds": int(p.get("total_seconds") or 0),
-            "current_join_epoch_ms": int(current_join.timestamp() * 1000) if current_join else 0,
+            "duration_display": format_live_duration(live_total),
             "duration_min": mins_from_seconds(live_total),
             "rejoins": p.get("rejoin_count") or 0,
             "status": live_status,
-            "current_join_iso": current_join.isoformat() if current_join else "",
         })
 
         if include_feed:
@@ -7038,6 +6992,7 @@ def build_live_snapshot_payload(include_feed=True):
             "total_tracked": len(participants),
             "host_present": host_present,
             "meeting_duration_seconds": max(int((server_now - start_dt).total_seconds()), 0),
+            "meeting_duration_display": format_live_duration(max(int((server_now - start_dt).total_seconds()), 0)),
             "risk": risk,
         },
         "participants": participant_payload,
@@ -7201,7 +7156,7 @@ button[type="submit"]{margin-top:20px!important;}
                     <div class="row" id="lfMetaRow" style="margin-top:14px;gap:10px;flex-wrap:wrap;display:{{ 'flex' if data.has_live else 'none' }}">
                         <span class="badge info" id="lfMeetingId">Meeting ID {{ data.meeting.id if data.has_live else '-' }}</span>
                         <span class="badge gray" id="lfStarted">Started {{ data.meeting.start_time if data.has_live else '-' }}</span>
-                        <span class="badge gray" id="lfDuration">Duration {{ fmt_seconds(data.summary.meeting_duration_seconds) }}</span>
+                        <span class="badge gray" id="lfDuration">Duration {{ data.summary.meeting_duration_display }}</span>
                     </div>
                 </div>
                 <div class="live-fix-conn ok" id="lfConn">● Server rendered</div>
@@ -7231,7 +7186,7 @@ button[type="submit"]{margin-top:20px!important;}
                                 <td><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
                                 <td>{{ p.first_join }}</td>
                                 <td>{{ p.last_leave }}</td>
-                                <td><span class="live-fix-duration" data-base="{{ [p.stored_seconds, data.summary.meeting_duration_seconds]|max if p.is_active and data.summary.active_now == 1 else (p.stored_seconds if p.is_active else p.duration_seconds) }}" data-active="{{ 1 if p.is_active else 0 }}" data-current-join-ms="{{ p.current_join_epoch_ms if p.is_active else 0 }}">{{ fmt_seconds([p.duration_seconds, data.summary.meeting_duration_seconds]|max if p.is_active and data.summary.active_now == 1 else p.duration_seconds) }}</span></td>
+                                <td><span class="live-fix-duration">{{ p.duration_display }}</span></td>
                                 <td>{{ p.rejoins }}</td>
                                 <td><span class="badge {{ 'ok' if p.status == 'LIVE' else 'gray' }}">{{ p.status }}</span></td>
                             </tr>
@@ -7254,11 +7209,8 @@ button[type="submit"]{margin-top:20px!important;}
             let lastPayload = {{ data|tojson }};
             let pollBusy = false;
             let pollTimer = null;
-            let durationTimer = null;
 
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
-            function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
-            function secFromText(t){const p=String(t||'').trim().split(':').map(Number);if(p.length===3&&!p.some(isNaN))return p[0]*3600+p[1]*60+p[2];if(p.length===2&&!p.some(isNaN))return p[0]*60+p[1];return 0;}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
             function rowId(p){return String(p.participant_id || p.user_id || p.email || p.name || '').toLowerCase().replace(/[^a-z0-9_-]+/g,'_') || ('row_'+Math.random().toString(36).slice(2));}
             function setText(id, value){const el=document.getElementById(id); if(el && el.textContent!==String(value)) el.textContent=String(value);}
@@ -7272,26 +7224,15 @@ button[type="submit"]{margin-top:20px!important;}
             }
             function setBadgeClass(el, className){ if(el && el.className!==className) el.className=className; }
             function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);if(el.textContent!==String(next))el.textContent=String(next);}
-            function normalizeActiveDuration(el){
-                if(!el) return;
-                let base=parseInt(el.getAttribute('data-base')||'0',10);
-                let active=el.getAttribute('data-active')==='1';
-                let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
-                let shown=base;
-                if(active && joinMs>0){ shown=base+Math.max(0,Math.floor((Date.now()-joinMs)/1000)); }
-                const meetingSec=secFromText((document.getElementById('lfDuration')?.textContent||'').replace('Duration','').trim());
-                if(active && meetingSec>0){ shown=Math.min(shown, meetingSec); }
-                const txt=fmt(shown);
-                if(el.textContent!==txt) el.textContent=txt;
-                el.dataset.finalLiveSeconds=String(shown);
+            function sortLiveRowsByDuration(){
+                const body=document.getElementById('lfRows');
+                if(!body) return;
+                [...body.querySelectorAll('tr')].sort((a,b)=>parseInt(b.dataset.durationSeconds||'0',10)-parseInt(a.dataset.durationSeconds||'0',10)).forEach(r=>body.appendChild(r));
             }
-            function sortLiveRowsByDuration(){const body=document.getElementById('lfRows');if(!body)return;[...body.querySelectorAll('tr')].sort((a,b)=>secFromText(b.querySelector('.live-fix-duration')?.textContent)-secFromText(a.querySelector('.live-fix-duration')?.textContent)).forEach(r=>body.appendChild(r));}
 
             function updateParticipantRows(rows, summary){
                 const tbody=document.getElementById('lfRows'); if(!tbody) return;
                 const seen=new Set();
-                const meetingSec=parseInt((summary||{}).meeting_duration_seconds||0,10);
-                const activeRows=(rows||[]).filter(p=>!!p.is_active);
                 (rows||[]).forEach(function(p){
                     const id=rowId(p); seen.add(id);
                     let row=tbody.querySelector('tr[data-row-id="'+id+'"]');
@@ -7302,16 +7243,8 @@ button[type="submit"]{margin-top:20px!important;}
                     setCell(row,'type','<span class="badge '+cls(p.type)+'">'+esc(p.type)+'</span>',p.type);
                     setCell(row,'first_join',esc(p.first_join),p.first_join);
                     setCell(row,'last_leave',esc(p.last_leave),p.last_leave);
-                    const baseSeconds=parseInt((p.is_active && activeRows.length===1)?Math.max(parseInt(p.stored_seconds||0,10),meetingSec):((p.is_active?p.stored_seconds:p.duration_seconds)||0),10);
-                    let durationCell=row.querySelector('[data-col="duration"]');
-                    if(!durationCell){ durationCell=document.createElement('td'); durationCell.setAttribute('data-col','duration'); row.appendChild(durationCell); }
-                    let span=durationCell.querySelector('.live-fix-duration');
-                    if(!span){ span=document.createElement('span'); span.className='live-fix-duration'; durationCell.appendChild(span); }
-                    span.setAttribute('data-base', String(baseSeconds));
-                    span.setAttribute('data-active', p.is_active?'1':'0');
-                    span.setAttribute('data-current-join-ms', p.is_active?String(parseInt(p.current_join_epoch_ms||0,10)):'0');
-                    if(!p.is_active){ span.textContent=fmt(p.duration_seconds); span.dataset.finalLiveSeconds=String(parseInt(p.duration_seconds||0,10)); }
-                    else { normalizeActiveDuration(span); }
+                    row.dataset.durationSeconds=String(parseInt(p.duration_seconds||0,10));
+                    setCell(row,'duration','<span class="live-fix-duration">'+esc(p.duration_display||'00:00:00')+'</span>',p.duration_display||'00:00:00');
                     setCell(row,'rejoins',esc(p.rejoins),p.rejoins);
                     setCell(row,'status','<span class="badge '+(p.status==='LIVE'?'ok':'gray')+'">'+esc(p.status)+'</span>',p.status);
                 });
@@ -7341,7 +7274,7 @@ button[type="submit"]{margin-top:20px!important;}
                 setText('lfTopic', data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting');
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
-                setText('lfDuration','Duration '+fmt(summary.meeting_duration_seconds||0));
+                setText('lfDuration','Duration '+(summary.meeting_duration_display||'00:00:00'));
                 animateLiveNumber('lfActive',summary.active_now||0);
                 animateLiveNumber('lfKnown',summary.known_count||0);
                 animateLiveNumber('lfUnknown',summary.unknown_count||0);
@@ -7376,21 +7309,11 @@ button[type="submit"]{margin-top:20px!important;}
             render(lastPayload);
             setTimeout(function(){ pollLiveSnapshot('initial'); },350);
             pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },2000);
-            durationTimer=setInterval(function(){
-                document.querySelectorAll('.live-fix-duration').forEach(normalizeActiveDuration);
-                if(lastPayload && lastPayload.meeting && lastPayload.meeting.start_iso){
-                    const startMs=Date.parse(lastPayload.meeting.start_iso);
-                    const sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((Date.now()-startMs)/1000));
-                    setText('lfDuration','Duration '+fmt(sec));
-                }
-                sortLiveRowsByDuration();
-            },1000);
-            window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); if(durationTimer) clearInterval(durationTimer); });
+            window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); });
         })();
         </script>
         """,
         data=initial_payload,
-        fmt_seconds=lambda sec: f"{max(int(sec or 0),0)//3600:02d}:{(max(int(sec or 0),0)%3600)//60:02d}:{max(int(sec or 0),0)%60:02d}",
     )
     return page("Live", body, "live")
 
