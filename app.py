@@ -355,48 +355,6 @@ button:active,.btn:active,a.btn:active{
         if(n !== null && Math.abs(n) < 1000000) self.animateNumber(el,n);
       });
     },
-    secondsFromText:function(text){
-      text = String(text || "").trim();
-      var parts = text.split(":").map(function(x){ return parseInt(x,10); });
-      if(parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0]*60+parts[1];
-      if(parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) return parts[0]*3600+parts[1]*60+parts[2];
-      var m = text.match(/(\\d+)\\s*(min|mins|minute|minutes)/i);
-      if(m) return parseInt(m[1],10)*60;
-      return null;
-    },
-    formatSeconds:function(sec){
-      sec = Math.max(0, parseInt(sec || 0, 10));
-      var h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
-      if(h > 0) return h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
-      return m + ":" + String(s).padStart(2,"0");
-    },
-    initDurations:function(){
-      var self = this;
-
-      function safeInit(el){
-        if(!el) return;
-        el.classList.add("za-duration-stable");
-
-        var parsed = self.secondsFromText(el.textContent);
-        if(parsed === null) return;
-
-        var oldVal = parseInt(el.dataset.zaDurationSeconds || "-1", 10);
-        if(isNaN(oldVal) || parsed > oldVal){
-          el.dataset.zaDurationSeconds = String(parsed);
-        }
-        el.dataset.zaDurationLocked = "1";
-      }
-
-      var cells = Array.from(document.querySelectorAll("td,span,div")).filter(function(el){
-        var label = (el.getAttribute("data-label") || el.className || "").toString().toLowerCase();
-        var text = (el.textContent || "").trim();
-        return (label.indexOf("duration") !== -1 || /^\\d{1,3}:\\d{2}(:\\d{2})?$/.test(text)) && self.secondsFromText(text) !== null;
-      }).slice(0,160);
-
-      cells.forEach(safeInit);
-
-
-    },
     initHeartbeat:function(){
       var labels = Array.from(document.querySelectorAll("body *")).filter(function(el){
         var t = (el.textContent || "").trim().toLowerCase();
@@ -548,7 +506,6 @@ button:active,.btn:active,a.btn:active{
       this.initCards();
       this.initButtons();
       this.initCounters();
-      this.initDurations();
       this.initHeartbeat();
       this.initFlashToasts();
       this.initTrends();
@@ -598,23 +555,6 @@ tbody tr.za-row-left-persistent{
 .za-row-left-persistent td{
     background: rgba(239,68,68,0.10) !important;
 }
-.za-duration-stable{
-    transition: opacity .18s ease, transform .18s ease;
-    font-variant-numeric: tabular-nums;
-}
-.za-duration-stable.za-duration-tick{
-    animation: zaDurationTick .22s ease both;
-}
-@keyframes zaDurationTick{
-    0%{transform:translateY(0);opacity:1;}
-    50%{transform:translateY(-1px);opacity:.92;}
-    100%{transform:translateY(0);opacity:1;}
-}
-
-
-/* ===== PHASE 2.1 UI POLISH ===== */
-
-/* Realtime panel visibility fix */
 .za-realtime-dock{
   position:fixed;
   top:80px;
@@ -739,7 +679,6 @@ td .btn:last-child, td button:last-child, td form:last-child{ margin-right: 0 !i
 td form{ display:inline-block !important; vertical-align:middle !important; }
 .status-toggle-btn{ margin-left: 8px !important; margin-right: 8px !important; }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
 
@@ -817,7 +756,6 @@ canvas + div,
     position: relative !important;
 }
 
-</style>
 
 
 .za-last-meeting-card{
@@ -882,17 +820,6 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 load_dotenv()
 
 
-
-# ===== GPT55 FINAL LIVE FIX ENGINE =====
-LAST_MEETING_META = {
-    "ended_at": None
-}
-
-def za_store_last_meeting_end():
-    try:
-        LAST_MEETING_META["ended_at"] = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
-    except Exception:
-        pass
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
@@ -998,6 +925,14 @@ def fmt_time_ampm(dt):
 
 def mins_from_seconds(value):
     return round((value or 0) / 60, 2)
+
+
+def format_live_duration(seconds):
+    try:
+        seconds = max(int(seconds or 0), 0)
+    except Exception:
+        seconds = 0
+    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
 
 
 def member_display_name(row):
@@ -1307,10 +1242,8 @@ form input[name="password"]{display:block!important;margin-bottom:34px!important
 form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
 button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 """
@@ -1325,10 +1258,8 @@ form input[name="password"]{display:block!important;margin-bottom:34px!important
 form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
 button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 """
@@ -1645,11 +1576,10 @@ def cast_setting_value(value, cast=str):
 
 
 def get_setting(name, cast=str):
-    # Fast safe settings: avoid opening a new DB connection inside hot paths/webhooks.
-    # Settings still honor cached DB values if previously loaded; otherwise defaults/env are used.
-    value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
-    if value is not None:
-        return cast_setting_value(value, cast)
+    # Settings truth order: in-process cache, database value, then env/default fallback.
+    if name in SETTINGS_CACHE:
+        return cast_setting_value(SETTINGS_CACHE.get(name), cast)
+    value = None
     try:
         with db() as conn:
             with conn.cursor() as cur:
@@ -1660,6 +1590,7 @@ def get_setting(name, cast=str):
                     SETTINGS_CACHE[name] = value
     except Exception as e:
         print(f"⚠️ get_setting fallback for {name}: {e}")
+    if value is None:
         value = DEFAULT_SETTINGS.get(name)
     return cast_setting_value(value, cast)
 
@@ -2163,6 +2094,14 @@ def get_row_effective_total_seconds(row, end_time=None):
         total_seconds = visible_span_seconds
 
     return max(total_seconds, 0)
+
+
+def calculate_live_duration(row, end_time=None):
+    """Backend-only live duration truth for /live and live API payloads."""
+    try:
+        return int(get_row_effective_total_seconds(row or {}, end_time))
+    except Exception:
+        return 0
 
 
 def get_meeting_rows_last_activity(attendance_rows):
@@ -3268,12 +3207,52 @@ def clamp_score(value, minimum=0, maximum=100):
     return round(max(minimum, min(maximum, value)), 2)
 
 
-def calculate_attendance_score(present_count, late_count, absent_count):
-    total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
-    if total <= 0:
+def calculate_attendance_percentage(present_count=0, late_count=0, absent_count=0, unknown_count=0, total_count=None):
+    """Single attendance percentage truth helper.
+
+    Late records have one consistent business meaning everywhere: half credit
+    toward attendance percentage. Final status classification still belongs to
+    classify_row_for_meeting(); this helper only converts already-classified
+    counts into a percentage for profile, analytics, member intelligence,
+    attendance register, reports, and AI summaries.
+    """
+    try:
+        present_count = float(present_count or 0)
+        late_count = float(late_count or 0)
+        absent_count = float(absent_count or 0)
+        unknown_count = float(unknown_count or 0)
+        if total_count is None:
+            total = present_count + late_count + absent_count + unknown_count
+        else:
+            total = float(total_count or 0)
+        if total <= 0:
+            return 0.0
+        effective_present = present_count + (late_count * 0.5)
+        return clamp_score((effective_present / total) * 100.0)
+    except Exception:
         return 0.0
-    attendance_ratio = ((int(present_count or 0) * 1.0) + (int(late_count or 0) * 0.6)) / total
-    return clamp_score(attendance_ratio * 100.0)
+
+
+def attendance_status_bucket(status):
+    status = str(status or "ABSENT").upper().strip()
+    if status in ("PRESENT", "HOST"):
+        return 1, 0, 0, 0
+    if status == "LATE":
+        return 0, 1, 0, 0
+    if status in ("UNKNOWN", "UNMAPPED"):
+        return 0, 0, 0, 1
+    return 0, 0, 1, 0
+
+
+def calculate_attendance_status_score(status, duration_pct=0, status_weight=0.65, duration_weight=0.35):
+    present, late, absent, unknown = attendance_status_bucket(status)
+    status_score = calculate_attendance_percentage(present, late, absent, unknown)
+    duration_pct = clamp_score(duration_pct)
+    return clamp_score((status_score * status_weight) + (duration_pct * duration_weight))
+
+
+def calculate_attendance_score(present_count, late_count, absent_count):
+    return calculate_attendance_percentage(present_count, late_count, absent_count)
 
 
 def calculate_engagement_score(minutes_attended, rejoins, meetings_count, present_count, late_count, absent_count, avg_minutes_reference):
@@ -3285,7 +3264,7 @@ def calculate_engagement_score(minutes_attended, rejoins, meetings_count, presen
     rejoins = max(float(rejoins or 0), 0.0)
     attended_ratio = min(minutes_attended / (avg_minutes_reference * meetings_count), 1.25)
     attended_component = min(attended_ratio / 1.25, 1.0) * 55.0
-    consistency_ratio = ((int(present_count or 0) * 1.0) + (int(late_count or 0) * 0.6)) / meetings_count
+    consistency_ratio = calculate_attendance_percentage(present_count, late_count, absent_count, total_count=meetings_count) / 100.0
     consistency_component = min(max(consistency_ratio, 0.0), 1.0) * 30.0
     rejoins_per_meeting = rejoins / meetings_count
     rejoin_component = max(0.0, 15.0 - min(rejoins_per_meeting * 7.5, 15.0))
@@ -3344,7 +3323,7 @@ def build_member_intelligence(person, avg_minutes_reference):
     attendance_pct = calculate_attendance_score(present, late, absent)
     if meetings > 0:
         stability_penalty = min((rejoins / meetings) * 12.0, 24.0)
-        attendance_consistency_pct = clamp_score((((present * 1.0) + (late * 0.65)) / meetings) * 100.0 - stability_penalty)
+        attendance_consistency_pct = clamp_score(calculate_attendance_percentage(present, late, absent, total_count=meetings) - stability_penalty)
     else:
         attendance_consistency_pct = 0.0
     duration_pct = clamp_score(min(minutes / max(avg_minutes_reference * max(meetings, 1), 1.0), 1.15) / 1.15 * 100.0)
@@ -3393,48 +3372,8 @@ def _truth_seconds_between(start_value, end_value):
     return 0
 
 
-def _truth_status_from_duration(status_value, total_seconds, meeting_seconds, present_threshold=None, late_threshold=None):
-    status_text = str(status_value or "").upper().strip()
-    try:
-        present_threshold = float(present_threshold if present_threshold is not None else DEFAULT_SETTINGS.get("present_percentage", "75"))
-    except Exception:
-        present_threshold = 75.0
-    try:
-        late_threshold = float(late_threshold if late_threshold is not None else DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30"))
-    except Exception:
-        late_threshold = 30.0
-
-    if status_text == "HOST":
-        return "HOST", 100.0
-
-    if meeting_seconds and meeting_seconds > 0:
-        pct = max(0.0, min(100.0, (float(total_seconds or 0) / float(meeting_seconds)) * 100.0))
-        if pct >= present_threshold:
-            return "PRESENT", pct
-        if pct >= late_threshold:
-            return "LATE", pct
-        return "ABSENT", pct
-
-    if status_text in ("PRESENT", "LATE", "ABSENT", "HOST"):
-        fallback_pct = 100.0 if status_text in ("PRESENT", "HOST") else 50.0 if status_text == "LATE" else 0.0
-        return status_text, fallback_pct
-
-    if float(total_seconds or 0) > 0:
-        return "LATE", 0.0
-    return "ABSENT", 0.0
-
-
 def _truth_status_score(status, duration_pct):
-    status = str(status or "ABSENT").upper()
-    if status in ("PRESENT", "HOST"):
-        base = 100.0
-    elif status == "LATE":
-        base = 64.0
-    elif status in ("UNKNOWN", "UNMAPPED"):
-        base = 35.0
-    else:
-        base = 0.0
-    return round(max(0.0, min(100.0, (base * 0.60) + (float(duration_pct or 0) * 0.40))), 2)
+    return calculate_attendance_status_score(status, duration_pct, status_weight=0.60, duration_weight=0.40)
 
 
 def get_attendance_truth_rows(conn, member_id=None, start_date=None, end_date=None, include_inactive_meetings=False):
@@ -3532,8 +3471,34 @@ def get_attendance_truth_rows(conn, member_id=None, start_date=None, end_date=No
             if meeting_seconds <= 0:
                 meeting_seconds = max(int(max_seconds_by_uuid.get(uuid) or 0), total_seconds, 1 if total_seconds > 0 else 0)
 
-            source_status = (a or {}).get("final_status") or (a or {}).get("status")
-            final_status, duration_pct = _truth_status_from_duration(source_status, total_seconds, meeting_seconds, truth_present_threshold, truth_late_threshold)
+            source_status = str((a or {}).get("final_status") or (a or {}).get("status") or "").upper().strip()
+            if meeting_seconds > 0:
+                start_dt = parse_dt(m.get("start_time")) or now_local()
+                end_dt = parse_dt(m.get("end_time")) or (start_dt + timedelta(seconds=meeting_seconds))
+                classify_row = {
+                    "total_seconds": total_seconds,
+                    "current_join": None,
+                    "first_join": start_dt,
+                    "last_leave": end_dt,
+                    "is_host": source_status == "HOST",
+                }
+                final_status, classified_seconds = classify_row_for_meeting(
+                    classify_row,
+                    start_dt,
+                    end_dt,
+                    truth_present_threshold,
+                    truth_late_threshold,
+                )
+                duration_pct = 100.0 if source_status == "HOST" else clamp_score((float(classified_seconds or 0) / float(meeting_seconds)) * 100.0)
+            elif source_status in ("PRESENT", "LATE", "ABSENT", "HOST"):
+                final_status = source_status
+                duration_pct = calculate_attendance_status_score(final_status, 0, status_weight=1.0, duration_weight=0.0)
+            elif float(total_seconds or 0) > 0:
+                final_status = "LATE"
+                duration_pct = 0.0
+            else:
+                final_status = "ABSENT"
+                duration_pct = 0.0
 
             truth_rows.append({
                 "attendance_id": (a or {}).get("attendance_id"),
@@ -3571,7 +3536,7 @@ def summarize_attendance_truth_rows(rows):
     total_minutes = round(total_seconds / 60.0, 2)
     avg_minutes = round(total_minutes / total, 2) if total else 0.0
     total_rejoins = sum(int(r.get("rejoin_count") or 0) for r in rows)
-    attendance_percent = round(((present + late) / total) * 100.0, 2) if total else 0.0
+    attendance_percent = calculate_attendance_percentage(present, late, absent, total_count=total)
     return {
         "total": total,
         "meetings": total,
@@ -3780,7 +3745,7 @@ def build_member_profile_insights(member_id: int):
 
 def calculate_meeting_health_score(present_count, late_count, absent_count, avg_duration_minutes, reference_duration_minutes, unknown_count=0, host_present=False):
     total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
-    attendance_component = safe_percent((int(present_count or 0) + (int(late_count or 0) * 0.6)), total) * 0.5
+    attendance_component = calculate_attendance_percentage(present_count, late_count, absent_count, total_count=total) * 0.5
     duration_component = clamp_score(min(float(avg_duration_minutes or 0) / max(float(reference_duration_minutes or 0), 1.0), 1.15) / 1.15 * 100.0) * 0.3
     unknown_penalty = min(int(unknown_count or 0) * 4.0, 18.0)
     host_bonus = 6.0 if host_present else -6.0
@@ -4202,7 +4167,7 @@ def _analytics_data_uncached(filters):
     member_rows = total_rows - unknown_rows
     avg_minutes = round(sum((r.get("total_seconds") or 0) for r in rows) / 60 / total_rows, 2) if total_rows else 0
     avg_rejoins = round(sum((r.get("rejoin_count") or 0) for r in rows) / total_rows, 2) if total_rows else 0
-    attendance_health = round(((present_rows + late_rows) / total_rows) * 100, 2) if total_rows else 0
+    attendance_health = calculate_attendance_percentage(present_rows, late_rows, absent_rows, unknown_rows, total_count=total_rows)
 
     by_person = {}
     by_meeting = {}
@@ -5771,14 +5736,9 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 /* ===== END V9 PATCH ===== */
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
-</style>
-
-<style>
 .toggle-btn {
     position: relative;
     display: inline-flex;
@@ -5799,24 +5759,18 @@ button[type="submit"]{margin-top:20px!important;}
     color: #111;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
-
-</style>
 
 
-<style>
+
 button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -6150,6 +6104,7 @@ button[type="submit"]{margin-top:20px!important;}
     }
 
     function removeRequestedAnalyticsSections(){
+        if (location.pathname !== '/analytics') return;
         const blocked = new Set(['Analytics Filters','Attendance Trend','Member Duration','Duration Distribution','Status Mix']);
         document.querySelectorAll('h1,h2,h3').forEach((heading) => {
             const text = (heading.textContent || '').trim().replace(/\\s+/g,' ');
@@ -6220,10 +6175,8 @@ button[type="submit"]{margin-top:20px!important;}
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
@@ -6290,7 +6243,6 @@ def page(title, body, active="home"):
     return render_template_string(BASE_HTML, title=title, body=body, nav=nav, active=active)
 
 
-@app.before_request
 def startup_once():
     global DB_INITIALIZED
     if not DB_INITIALIZED:
@@ -6300,6 +6252,9 @@ def startup_once():
             DB_INITIALIZED = True
         except Exception as e:
             print(f"⚠️ startup init skipped: {e}")
+
+
+startup_once()
 
 
 @app.errorhandler(Exception)
@@ -6581,7 +6536,7 @@ def home():
             recent_activity = cur.fetchall()
 
     total_classified = present + late + absent
-    health = round(((present + late) / total_classified) * 100, 2) if total_classified else 0
+    health = calculate_attendance_percentage(present, late, absent, total_count=total_classified)
     latest_meeting = recent_meetings[0] if recent_meetings else None
 
     host_now = "No"
@@ -6897,6 +6852,7 @@ def build_live_snapshot_payload(include_feed=True):
                 "total_tracked": 0,
                 "host_present": False,
                 "meeting_duration_seconds": 0,
+                "meeting_duration_display": format_live_duration(0),
                 "risk": "Idle",
             },
             "participants": [],
@@ -6922,7 +6878,7 @@ def build_live_snapshot_payload(include_feed=True):
         is_active_now = p.get("current_join") is not None
         is_known = bool(p.get("is_member"))
         is_host = bool(p.get("is_host"))
-        live_total = get_row_effective_total_seconds(p, server_now)
+        live_total = calculate_live_duration(p, server_now)
         live_status = "LIVE" if is_active_now else "LEFT"
         category = "HOST" if is_host else ("MEMBER" if is_known else "UNKNOWN")
         if is_active_now:
@@ -6939,7 +6895,6 @@ def build_live_snapshot_payload(include_feed=True):
             unknown_total += 1
 
         row_id = str(p.get("id") or p.get("participant_key") or p.get("participant_name") or "")
-        current_join = parse_dt(p.get("current_join"))
         participant_payload.append({
             "id": row_id,
             "name": p.get("participant_name") or "-",
@@ -6952,12 +6907,10 @@ def build_live_snapshot_payload(include_feed=True):
             "first_join": fmt_time_ampm(p.get("first_join")) if p.get("first_join") else "-",
             "last_leave": fmt_time_ampm(p.get("last_leave")) if p.get("last_leave") else ("Live now" if is_active_now else "-"),
             "duration_seconds": int(live_total or 0),
-            "stored_seconds": int(p.get("total_seconds") or 0),
-            "current_join_epoch_ms": int(current_join.timestamp() * 1000) if current_join else 0,
+            "duration_display": format_live_duration(live_total),
             "duration_min": mins_from_seconds(live_total),
             "rejoins": p.get("rejoin_count") or 0,
             "status": live_status,
-            "current_join_iso": current_join.isoformat() if current_join else "",
         })
 
         if include_feed:
@@ -7007,6 +6960,7 @@ def build_live_snapshot_payload(include_feed=True):
             "total_tracked": len(participants),
             "host_present": host_present,
             "meeting_duration_seconds": max(int((server_now - start_dt).total_seconds()), 0),
+            "meeting_duration_display": format_live_duration(max(int((server_now - start_dt).total_seconds()), 0)),
             "risk": risk,
         },
         "participants": participant_payload,
@@ -7128,7 +7082,6 @@ def live():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
 
@@ -7157,7 +7110,6 @@ button[type="submit"]{margin-top:20px!important;}
                 box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
                 z-index:999999!important;
             }
-</style>
 
 </style>
 
@@ -7170,7 +7122,7 @@ button[type="submit"]{margin-top:20px!important;}
                     <div class="row" id="lfMetaRow" style="margin-top:14px;gap:10px;flex-wrap:wrap;display:{{ 'flex' if data.has_live else 'none' }}">
                         <span class="badge info" id="lfMeetingId">Meeting ID {{ data.meeting.id if data.has_live else '-' }}</span>
                         <span class="badge gray" id="lfStarted">Started {{ data.meeting.start_time if data.has_live else '-' }}</span>
-                        <span class="badge gray" id="lfDuration">Duration {{ fmt_seconds(data.summary.meeting_duration_seconds) }}</span>
+                        <span class="badge gray" id="lfDuration">Duration {{ data.summary.meeting_duration_display }}</span>
                     </div>
                 </div>
                 <div class="live-fix-conn ok" id="lfConn">● Server rendered</div>
@@ -7200,7 +7152,7 @@ button[type="submit"]{margin-top:20px!important;}
                                 <td><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
                                 <td>{{ p.first_join }}</td>
                                 <td>{{ p.last_leave }}</td>
-                                <td><span class="live-fix-duration" data-base="{{ [p.stored_seconds, data.summary.meeting_duration_seconds]|max if p.is_active and data.summary.active_now == 1 else (p.stored_seconds if p.is_active else p.duration_seconds) }}" data-active="{{ 1 if p.is_active else 0 }}" data-current-join-ms="{{ p.current_join_epoch_ms if p.is_active else 0 }}">{{ fmt_seconds([p.duration_seconds, data.summary.meeting_duration_seconds]|max if p.is_active and data.summary.active_now == 1 else p.duration_seconds) }}</span></td>
+                                <td><span class="live-fix-duration">{{ p.duration_display }}</span></td>
                                 <td>{{ p.rejoins }}</td>
                                 <td><span class="badge {{ 'ok' if p.status == 'LIVE' else 'gray' }}">{{ p.status }}</span></td>
                             </tr>
@@ -7223,11 +7175,8 @@ button[type="submit"]{margin-top:20px!important;}
             let lastPayload = {{ data|tojson }};
             let pollBusy = false;
             let pollTimer = null;
-            let durationTimer = null;
 
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
-            function fmt(sec){sec=Math.max(0,parseInt(sec||0,10));let h=String(Math.floor(sec/3600)).padStart(2,'0'),m=String(Math.floor((sec%3600)/60)).padStart(2,'0'),s=String(sec%60).padStart(2,'0');return h+':'+m+':'+s;}
-            function secFromText(t){const p=String(t||'').trim().split(':').map(Number);if(p.length===3&&!p.some(isNaN))return p[0]*3600+p[1]*60+p[2];if(p.length===2&&!p.some(isNaN))return p[0]*60+p[1];return 0;}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
             function rowId(p){return String(p.participant_id || p.user_id || p.email || p.name || '').toLowerCase().replace(/[^a-z0-9_-]+/g,'_') || ('row_'+Math.random().toString(36).slice(2));}
             function setText(id, value){const el=document.getElementById(id); if(el && el.textContent!==String(value)) el.textContent=String(value);}
@@ -7241,26 +7190,15 @@ button[type="submit"]{margin-top:20px!important;}
             }
             function setBadgeClass(el, className){ if(el && el.className!==className) el.className=className; }
             function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);if(el.textContent!==String(next))el.textContent=String(next);}
-            function normalizeActiveDuration(el){
-                if(!el) return;
-                let base=parseInt(el.getAttribute('data-base')||'0',10);
-                let active=el.getAttribute('data-active')==='1';
-                let joinMs=parseInt(el.getAttribute('data-current-join-ms')||'0',10);
-                let shown=base;
-                if(active && joinMs>0){ shown=base+Math.max(0,Math.floor((Date.now()-joinMs)/1000)); }
-                const meetingSec=secFromText((document.getElementById('lfDuration')?.textContent||'').replace('Duration','').trim());
-                if(active && meetingSec>0){ shown=Math.min(shown, meetingSec); }
-                const txt=fmt(shown);
-                if(el.textContent!==txt) el.textContent=txt;
-                el.dataset.finalLiveSeconds=String(shown);
+            function sortLiveRowsByDuration(){
+                const body=document.getElementById('lfRows');
+                if(!body) return;
+                [...body.querySelectorAll('tr')].sort((a,b)=>parseInt(b.dataset.durationSeconds||'0',10)-parseInt(a.dataset.durationSeconds||'0',10)).forEach(r=>body.appendChild(r));
             }
-            function sortLiveRowsByDuration(){const body=document.getElementById('lfRows');if(!body)return;[...body.querySelectorAll('tr')].sort((a,b)=>secFromText(b.querySelector('.live-fix-duration')?.textContent)-secFromText(a.querySelector('.live-fix-duration')?.textContent)).forEach(r=>body.appendChild(r));}
 
             function updateParticipantRows(rows, summary){
                 const tbody=document.getElementById('lfRows'); if(!tbody) return;
                 const seen=new Set();
-                const meetingSec=parseInt((summary||{}).meeting_duration_seconds||0,10);
-                const activeRows=(rows||[]).filter(p=>!!p.is_active);
                 (rows||[]).forEach(function(p){
                     const id=rowId(p); seen.add(id);
                     let row=tbody.querySelector('tr[data-row-id="'+id+'"]');
@@ -7271,16 +7209,8 @@ button[type="submit"]{margin-top:20px!important;}
                     setCell(row,'type','<span class="badge '+cls(p.type)+'">'+esc(p.type)+'</span>',p.type);
                     setCell(row,'first_join',esc(p.first_join),p.first_join);
                     setCell(row,'last_leave',esc(p.last_leave),p.last_leave);
-                    const baseSeconds=parseInt((p.is_active && activeRows.length===1)?Math.max(parseInt(p.stored_seconds||0,10),meetingSec):((p.is_active?p.stored_seconds:p.duration_seconds)||0),10);
-                    let durationCell=row.querySelector('[data-col="duration"]');
-                    if(!durationCell){ durationCell=document.createElement('td'); durationCell.setAttribute('data-col','duration'); row.appendChild(durationCell); }
-                    let span=durationCell.querySelector('.live-fix-duration');
-                    if(!span){ span=document.createElement('span'); span.className='live-fix-duration'; durationCell.appendChild(span); }
-                    span.setAttribute('data-base', String(baseSeconds));
-                    span.setAttribute('data-active', p.is_active?'1':'0');
-                    span.setAttribute('data-current-join-ms', p.is_active?String(parseInt(p.current_join_epoch_ms||0,10)):'0');
-                    if(!p.is_active){ span.textContent=fmt(p.duration_seconds); span.dataset.finalLiveSeconds=String(parseInt(p.duration_seconds||0,10)); }
-                    else { normalizeActiveDuration(span); }
+                    row.dataset.durationSeconds=String(parseInt(p.duration_seconds||0,10));
+                    setCell(row,'duration','<span class="live-fix-duration">'+esc(p.duration_display||'00:00:00')+'</span>',p.duration_display||'00:00:00');
                     setCell(row,'rejoins',esc(p.rejoins),p.rejoins);
                     setCell(row,'status','<span class="badge '+(p.status==='LIVE'?'ok':'gray')+'">'+esc(p.status)+'</span>',p.status);
                 });
@@ -7310,7 +7240,7 @@ button[type="submit"]{margin-top:20px!important;}
                 setText('lfTopic', data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting');
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
-                setText('lfDuration','Duration '+fmt(summary.meeting_duration_seconds||0));
+                setText('lfDuration','Duration '+(summary.meeting_duration_display||'00:00:00'));
                 animateLiveNumber('lfActive',summary.active_now||0);
                 animateLiveNumber('lfKnown',summary.known_count||0);
                 animateLiveNumber('lfUnknown',summary.unknown_count||0);
@@ -7345,21 +7275,11 @@ button[type="submit"]{margin-top:20px!important;}
             render(lastPayload);
             setTimeout(function(){ pollLiveSnapshot('initial'); },350);
             pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },2000);
-            durationTimer=setInterval(function(){
-                document.querySelectorAll('.live-fix-duration').forEach(normalizeActiveDuration);
-                if(lastPayload && lastPayload.meeting && lastPayload.meeting.start_iso){
-                    const startMs=Date.parse(lastPayload.meeting.start_iso);
-                    const sec=isNaN(startMs)?((lastPayload.summary||{}).meeting_duration_seconds||0):Math.max(0,Math.floor((Date.now()-startMs)/1000));
-                    setText('lfDuration','Duration '+fmt(sec));
-                }
-                sortLiveRowsByDuration();
-            },1000);
-            window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); if(durationTimer) clearInterval(durationTimer); });
+            window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); });
         })();
         </script>
         """,
         data=initial_payload,
-        fmt_seconds=lambda sec: f"{max(int(sec or 0),0)//3600:02d}:{(max(int(sec or 0),0)%3600)//60:02d}:{max(int(sec or 0),0)%60:02d}",
     )
     return page("Live", body, "live")
 
@@ -7735,19 +7655,8 @@ def _za_wow_member_trend_payload(member_id):
 
                     duration_pct = min(100, max(0, (attended_seconds / meeting_seconds) * 100)) if meeting_seconds else 0
 
-                    if status in ("PRESENT", "HOST"):
-                        status_score = 100
-                    elif status == "LATE":
-                        status_score = 64
-                    elif status in ("JOINED", "LEFT", "LIVE"):
-                        status_score = 45
-                    elif status in ("UNKNOWN", "UNMAPPED"):
-                        status_score = 35
-                    else:
-                        status_score = 0
-
-                    # Real trend score for each meeting: final status + actual stayed duration + rejoin penalty
-                    score = (status_score * 0.62) + (duration_pct * 0.38)
+                    # Real trend score for each meeting uses the shared attendance truth helper.
+                    score = calculate_attendance_status_score(status, duration_pct, status_weight=0.62, duration_weight=0.38)
                     if rejoins > 3:
                         score -= min(12, (rejoins - 3) * 2)
                     score = round(max(0, min(100, score)), 2)
@@ -8167,24 +8076,14 @@ def _za_elite_member_trend_html(member_id):
 # ===== COHORT COMPARISON SYSTEM V1 =====
 def _za_status_score_for_cohort(status, row_minutes=0):
     """Small scoring helper used only for member cohort comparison."""
-    status = str(status or "").upper().strip()
-    if status in ("PRESENT", "HOST"):
-        base = 100.0
-    elif status == "LATE":
-        base = 62.0
-    elif status == "ABSENT":
-        base = 20.0
-    elif status in ("JOINED", "LEFT", "LIVE"):
-        base = 50.0
-    else:
-        base = 35.0
+    base = calculate_attendance_status_score(status, 0, status_weight=1.0, duration_weight=0.0)
     try:
         row_minutes = float(row_minutes or 0)
     except Exception:
         row_minutes = 0.0
     if row_minutes > 0:
         base = min(100.0, base + min(row_minutes / 3.0, 16.0))
-    return round(max(0.0, min(100.0, base)), 2)
+    return clamp_score(base)
 
 
 def _za_member_cohort_payload(member_id):
@@ -8253,7 +8152,7 @@ def _za_member_cohort_payload(member_id):
                     total_seconds = float(r.get("total_seconds") or 0)
                     rejoins = int(r.get("rejoins") or 0)
 
-                    attendance_pct = round(((present_count + late_count) / total_meetings) * 100, 2)
+                    attendance_pct = calculate_attendance_percentage(present_count, late_count, total_count=total_meetings)
                     avg_duration_min = round((total_seconds / 60) / total_meetings, 2)
                     duration_score = min(100, avg_duration_min * 3.5)
                     stability_score = max(0, 100 - min(60, rejoins * 3))
@@ -8812,10 +8711,8 @@ def member_profile(member_id):
 /* ===== END COHORT COMPARISON UI V1 ===== */
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
         <div class="member-profile-layout-fix"><div class="member-profile-hero">
@@ -9298,10 +9195,8 @@ def analytics():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -9357,10 +9252,8 @@ button[type="submit"]{margin-top:20px!important;}
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
         <div class="analytics-tab-shell" id="analyticsTabsV3">
@@ -10242,7 +10135,7 @@ def _attendance_register_payload_uncached(year=None, month=None, search="", page
                 totals[mark] += 1
             cells.append(mark)
         counted = totals["P"] + totals["L"] + totals["A"] + totals["U"]
-        attendance_pct = round(((totals["P"] + totals["L"] * 0.5) / counted) * 100, 2) if counted else 0
+        attendance_pct = calculate_attendance_percentage(totals["P"], totals["L"], totals["A"], totals["U"], total_count=counted)
         total_meetings = counted
         rows.append({
             "id": mid,
@@ -10374,10 +10267,8 @@ def attendance_register():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -10463,10 +10354,8 @@ button[type="submit"]{margin-top:20px!important;}
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
         <div class="reg-dashboard-shell">
@@ -10648,24 +10537,18 @@ def attendance_register_export_excel():
     color: #111;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
-
-</style>
 
 
-<style>
+
 button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -11510,14 +11393,9 @@ def push_setup():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
-
-</style>
     
-<style>
 .toggle-btn {
     position: relative;
     display: inline-flex;
@@ -11538,24 +11416,18 @@ button[type="submit"]{margin-top:20px!important;}
     color: #111;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
-
-</style>
 
 
-<style>
+
 button:active {
     transform: scale(0.97);
     transition: transform 0.1s;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -11753,10 +11625,8 @@ def notification_control():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
         <div class="hero"><div class="hero-grid"><div><div class="badge">Notification Control Center</div><h1 class="hero-title">Smart alert delivery controls</h1><div class="hero-copy">Enable or disable Email/Push, select alert types, customize messages, test delivery, and review alert logs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Email</div><div class="big">{{ 'ON' if settings.email_enabled else 'OFF' }}</div></div><div class="hero-chip"><div class="small">Push</div><div class="big">{{ 'ON' if settings.push_enabled else 'OFF' }}</div></div></div></div></div>
@@ -11868,7 +11738,7 @@ def _ai_member_stats(days=None, limit=None):
     result=[]
     for row in rows:
         total=int(row.get('total_records') or 0); present=int(row.get('present_count') or 0); late=int(row.get('late_count') or 0); absent=int(row.get('absent_count') or 0)
-        attendance_pct=_ai_percent(present + late*0.5, total); absent_pct=_ai_percent(absent,total)
+        attendance_pct=calculate_attendance_percentage(present, late, absent, total_count=total); absent_pct=_ai_percent(absent,total)
         if attendance_pct < 50: risk='Critical'; suggestion='Immediate follow-up needed. Send reminder and personally check availability.'
         elif attendance_pct < 75: risk='Warning'; suggestion='Send reminder before next meeting and monitor consistency.'
         else: risk='Healthy'; suggestion='Maintain current engagement.'
@@ -11898,7 +11768,7 @@ def _ai_recent_meetings(limit=8):
 def _ai_meeting_health_score(meeting):
     present = int(meeting.get('present_count') or 0); late = int(meeting.get('late_count') or 0); absent = int(meeting.get('absent_count') or 0); unknown = int(meeting.get('unknown_participants') or 0)
     total = present + late + absent
-    score = (_ai_percent(present + late, total) if total else 0) - min(30, unknown*5) + (10 if meeting.get('host_present') else -10)
+    score = calculate_attendance_percentage(present, late, absent, total_count=total) - min(30, unknown*5) + (10 if meeting.get('host_present') else -10)
     return max(0, min(100, round(score, 1)))
 
 def generate_ai_level3_insights():
@@ -12088,10 +11958,8 @@ def ai_intelligence():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
     <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Intelligence Center</div><h1 class="hero-title">🧠 AI Intelligence + Level 4</h1><div class="hero-copy">Smart assistant, current-month member intelligence, risk heatmap, prediction engine, behavioral tags, auto-actions, and smart reports — merged into one dashboard.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Basis</div><div class="big" style="font-size:18px">{{ basis }}</div></div></div></div></div>
@@ -12334,10 +12202,14 @@ def _ai_answer_compare_last_meetings():
     if len(ms)<2:
         return 'Need at least two meetings to compare.'
     latest, prev = ms[0], ms[1]
-    def attended(m): return int(m.get('present_count') or 0)+int(m.get('late_count') or 0)
-    def total(m): return attended(m)+int(m.get('absent_count') or 0)
-    latest_pct=_ai_percent(attended(latest), total(latest))
-    prev_pct=_ai_percent(attended(prev), total(prev))
+    def pct(m):
+        return calculate_attendance_percentage(
+            int(m.get('present_count') or 0),
+            int(m.get('late_count') or 0),
+            int(m.get('absent_count') or 0),
+        )
+    latest_pct=pct(latest)
+    prev_pct=pct(prev)
     delta=round(latest_pct-prev_pct,2)
     return (
         f"Last 2 meetings comparison:\n"
@@ -12522,50 +12394,6 @@ try:
 except Exception as _ai_route_patch_exc:
     print(f"AI assistant route patch skipped: {_ai_route_patch_exc}")
 
-# Robust frontend patch for AI Intelligence page: guarantees Thinking... and response rendering.
-_AI_FRONTEND_PATCH_V112 = """
-<script>
-(function(){
-  async function askAttendanceAI(q, targetId){
-    q = (q || '').trim();
-    const box = document.getElementById(targetId || 'aiLevel3Answer') || document.getElementById('aiBotAnswer');
-    if(!q){ if(box) box.innerText='Please type a question first.'; return; }
-    if(box) box.innerText='Thinking...';
-    try{
-      const res = await fetch('/api/ai-assistant-level3', {
-        method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin',
-        body: JSON.stringify({query:q})
-      });
-      let data = {};
-      try { data = await res.json(); } catch(e){ data = {response:'Server returned a non-JSON response.'}; }
-      if(box) box.innerText = data.response || 'No answer found.';
-    }catch(err){
-      if(box) box.innerText = 'AI assistant connection error: ' + (err.message || err);
-    }
-  }
-  window.aiAsk = function(q){ return askAttendanceAI(q, 'aiLevel3Answer'); };
-  window.aiBotAsk = function(q){ return askAttendanceAI(q, 'aiBotAnswer'); };
-  document.addEventListener('DOMContentLoaded', function(){
-    const btns = Array.from(document.querySelectorAll('button'));
-    btns.forEach(function(btn){
-      const text=(btn.textContent||'').trim().toLowerCase();
-      if(text === 'ask ai'){
-        btn.addEventListener('click', function(ev){ ev.preventDefault(); const input=document.getElementById('aiLevel3Input'); askAttendanceAI(input ? input.value : '', 'aiLevel3Answer'); });
-      }
-      if(text === 'ask'){
-        const panel = btn.closest('.ai-bot-panel');
-        if(panel){ btn.addEventListener('click', function(ev){ ev.preventDefault(); const input=document.getElementById('aiBotInput'); askAttendanceAI(input ? input.value : '', 'aiBotAnswer'); }); }
-      }
-    });
-  });
-})();
-</script>
-"""
-
-# Removed malformed ai_frontend_patch_v112 injected block to restore deployment.
-
-
-
 # ===== SAFE SMART SCHEDULER FALLBACK =====
 def run_smart_scheduler(force=False):
     return {"ran": False, "sent": 0, "created": 0, "skipped": True}
@@ -12704,7 +12532,7 @@ def calculate_member_score(attendance, consistency, duration):
         attendance = max(0, min(100, float(attendance or 0)))
         consistency = max(0, min(100, float(consistency or 0)))
         duration = max(0, min(100, float(duration or 0)))
-        score = (attendance * 0.5) + (consistency * 0.3) + (duration * 0.2)
+        score = calculate_weighted_member_score(attendance, consistency, duration)
         if score >= 80:
             status = "Healthy"
         elif score >= 50:
@@ -12719,15 +12547,14 @@ def calculate_trend_from_statuses(statuses):
     """Simple trend from recent attendance statuses, no schema changes."""
     if not statuses:
         return "Stable"
-    weights = {"PRESENT": 3, "HOST": 3, "LATE": 2, "ABSENT": 0, "JOINED": 1, "LEFT": 1}
-    vals = [weights.get(str(s or "").upper(), 0) for s in statuses[-6:]]
+    vals = [calculate_attendance_status_score(s, 0, status_weight=1.0, duration_weight=0.0) for s in statuses[-6:]]
     if len(vals) < 4:
         return "Stable"
     first = sum(vals[:len(vals)//2]) / max(len(vals[:len(vals)//2]), 1)
     second = sum(vals[len(vals)//2:]) / max(len(vals[len(vals)//2:]), 1)
-    if second - first >= 0.6:
+    if second - first >= 20:
         return "Improving"
-    if first - second >= 0.6:
+    if first - second >= 20:
         return "Declining"
     return "Stable"
 
@@ -12770,7 +12597,7 @@ def api_member_risk_summary():
                     total = len(rows)
                     present_like = sum(1 for r in rows if str(r.get("status") or "").upper() in ("PRESENT", "HOST"))
                     late_like = sum(1 for r in rows if str(r.get("status") or "").upper() == "LATE")
-                    attendance_pct = ((present_like + late_like * 0.5) / total * 100) if total else 0
+                    attendance_pct = calculate_attendance_percentage(present_like, late_like, total_count=total)
 
                     good_streak = 0
                     for r in rows:
@@ -13013,21 +12840,8 @@ def api_member_trend_details(member_id):
                     if meeting_seconds > 0:
                         duration_pct = min(100, max(0, (attended_seconds / meeting_seconds) * 100))
 
-                    # Status score is intentionally aligned with your attendance meaning:
-                    # Present/Host high, Late middle, Joined/Left lower, Absent zero.
-                    if status in ("PRESENT", "HOST"):
-                        status_score = 100
-                    elif status == "LATE":
-                        status_score = 62
-                    elif status in ("JOINED", "LEFT", "LIVE"):
-                        status_score = 45
-                    elif status in ("UNKNOWN", "UNMAPPED"):
-                        status_score = 35
-                    else:
-                        status_score = 0
-
-                    # Score combines final status and actual duration, with a small penalty for many rejoins.
-                    score = (status_score * 0.65) + (duration_pct * 0.35)
+                    # Score combines final status and actual duration through the shared attendance truth helper.
+                    score = calculate_attendance_status_score(status, duration_pct, status_weight=0.65, duration_weight=0.35)
                     if rejoins > 3:
                         score -= min(12, (rejoins - 3) * 2)
                     score = round(max(0, min(100, score)), 2)
@@ -13153,10 +12967,8 @@ ZA_FINAL_DYNAMIC_TREND_ASSET = r"""
   box-shadow:0 18px 42px rgba(0,0,0,.36)!important;font-size:11px!important;font-weight:850!important;line-height:1.35!important;z-index:99999!important;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 <script id="za-final-dynamic-trend-script">
@@ -13397,18 +13209,7 @@ def _za_member_trend_details_payload(member_id):
 
                     duration_pct = min(100, max(0, (attended_seconds / meeting_seconds) * 100)) if meeting_seconds else 0
 
-                    if status in ("PRESENT", "HOST"):
-                        status_score = 100
-                    elif status == "LATE":
-                        status_score = 62
-                    elif status in ("JOINED", "LEFT", "LIVE"):
-                        status_score = 45
-                    elif status in ("UNKNOWN", "UNMAPPED"):
-                        status_score = 35
-                    else:
-                        status_score = 0
-
-                    score = (status_score * 0.65) + (duration_pct * 0.35)
+                    score = calculate_attendance_status_score(status, duration_pct, status_weight=0.65, duration_weight=0.35)
                     if rejoins > 3:
                         score -= min(12, (rejoins - 3) * 2)
                     score = round(max(0, min(100, score)), 2)
@@ -13607,10 +13408,8 @@ ZA_OPTION_A_PREMIUM_CSS = r"""
 @media(max-width:900px){.za-premium-trend-grid{grid-template-columns:1fr!important}.za-premium-title{font-size:24px!important}.za-premium-bars{height:115px!important}}
 /* ===== END OPTION A PREMIUM FORCE UI ===== */
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 """
@@ -13642,166 +13441,6 @@ def za_option_a_premium_force_css_inject(response):
 
 
 
-# ===== GPT55 FINAL TRUTH ENGINE PATCH =====
-ATTENDANCE_TRUTH_ENGINE_VERSION = "gpt55_truth_engine_v1"
-
-def calculate_precise_duration_seconds(join_time, leave_time=None):
-    """
-    Backend-only duration truth calculator.
-    Uses server timestamps only.
-    """
-    try:
-        join_dt = parse_dt(join_time)
-        end_dt = parse_dt(leave_time) if leave_time else now_local()
-        if not join_dt or not end_dt:
-            return 0
-        seconds = int((end_dt - join_dt).total_seconds())
-        return max(0, seconds)
-    except Exception:
-        return 0
-
-
-def cumulative_duration_from_sessions(sessions):
-    total = 0
-    try:
-        for item in (sessions or []):
-            total += calculate_precise_duration_seconds(
-                item.get("join_time"),
-                item.get("leave_time"),
-            )
-    except Exception:
-        pass
-    return max(0, int(total))
-
-
-def unified_attendance_percentage(present_count, total_count):
-    """
-    Common attendance truth engine for:
-    - profile analytics
-    - attendance register
-    - popup summaries
-    """
-    try:
-        present_count = float(present_count or 0)
-        total_count = float(total_count or 0)
-        if total_count <= 0:
-            return 0.0
-        return round((present_count / total_count) * 100, 2)
-    except Exception:
-        return 0.0
-
-
-def build_cumulative_attendance_payload(month_rows):
-    payload = {
-        "months": [],
-        "total_present": 0,
-        "total_meetings": 0,
-        "overall_percentage": 0,
-    }
-
-    try:
-        for row in (month_rows or []):
-            present = int(row.get("present", 0) or 0)
-            total = int(row.get("total", 0) or 0)
-
-            payload["months"].append({
-                "month": row.get("month", "-"),
-                "present": present,
-                "total": total,
-                "percentage": unified_attendance_percentage(present, total),
-            })
-
-            payload["total_present"] += present
-            payload["total_meetings"] += total
-
-        payload["overall_percentage"] = unified_attendance_percentage(
-            payload["total_present"],
-            payload["total_meetings"],
-        )
-    except Exception:
-        pass
-
-    return payload
-# ===== END GPT55 FINAL TRUTH ENGINE PATCH =====
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5000"))
-    if socketio:
-        socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
-    else:
-        app.run(host="0.0.0.0", port=port, debug=True)
-
-
-# ================= GPT55 FINAL LIVE TRUTH PATCH =================
-
-def unified_attendance_percentage(present_count=0, late_count=0, absent_count=0):
-    try:
-        present_count = int(present_count or 0)
-        late_count = int(late_count or 0)
-        absent_count = int(absent_count or 0)
-
-        total = present_count + late_count + absent_count
-        if total <= 0:
-            return 0.0
-
-        effective_present = present_count + (late_count * 0.5)
-
-        percentage = round((effective_present / total) * 100, 2)
-
-        return max(0.0, min(100.0, percentage))
-    except Exception:
-        return 0.0
-
-
-def build_cumulative_attendance_payload(month_rows):
-    payload = {
-        "months": [],
-        "grand_total_percentage": 0.0,
-        "total_present": 0,
-        "total_late": 0,
-        "total_absent": 0,
-    }
-
-    total_present = 0
-    total_late = 0
-    total_absent = 0
-
-    for row in (month_rows or []):
-        present = int(row.get("present_count", 0) or 0)
-        late = int(row.get("late_count", 0) or 0)
-        absent = int(row.get("absent_count", 0) or 0)
-
-        month_percentage = unified_attendance_percentage(
-            present,
-            late,
-            absent
-        )
-
-        payload["months"].append({
-            "month": row.get("month", "-"),
-            "attendance_percentage": month_percentage,
-            "present_count": present,
-            "late_count": late,
-            "absent_count": absent,
-        })
-
-        total_present += present
-        total_late += late
-        total_absent += absent
-
-    payload["total_present"] = total_present
-    payload["total_late"] = total_late
-    payload["total_absent"] = total_absent
-
-    payload["grand_total_percentage"] = unified_attendance_percentage(
-        total_present,
-        total_late,
-        total_absent
-    )
-
-    return payload
-
-LAST_MEETING_ENDED_CACHE = globals().get("LAST_MEETING_ENDED_CACHE", None)
 
 
 # ===== GPT55 FINAL LIVE UI FIX =====
@@ -13840,150 +13479,20 @@ canvas{
 }
 
 /* FORCE DURATION TEXT ABOVE */
-.live-fix-duration,
-[data-za-duration-seconds]{
+.live-fix-duration{
     position:relative !important;
     z-index:9999 !important;
     font-variant-numeric:tabular-nums !important;
 }
 </style>
-
-<script>
-/* GPT55 TRUE LIVE DURATION ENGINE */
-(function(){
-    if(window.__GPT55_DURATION_ENGINE__) return;
-    window.__GPT55_DURATION_ENGINE__ = true;
-
-    function secondsFromText(v){
-        if(!v) return 0;
-        var p = String(v).trim().split(":").map(Number);
-        if(p.length===2) return (p[0]*60)+p[1];
-        if(p.length===3) return (p[0]*3600)+(p[1]*60)+p[2];
-        return 0;
-    }
-
-    function format(sec){
-        sec = Math.max(0, parseInt(sec||0));
-        var h = Math.floor(sec/3600);
-        var m = Math.floor((sec%3600)/60);
-        var s = sec%60;
-
-        if(h>0){
-            return String(h).padStart(2,"0")+":"+
-                   String(m).padStart(2,"0")+":"+
-                   String(s).padStart(2,"0");
-        }
-
-        return String(m).padStart(2,"0")+":"+
-               String(s).padStart(2,"0");
-    }
-
-    function bindDurations(){
-        document.querySelectorAll("td,span,div").forEach(function(el){
-
-            var txt = (el.textContent||"").trim();
-
-            if(!/^\\d{1,2}:\\d{2}(:\\d{2})?$/.test(txt)) return;
-
-            if(el.dataset.gpt55Bound==="1") return;
-
-            el.dataset.gpt55Bound="1";
-
-            var base = secondsFromText(txt);
-
-            el.dataset.gpt55Base = String(base);
-            el.dataset.gpt55Start = String(Date.now());
-
-            el.setAttribute("data-za-duration-seconds", base);
-        });
-    }
-
-    function tick(){
-        document.querySelectorAll("[data-gpt55-bound='1'],[data-gpt55bound='1'],[data-gpt55-base]").forEach(function(el){
-
-            var row = el.closest("tr");
-            if(!row) return;
-
-            var rowTxt = (row.textContent||"").toLowerCase();
-
-            var isLive =
-                rowTxt.includes("live") ||
-                rowTxt.includes("joined") ||
-                rowTxt.includes("host") ||
-                rowTxt.includes("present");
-
-            if(!isLive) return;
-
-            var base = parseInt(el.dataset.gpt55Base||"0");
-            var start = parseInt(el.dataset.gpt55Start||Date.now());
-
-            var sec = base + Math.floor((Date.now()-start)/1000);
-
-            el.textContent = format(sec);
-        });
-
-        var meetDuration = document.querySelectorAll(".live-fix-duration");
-
-        meetDuration.forEach(function(el){
-
-            if(el.dataset.gpt55MeetingBound!=="1"){
-
-                el.dataset.gpt55MeetingBound="1";
-                el.dataset.gpt55MeetingBase = secondsFromText(el.textContent);
-                el.dataset.gpt55MeetingStart = Date.now();
-            }
-
-            var base = parseInt(el.dataset.gpt55MeetingBase||"0");
-            var start = parseInt(el.dataset.gpt55MeetingStart||Date.now());
-
-            var sec = base + Math.floor((Date.now()-start)/1000);
-
-            el.textContent = "Duration "+format(sec);
-        });
-    }
-
-    function injectLastMeeting(){
-        if(location.pathname !== "/live") return;
-
-        var noLive = document.body.innerText.includes("NO LIVE MEETING");
-
-        if(!noLive) return;
-
-        if(document.querySelector(".za-last-meeting-ended")) return;
-
-        var hero = document.querySelector(".hero,.live-hero,.live-main-card,.glass-panel");
-
-        if(!hero) return;
-
-        var ended = localStorage.getItem("za_last_meeting_end");
-
-        if(!ended) return;
-
-        var div = document.createElement("div");
-        div.className = "za-last-meeting-ended";
-        div.innerHTML = "<span>🛑</span><span>Last meeting ended at <b>"+ended+"</b></span>";
-
-        hero.appendChild(div);
-    }
-
-    function captureMeetingEnd(){
-        var live = document.body.innerText.includes("LIVE MEETING RUNNING");
-
-        if(!live){
-            var now = new Date();
-            localStorage.setItem("za_last_meeting_end", now.toLocaleString());
-        }
-    }
-
-    setInterval(function(){
-        bindDurations();
-        tick();
-        captureMeetingEnd();
-        injectLastMeeting();
-    },1000);
-
-})();
-</script>
 '''
 except Exception:
     pass
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "5000"))
+    if socketio:
+        socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
+    else:
+        app.run(host="0.0.0.0", port=port, debug=True)
