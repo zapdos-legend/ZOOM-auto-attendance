@@ -250,7 +250,31 @@ button:active,.btn:active,a.btn:active{
 .za-tooltip-ready{
   position:relative;
 }
-
+.za-tooltip-ready::after{
+  content:attr(data-za-tooltip);
+  position:absolute;
+  right:10px;
+  top:10px;
+  max-width:260px;
+  padding:8px 10px;
+  border-radius:12px;
+  font-size:12px;
+  line-height:1.35;
+  font-weight:800;
+  color:#e5e7eb;
+  background:rgba(15,23,42,.96);
+  border:1px solid rgba(148,163,184,.24);
+  box-shadow:0 18px 42px rgba(0,0,0,.32);
+  opacity:0;
+  transform:translateY(-4px);
+  pointer-events:none;
+  transition:opacity .2s ease, transform .2s ease;
+  z-index:9999;
+}
+.za-tooltip-ready:hover::after{
+  opacity:1;
+  transform:translateY(0);
+}
 .za-toast-wrap{
   position:fixed;
   right:18px;
@@ -541,10 +565,6 @@ button:active,.btn:active,a.btn:active{
     window.ZoomAttendanceMotionEngine.start();
   }
 })();
-/* ===== SINGLE GLOBAL FLOATING TOOLTIP ENGINE ===== */
-.card,.analytics-card,.panel,.chart-container,.member-chart-wrap,.analytics-chart-wrap,canvas,.za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important;}
-#zaGlobalTooltip{position:fixed;z-index:2147483647;display:none;pointer-events:none;padding:11px 13px;max-width:340px;border-radius:14px;background:rgba(2,6,23,.98);color:#f8fafc;border:1px solid rgba(56,189,248,.45);box-shadow:0 24px 70px rgba(0,0,0,.72);font-size:12px;font-weight:900;line-height:1.35;}
-
 /* ===== END OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
 
 
@@ -726,7 +746,13 @@ button[type="submit"]{margin-top:20px!important;}
 /* FINAL TREND TOOLTIP FIX: keep tooltip above bars, not covering readable data */
 .za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important}
 .za-elite-bars{margin-top:54px!important;position:relative!important}
-
+.za-elite-bar:hover::after{
+    bottom:calc(100% + 54px)!important;
+    background:rgba(2,6,23,.98)!important;
+    border:1px solid rgba(56,189,248,.42)!important;
+    box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
+    z-index:999999!important;
+}
 
 /* FINAL TIMER + TOOLTIP FIX */
 .live-fix-conn,.live-fix-conn.ok,.live-fix-conn.bad{
@@ -736,7 +762,7 @@ button[type="submit"]{margin-top:20px!important;}
   box-shadow:0 16px 44px rgba(0,0,0,.42)!important;
 }
 .live-fix-duration{min-width:64px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;font-variant-numeric:tabular-nums!important}
-#zaEliteTrendHero 
+#zaEliteTrendHero .za-elite-bar:hover::after{display:none!important}
 #zaFinalFloatingTrendTip{
   position:fixed!important;z-index:2147483647!important;overflow:visible!important;max-width:340px!important;padding:11px 13px!important;border-radius:14px!important;
   background:rgba(2,6,23,.98)!important;color:#f8fafc!important;border:1px solid rgba(56,189,248,.45)!important;
@@ -867,34 +893,6 @@ def za_store_last_meeting_end():
         LAST_MEETING_META["ended_at"] = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
     except Exception:
         pass
-
-
-
-# ===== LAST MEETING ENDED DB TRUTH ENGINE =====
-def get_last_meeting_ended():
-    try:
-        with db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                SELECT topic,end_time
-                FROM meetings
-                WHERE status='ended'
-                OR end_time IS NOT NULL
-                ORDER BY end_time DESC
-                LIMIT 1
-                """)
-                row=cur.fetchone()
-                if not row:
-                    return {"topic":"No previous meeting","ended_date":"-","ended_time":"-"}
-                dt=parse_dt(row.get("end_time"))
-                return {
-                    "topic": row.get("topic") or "Untitled Meeting",
-                    "ended_date": dt.strftime("%d-%m-%Y") if dt else "-",
-                    "ended_time": dt.strftime("%I:%M %p") if dt else "-"
-                }
-    except Exception:
-        return {"topic":"No previous meeting","ended_date":"-","ended_time":"-"}
-# ===== END LAST MEETING ENDED DB TRUTH ENGINE =====
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
@@ -3270,70 +3268,12 @@ def clamp_score(value, minimum=0, maximum=100):
     return round(max(minimum, min(maximum, value)), 2)
 
 
-
-
-# ===== CANONICAL ATTENDANCE PERCENTAGE ENGINE =====
-ATTENDANCE_PERCENTAGE_ENGINE_APPLIED = True
-
-def calculate_attendance_percentage(total_present=0, total_meetings=None, present=0, late=0, absent=0, unknown=0, host=0):
-    """
-    Single source of truth for attendance percentage across:
-    - Profile page
-    - Attendance Register
-    - Analytics
-    - Member Intelligence
-
-    Formula:
-        attendance = (total_present / total_meetings) * 100
-
-    Total meetings includes Present, Late, Absent and Unknown.
-    Late is NOT counted as present in this formula.
-    HOST is counted as present when supplied separately.
-    """
-    try:
-        if total_meetings is None:
-            p = int(present or 0)
-            h = int(host or 0)
-            l = int(late or 0)
-            a = int(absent or 0)
-            u = int(unknown or 0)
-            total_present = p + h
-            total_meetings = p + h + l + a + u
-        total_present = float(total_present or 0)
-        total_meetings = float(total_meetings or 0)
-        if total_meetings <= 0:
-            return 0.0
-        return round(max(0.0, min(100.0, (total_present / total_meetings) * 100.0)), 2)
-    except Exception:
-        return 0.0
-
-
-def calculate_attendance_counts_from_statuses(statuses):
-    counts = {"present": 0, "late": 0, "absent": 0, "unknown": 0, "host": 0}
-    for raw in statuses or []:
-        status = str(raw or "").upper().strip()
-        if status == "HOST":
-            counts["host"] += 1
-        elif status == "PRESENT":
-            counts["present"] += 1
-        elif status == "LATE":
-            counts["late"] += 1
-        elif status == "ABSENT":
-            counts["absent"] += 1
-        else:
-            counts["unknown"] += 1
-    counts["total_meetings"] = sum(counts.values())
-    counts["total_present"] = counts["present"] + counts["host"]
-    counts["attendance_percentage"] = calculate_attendance_percentage(
-        counts["total_present"],
-        counts["total_meetings"],
-    )
-    return counts
-# ===== END CANONICAL ATTENDANCE PERCENTAGE ENGINE =====
-
 def calculate_attendance_score(present_count, late_count, absent_count):
-    total = int(present_count or 0) + int(late_count or 0) + int(absent_count or 0)
-    return calculate_attendance_percentage(int(present_count or 0), total)
+    total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
+    if total <= 0:
+        return 0.0
+    attendance_ratio = ((int(present_count or 0) * 1.0) + (int(late_count or 0) * 0.6)) / total
+    return clamp_score(attendance_ratio * 100.0)
 
 
 def calculate_engagement_score(minutes_attended, rejoins, meetings_count, present_count, late_count, absent_count, avg_minutes_reference):
@@ -3401,7 +3341,7 @@ def build_member_intelligence(person, avg_minutes_reference):
     absent = int(person.get("absent") or 0)
     minutes = max(float(person.get("minutes") or 0), 0.0)
     rejoins = max(float(person.get("rejoins") or 0), 0.0)
-    attendance_pct = calculate_attendance_percentage(present, meetings if meetings > 0 else (present + late + absent))
+    attendance_pct = calculate_attendance_score(present, late, absent)
     if meetings > 0:
         stability_penalty = min((rejoins / meetings) * 12.0, 24.0)
         attendance_consistency_pct = clamp_score((((present * 1.0) + (late * 0.65)) / meetings) * 100.0 - stability_penalty)
@@ -3631,8 +3571,7 @@ def summarize_attendance_truth_rows(rows):
     total_minutes = round(total_seconds / 60.0, 2)
     avg_minutes = round(total_minutes / total, 2) if total else 0.0
     total_rejoins = sum(int(r.get("rejoin_count") or 0) for r in rows)
-    unknown = max(total - present - late - absent - host, 0)
-    attendance_percent = calculate_attendance_percentage(present + host, total)
+    attendance_percent = round(((present + late) / total) * 100.0, 2) if total else 0.0
     return {
         "total": total,
         "meetings": total,
@@ -3640,7 +3579,6 @@ def summarize_attendance_truth_rows(rows):
         "late": late,
         "absent": absent,
         "host": host,
-        "unknown": unknown,
         "total_seconds": total_seconds,
         "total_minutes": total_minutes,
         "avg_minutes": avg_minutes,
@@ -7212,7 +7150,13 @@ button[type="submit"]{margin-top:20px!important;}
             }
             .za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important}
             .za-elite-bars{margin-top:54px!important;position:relative!important}
-            
+            .za-elite-bar:hover::after{
+                bottom:calc(100% + 54px)!important;
+                background:rgba(2,6,23,.98)!important;
+                border:1px solid rgba(56,189,248,.42)!important;
+                box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
+                z-index:999999!important;
+            }
 </style>
 
 </style>
@@ -8309,7 +8253,7 @@ def _za_member_cohort_payload(member_id):
                     total_seconds = float(r.get("total_seconds") or 0)
                     rejoins = int(r.get("rejoins") or 0)
 
-                    attendance_pct = calculate_attendance_percentage(present_count, total_meetings)
+                    attendance_pct = round(((present_count + late_count) / total_meetings) * 100, 2)
                     avg_duration_min = round((total_seconds / 60) / total_meetings, 2)
                     duration_score = min(100, avg_duration_min * 3.5)
                     stability_score = max(0, 100 - min(60, rejoins * 3))
@@ -8816,7 +8760,7 @@ def member_profile(member_id):
 .za-elite-bar i{position:absolute!important;left:50%!important;bottom:calc(100% + 6px)!important;transform:translateX(-50%)!important;font-style:normal!important;color:#e5e7eb!important;font-size:10px!important;font-weight:1000!important;opacity:.88!important}
 @keyframes zaEliteBarGrow{from{height:8px;opacity:.22;transform:translateY(15px) scaleX(.82)}78%{transform:translateY(-2px) scaleX(1.035)}to{height:var(--h);opacity:1;transform:translateY(0) scaleX(1)}}
 .za-elite-bar:hover{filter:brightness(1.26)!important;transform:translateY(-7px) scaleY(1.055)!important}
-
+.za-elite-bar:hover::after{content:attr(data-tip);position:absolute!important;left:50%!important;bottom:calc(100% + 26px)!important;transform:translateX(-50%)!important;z-index:99999!important;min-width:230px!important;padding:10px 11px!important;border-radius:14px!important;background:rgba(15,23,42,.98)!important;color:#e5e7eb!important;border:1px solid rgba(148,163,184,.24)!important;box-shadow:0 18px 42px rgba(0,0,0,.42)!important;font-size:11px!important;font-weight:850!important;text-align:center!important;line-height:1.35!important}
 .za-elite-mini{margin-top:15px!important;display:grid!important;grid-template-columns:repeat(auto-fit,minmax(145px,1fr))!important;gap:11px!important}
 .za-elite-mini div{border-radius:18px!important;padding:12px 13px!important;background:rgba(15,23,42,.50)!important;border:1px solid rgba(148,163,184,.14)!important}
 .za-elite-mini small{display:block!important;color:#94a3b8!important;font-size:10px!important;font-weight:1000!important;text-transform:uppercase!important;letter-spacing:.08em!important}
@@ -10298,7 +10242,7 @@ def _attendance_register_payload_uncached(year=None, month=None, search="", page
                 totals[mark] += 1
             cells.append(mark)
         counted = totals["P"] + totals["L"] + totals["A"] + totals["U"]
-        attendance_pct = calculate_attendance_percentage(totals["P"], counted) if counted else 0
+        attendance_pct = round(((totals["P"] + totals["L"] * 0.5) / counted) * 100, 2) if counted else 0
         total_meetings = counted
         rows.append({
             "id": mid,
@@ -12826,7 +12770,7 @@ def api_member_risk_summary():
                     total = len(rows)
                     present_like = sum(1 for r in rows if str(r.get("status") or "").upper() in ("PRESENT", "HOST"))
                     late_like = sum(1 for r in rows if str(r.get("status") or "").upper() == "LATE")
-                    attendance_pct = calculate_attendance_percentage(present_like, total) if total else 0
+                    attendance_pct = ((present_like + late_like * 0.5) / total * 100) if total else 0
 
                     good_streak = 0
                     for r in rows:
@@ -13731,8 +13675,20 @@ def cumulative_duration_from_sessions(sessions):
 
 
 def unified_attendance_percentage(present_count, total_count):
-    return calculate_attendance_percentage(present_count, total_count)
-
+    """
+    Common attendance truth engine for:
+    - profile analytics
+    - attendance register
+    - popup summaries
+    """
+    try:
+        present_count = float(present_count or 0)
+        total_count = float(total_count or 0)
+        if total_count <= 0:
+            return 0.0
+        return round((present_count / total_count) * 100, 2)
+    except Exception:
+        return 0.0
 
 
 def build_cumulative_attendance_payload(month_rows):
@@ -13768,217 +13724,6 @@ def build_cumulative_attendance_payload(month_rows):
     return payload
 # ===== END GPT55 FINAL TRUTH ENGINE PATCH =====
 
-
-
-# ===== CUMULATIVE ATTENDANCE CARD ENGINE =====
-def get_cumulative_attendance_data(member_id=None):
-    """
-    Builds April / May / June / Total cumulative attendance with the canonical helper.
-    Uses DB truth and survives Render restarts.
-    """
-    month_numbers = [4, 5, 6]
-    month_labels = {4: "April", 5: "May", 6: "June"}
-    current_year = today_local().year
-    output = []
-    total_present = 0
-    total_meetings = 0
-
-    try:
-        with db() as conn:
-            with conn.cursor() as cur:
-                for month_num in month_numbers:
-                    start_day = date(current_year, month_num, 1)
-                    end_day = date(current_year, month_num, _month_days(current_year, month_num))
-
-                    if member_id:
-                        rows = get_attendance_truth_rows(
-                            conn,
-                            member_id=int(member_id),
-                            start_date=start_day,
-                            end_date=end_day,
-                        )
-                        summary = summarize_attendance_truth_rows(rows)
-                        present_count = int(summary.get("present", 0) or 0) + int(summary.get("host", 0) or 0)
-                        meeting_count = int(summary.get("meetings", 0) or 0)
-                        late_count = int(summary.get("late", 0) or 0)
-                        absent_count = int(summary.get("absent", 0) or 0)
-                        unknown_count = int(summary.get("unknown", 0) or 0)
-                    else:
-                        cur.execute(
-                            """
-                            SELECT
-                                SUM(CASE WHEN UPPER(COALESCE(a.final_status,a.status,'')) IN ('PRESENT','HOST') THEN 1 ELSE 0 END) AS present_count,
-                                SUM(CASE WHEN UPPER(COALESCE(a.final_status,a.status,'')) = 'LATE' THEN 1 ELSE 0 END) AS late_count,
-                                SUM(CASE WHEN UPPER(COALESCE(a.final_status,a.status,'')) = 'ABSENT' THEN 1 ELSE 0 END) AS absent_count,
-                                SUM(CASE WHEN a.id IS NOT NULL AND UPPER(COALESCE(a.final_status,a.status,'')) NOT IN ('PRESENT','HOST','LATE','ABSENT') THEN 1 ELSE 0 END) AS unknown_count,
-                                COUNT(a.id) AS meeting_count
-                            FROM attendance a
-                            JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
-                            WHERE m.start_time IS NOT NULL
-                              AND CAST(m.start_time AS TEXT)::date BETWEEN %s AND %s
-                            """,
-                            (start_day, end_day),
-                        )
-                        row = cur.fetchone() or {}
-                        present_count = int(row.get("present_count") or 0)
-                        late_count = int(row.get("late_count") or 0)
-                        absent_count = int(row.get("absent_count") or 0)
-                        unknown_count = int(row.get("unknown_count") or 0)
-                        meeting_count = int(row.get("meeting_count") or 0)
-
-                    pct = calculate_attendance_percentage(present_count, meeting_count)
-                    output.append({
-                        "month": month_labels[month_num],
-                        "present": present_count,
-                        "late": late_count,
-                        "absent": absent_count,
-                        "unknown": unknown_count,
-                        "total": meeting_count,
-                        "percentage": pct,
-                    })
-                    total_present += present_count
-                    total_meetings += meeting_count
-
-        return {
-            "ok": True,
-            "months": output,
-            "total": {
-                "month": "Total cumulative",
-                "present": total_present,
-                "total": total_meetings,
-                "percentage": calculate_attendance_percentage(total_present, total_meetings),
-            },
-            "formula": "Attendance = (total_present / total_meetings) * 100. Late, Absent and Unknown are included in total meetings.",
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error": str(exc),
-            "months": [],
-            "total": {"month": "Total cumulative", "present": 0, "total": 0, "percentage": 0.0},
-            "formula": "Attendance = (total_present / total_meetings) * 100",
-        }
-
-
-@app.route("/api/cumulative-attendance")
-@login_required
-def api_cumulative_attendance():
-    member_id = request.args.get("member_id")
-    try:
-        member_id = int(member_id) if member_id not in (None, "", "null", "undefined") else None
-    except Exception:
-        member_id = None
-    return jsonify(get_cumulative_attendance_data(member_id))
-
-
-CUMULATIVE_ATTENDANCE_CARD_SCRIPT = r"""
-<style id="za-cumulative-attendance-card-style">
-.za-cum-att-card{margin:14px 0 18px;padding:16px 18px;border-radius:22px;background:linear-gradient(135deg,rgba(15,23,42,.94),rgba(30,41,59,.84));border:1px solid rgba(56,189,248,.30);box-shadow:0 18px 50px rgba(0,0,0,.28);color:#e5e7eb;cursor:pointer;display:inline-flex;align-items:center;gap:16px;min-width:260px}
-.za-cum-att-card:hover{transform:translateY(-2px);box-shadow:0 24px 70px rgba(0,0,0,.38)}
-.za-cum-att-card small{display:block;color:#93c5fd;font-weight:900;text-transform:uppercase;letter-spacing:.08em;font-size:11px}
-.za-cum-att-card strong{display:block;font-size:30px;line-height:1.1;color:#f8fafc}
-.za-cum-att-card span{color:#94a3b8;font-weight:800;font-size:12px}
-.za-cum-popup-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.68);z-index:2147483600;display:none;align-items:center;justify-content:center;padding:18px}
-.za-cum-popup{width:min(560px,96vw);border-radius:26px;background:#0f172a;color:#e5e7eb;border:1px solid rgba(148,163,184,.25);box-shadow:0 30px 90px rgba(0,0,0,.55);overflow:hidden}
-.za-cum-popup-head{padding:18px 20px;display:flex;justify-content:space-between;gap:12px;align-items:center;background:linear-gradient(135deg,rgba(56,189,248,.18),rgba(124,58,237,.14));border-bottom:1px solid rgba(148,163,184,.18)}
-.za-cum-popup-head h3{margin:0;font-size:20px}.za-cum-close{border:0;border-radius:999px;background:rgba(255,255,255,.10);color:#fff;width:36px;height:36px;cursor:pointer}
-.za-cum-popup-body{padding:18px 20px}.za-cum-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(148,163,184,.14)}
-.za-cum-row:last-child{border-bottom:0}.za-cum-row b{font-size:15px}.za-cum-row small{display:block;color:#94a3b8;font-weight:750;margin-top:4px}.za-cum-pct{font-size:22px;font-weight:1000;color:#bbf7d0}
-.za-cum-formula{margin-top:12px;padding:10px 12px;border-radius:14px;background:rgba(15,23,42,.72);border:1px solid rgba(148,163,184,.16);color:#cbd5e1;font-size:12px;font-weight:800}
-</style>
-<script id="za-cumulative-attendance-card-script">
-(function(){
-  if(window.__ZA_CUM_ATT_CARD__) return;
-  window.__ZA_CUM_ATT_CARD__ = true;
-
-  function shouldShow(){
-    return location.pathname.indexOf('/members/') === 0 ||
-           location.pathname.indexOf('/attendance-register') === 0 ||
-           location.pathname.indexOf('/analytics') === 0 ||
-           location.pathname.indexOf('/ai-intelligence') === 0;
-  }
-
-  function memberIdFromPath(){
-    var m = location.pathname.match(/\/members\/(\d+)\/profile/);
-    return m ? m[1] : "";
-  }
-
-  function ensurePopup(){
-    var wrap = document.getElementById('zaCumPopupWrap');
-    if(wrap) return wrap;
-    wrap = document.createElement('div');
-    wrap.id = 'zaCumPopupWrap';
-    wrap.className = 'za-cum-popup-backdrop';
-    wrap.innerHTML = '<div class="za-cum-popup"><div class="za-cum-popup-head"><h3>Attendance % Breakdown</h3><button class="za-cum-close" type="button">×</button></div><div class="za-cum-popup-body" id="zaCumPopupBody"></div></div>';
-    document.body.appendChild(wrap);
-    wrap.querySelector('.za-cum-close').onclick = function(){ wrap.style.display='none'; };
-    wrap.addEventListener('click', function(e){ if(e.target === wrap) wrap.style.display='none'; });
-    return wrap;
-  }
-
-  function renderPopup(data){
-    var wrap = ensurePopup();
-    var body = document.getElementById('zaCumPopupBody');
-    var rows = (data.months || []).concat([data.total || {}]);
-    body.innerHTML = rows.map(function(r){
-      return '<div class="za-cum-row"><div><b>'+String(r.month || '-')+'</b><small>Present: '+(r.present||0)+' / Total: '+(r.total||0)+'</small></div><div class="za-cum-pct">'+(Number(r.percentage||0).toFixed(2))+'%</div></div>';
-    }).join('') + '<div class="za-cum-formula">'+(data.formula || 'Attendance = total_present / total_meetings × 100')+'</div>';
-    wrap.style.display = 'flex';
-  }
-
-  function addCard(data){
-    if(document.getElementById('zaCumAttCard')) return;
-    var card = document.createElement('div');
-    card.id = 'zaCumAttCard';
-    card.className = 'za-cum-att-card';
-    var pct = Number(((data.total || {}).percentage) || 0).toFixed(2);
-    card.innerHTML = '<div><small>Attendance %</small><strong>'+pct+'%</strong><span>Click for April, May, June and total cumulative</span></div>';
-    card.onclick = function(){ renderPopup(data); };
-    var target = document.querySelector('.hero,.card,.panel,.analytics-card,.register-paper,.container,main') || document.body;
-    if(target === document.body) document.body.insertBefore(card, document.body.firstChild);
-    else target.parentNode.insertBefore(card, target);
-  }
-
-  function load(){
-    if(!shouldShow()) return;
-    var memberId = memberIdFromPath();
-    var url = '/api/cumulative-attendance' + (memberId ? ('?member_id=' + encodeURIComponent(memberId)) : '');
-    fetch(url, {cache:'no-store', credentials:'same-origin'})
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(data){ if(data && data.ok !== false) addCard(data); })
-      .catch(function(){});
-  }
-
-  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load);
-  else load();
-})();
-</script>
-"""
-
-@app.after_request
-def za_cumulative_attendance_card_inject(response):
-    try:
-        ctype = response.headers.get("Content-Type", "")
-        if "text/html" not in ctype.lower():
-            return response
-        html = response.get_data(as_text=True)
-        if not html or "za-cumulative-attendance-card-script" in html:
-            return response
-        path = request.path or ""
-        if not (path.startswith("/members/") or path.startswith("/attendance-register") or path.startswith("/analytics") or path.startswith("/ai-intelligence")):
-            return response
-        if "</body>" in html:
-            html = html.replace("</body>", CUMULATIVE_ATTENDANCE_CARD_SCRIPT + "\n</body>", 1)
-        else:
-            html += CUMULATIVE_ATTENDANCE_CARD_SCRIPT
-        response.set_data(html)
-        response.headers["Content-Length"] = str(len(response.get_data()))
-    except Exception as exc:
-        print(f"⚠️ cumulative attendance card injection skipped: {exc}")
-    return response
-# ===== END CUMULATIVE ATTENDANCE CARD ENGINE =====
-
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     if socketio:
@@ -13990,9 +13735,22 @@ if __name__ == "__main__":
 # ================= GPT55 FINAL LIVE TRUTH PATCH =================
 
 def unified_attendance_percentage(present_count=0, late_count=0, absent_count=0):
-    total = int(present_count or 0) + int(late_count or 0) + int(absent_count or 0)
-    return calculate_attendance_percentage(present_count, total)
+    try:
+        present_count = int(present_count or 0)
+        late_count = int(late_count or 0)
+        absent_count = int(absent_count or 0)
 
+        total = present_count + late_count + absent_count
+        if total <= 0:
+            return 0.0
+
+        effective_present = present_count + (late_count * 0.5)
+
+        percentage = round((effective_present / total) * 100, 2)
+
+        return max(0.0, min(100.0, percentage))
+    except Exception:
+        return 0.0
 
 
 def build_cumulative_attendance_payload(month_rows):
@@ -14229,33 +13987,3 @@ canvas{
 '''
 except Exception:
     pass
-
-
-GLOBAL_TOOLTIP_JS = """
-<script>
-(function(){
-if(window.zaGlobalTooltipLoaded)return;
-window.zaGlobalTooltipLoaded=true;
-document.addEventListener("DOMContentLoaded",function(){
-const t=document.createElement("div");
-t.id="zaGlobalTooltip";
-document.body.appendChild(t);
-document.querySelectorAll("[data-za-tooltip],.card,.analytics-card,.za-elite-bar,canvas").forEach(el=>{
-el.addEventListener("mouseenter",()=>{
-let txt=el.getAttribute("data-za-tooltip")||(el.innerText||"").trim().replace(/\s+/g," ").slice(0,120);
-if(!txt)return;
-t.innerText=txt;
-t.style.display="block";
-});
-el.addEventListener("mouseleave",()=>t.style.display="none");
-});
-document.addEventListener("mousemove",(e)=>{
-if(t.style.display==="block"){
-t.style.left=(e.clientX+16)+"px";
-t.style.top=(e.clientY-50)+"px";
-}
-});
-});
-})();
-</script>
-"""
