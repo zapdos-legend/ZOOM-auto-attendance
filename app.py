@@ -1593,11 +1593,10 @@ def cast_setting_value(value, cast=str):
 
 
 def get_setting(name, cast=str):
-    # Fast safe settings: avoid opening a new DB connection inside hot paths/webhooks.
-    # Settings still honor cached DB values if previously loaded; otherwise defaults/env are used.
-    value = SETTINGS_CACHE.get(name, DEFAULT_SETTINGS.get(name))
-    if value is not None:
-        return cast_setting_value(value, cast)
+    # Settings truth order: in-process cache, database value, then env/default fallback.
+    if name in SETTINGS_CACHE:
+        return cast_setting_value(SETTINGS_CACHE.get(name), cast)
+    value = None
     try:
         with db() as conn:
             with conn.cursor() as cur:
@@ -1608,6 +1607,7 @@ def get_setting(name, cast=str):
                     SETTINGS_CACHE[name] = value
     except Exception as e:
         print(f"⚠️ get_setting fallback for {name}: {e}")
+    if value is None:
         value = DEFAULT_SETTINGS.get(name)
     return cast_setting_value(value, cast)
 
@@ -3389,37 +3389,6 @@ def _truth_seconds_between(start_value, end_value):
     return 0
 
 
-def _truth_status_from_duration(status_value, total_seconds, meeting_seconds, present_threshold=None, late_threshold=None):
-    status_text = str(status_value or "").upper().strip()
-    try:
-        present_threshold = float(present_threshold if present_threshold is not None else DEFAULT_SETTINGS.get("present_percentage", "75"))
-    except Exception:
-        present_threshold = 75.0
-    try:
-        late_threshold = float(late_threshold if late_threshold is not None else DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30"))
-    except Exception:
-        late_threshold = 30.0
-
-    if status_text == "HOST":
-        return "HOST", 100.0
-
-    if meeting_seconds and meeting_seconds > 0:
-        pct = max(0.0, min(100.0, (float(total_seconds or 0) / float(meeting_seconds)) * 100.0))
-        if pct >= present_threshold:
-            return "PRESENT", pct
-        if pct >= late_threshold:
-            return "LATE", pct
-        return "ABSENT", pct
-
-    if status_text in ("PRESENT", "LATE", "ABSENT", "HOST"):
-        fallback_pct = 100.0 if status_text in ("PRESENT", "HOST") else 50.0 if status_text == "LATE" else 0.0
-        return status_text, fallback_pct
-
-    if float(total_seconds or 0) > 0:
-        return "LATE", 0.0
-    return "ABSENT", 0.0
-
-
 def _truth_status_score(status, duration_pct):
     return calculate_attendance_status_score(status, duration_pct, status_weight=0.60, duration_weight=0.40)
 
@@ -3519,8 +3488,34 @@ def get_attendance_truth_rows(conn, member_id=None, start_date=None, end_date=No
             if meeting_seconds <= 0:
                 meeting_seconds = max(int(max_seconds_by_uuid.get(uuid) or 0), total_seconds, 1 if total_seconds > 0 else 0)
 
-            source_status = (a or {}).get("final_status") or (a or {}).get("status")
-            final_status, duration_pct = _truth_status_from_duration(source_status, total_seconds, meeting_seconds, truth_present_threshold, truth_late_threshold)
+            source_status = str((a or {}).get("final_status") or (a or {}).get("status") or "").upper().strip()
+            if meeting_seconds > 0:
+                start_dt = parse_dt(m.get("start_time")) or now_local()
+                end_dt = parse_dt(m.get("end_time")) or (start_dt + timedelta(seconds=meeting_seconds))
+                classify_row = {
+                    "total_seconds": total_seconds,
+                    "current_join": None,
+                    "first_join": start_dt,
+                    "last_leave": end_dt,
+                    "is_host": source_status == "HOST",
+                }
+                final_status, classified_seconds = classify_row_for_meeting(
+                    classify_row,
+                    start_dt,
+                    end_dt,
+                    truth_present_threshold,
+                    truth_late_threshold,
+                )
+                duration_pct = 100.0 if source_status == "HOST" else clamp_score((float(classified_seconds or 0) / float(meeting_seconds)) * 100.0)
+            elif source_status in ("PRESENT", "LATE", "ABSENT", "HOST"):
+                final_status = source_status
+                duration_pct = calculate_attendance_status_score(final_status, 0, status_weight=1.0, duration_weight=0.0)
+            elif float(total_seconds or 0) > 0:
+                final_status = "LATE"
+                duration_pct = 0.0
+            else:
+                final_status = "ABSENT"
+                duration_pct = 0.0
 
             truth_rows.append({
                 "attendance_id": (a or {}).get("attendance_id"),
@@ -6278,7 +6273,6 @@ def page(title, body, active="home"):
     return render_template_string(BASE_HTML, title=title, body=body, nav=nav, active=active)
 
 
-@app.before_request
 def startup_once():
     global DB_INITIALIZED
     if not DB_INITIALIZED:
@@ -6288,6 +6282,9 @@ def startup_once():
             DB_INITIALIZED = True
         except Exception as e:
             print(f"⚠️ startup init skipped: {e}")
+
+
+startup_once()
 
 
 @app.errorhandler(Exception)
@@ -12657,15 +12654,14 @@ def calculate_trend_from_statuses(statuses):
     """Simple trend from recent attendance statuses, no schema changes."""
     if not statuses:
         return "Stable"
-    weights = {"PRESENT": 3, "HOST": 3, "LATE": 2, "ABSENT": 0, "JOINED": 1, "LEFT": 1}
-    vals = [weights.get(str(s or "").upper(), 0) for s in statuses[-6:]]
+    vals = [calculate_attendance_status_score(s, 0, status_weight=1.0, duration_weight=0.0) for s in statuses[-6:]]
     if len(vals) < 4:
         return "Stable"
     first = sum(vals[:len(vals)//2]) / max(len(vals[:len(vals)//2]), 1)
     second = sum(vals[len(vals)//2:]) / max(len(vals[len(vals)//2:]), 1)
-    if second - first >= 0.6:
+    if second - first >= 20:
         return "Improving"
-    if first - second >= 0.6:
+    if first - second >= 20:
         return "Declining"
     return "Stable"
 
@@ -13595,150 +13591,12 @@ canvas{
 }
 
 /* FORCE DURATION TEXT ABOVE */
-.live-fix-duration,
-[data-za-duration-seconds]{
+.live-fix-duration{
     position:relative !important;
     z-index:9999 !important;
     font-variant-numeric:tabular-nums !important;
 }
 </style>
-
-<script>
-/* GPT55 TRUE LIVE DURATION ENGINE */
-(function(){
-    if(window.__GPT55_DURATION_ENGINE__) return;
-    window.__GPT55_DURATION_ENGINE__ = true;
-
-    function secondsFromText(v){
-        if(!v) return 0;
-        var p = String(v).trim().split(":").map(Number);
-        if(p.length===2) return (p[0]*60)+p[1];
-        if(p.length===3) return (p[0]*3600)+(p[1]*60)+p[2];
-        return 0;
-    }
-
-    function format(sec){
-        sec = Math.max(0, parseInt(sec||0));
-        var h = Math.floor(sec/3600);
-        var m = Math.floor((sec%3600)/60);
-        var s = sec%60;
-
-        if(h>0){
-            return String(h).padStart(2,"0")+":"+
-                   String(m).padStart(2,"0")+":"+
-                   String(s).padStart(2,"0");
-        }
-
-        return String(m).padStart(2,"0")+":"+
-               String(s).padStart(2,"0");
-    }
-
-    function bindDurations(){
-        document.querySelectorAll("td,span,div").forEach(function(el){
-
-            var txt = (el.textContent||"").trim();
-
-            if(!/^\\d{1,2}:\\d{2}(:\\d{2})?$/.test(txt)) return;
-
-            if(el.dataset.gpt55Bound==="1") return;
-
-            el.dataset.gpt55Bound="1";
-
-            var base = secondsFromText(txt);
-
-            el.dataset.gpt55Base = String(base);
-            el.dataset.gpt55Start = String(Date.now());
-
-            el.setAttribute("data-za-duration-seconds", base);
-        });
-    }
-
-    function tick(){
-        document.querySelectorAll("[data-gpt55-bound='1'],[data-gpt55bound='1'],[data-gpt55-base]").forEach(function(el){
-
-            var row = el.closest("tr");
-            if(!row) return;
-
-            var rowTxt = (row.textContent||"").toLowerCase();
-
-            var isLive =
-                rowTxt.includes("live") ||
-                rowTxt.includes("joined") ||
-                rowTxt.includes("host") ||
-                rowTxt.includes("present");
-
-            if(!isLive) return;
-
-            var base = parseInt(el.dataset.gpt55Base||"0");
-            var start = parseInt(el.dataset.gpt55Start||Date.now());
-
-            var sec = base + Math.floor((Date.now()-start)/1000);
-
-            el.textContent = format(sec);
-        });
-
-        var meetDuration = document.querySelectorAll(".live-fix-duration");
-
-        meetDuration.forEach(function(el){
-
-            if(el.dataset.gpt55MeetingBound!=="1"){
-
-                el.dataset.gpt55MeetingBound="1";
-                el.dataset.gpt55MeetingBase = secondsFromText(el.textContent);
-                el.dataset.gpt55MeetingStart = Date.now();
-            }
-
-            var base = parseInt(el.dataset.gpt55MeetingBase||"0");
-            var start = parseInt(el.dataset.gpt55MeetingStart||Date.now());
-
-            var sec = base + Math.floor((Date.now()-start)/1000);
-
-            el.textContent = "Duration "+format(sec);
-        });
-    }
-
-    function injectLastMeeting(){
-        if(location.pathname !== "/live") return;
-
-        var noLive = document.body.innerText.includes("NO LIVE MEETING");
-
-        if(!noLive) return;
-
-        if(document.querySelector(".za-last-meeting-ended")) return;
-
-        var hero = document.querySelector(".hero,.live-hero,.live-main-card,.glass-panel");
-
-        if(!hero) return;
-
-        var ended = localStorage.getItem("za_last_meeting_end");
-
-        if(!ended) return;
-
-        var div = document.createElement("div");
-        div.className = "za-last-meeting-ended";
-        div.innerHTML = "<span>🛑</span><span>Last meeting ended at <b>"+ended+"</b></span>";
-
-        hero.appendChild(div);
-    }
-
-    function captureMeetingEnd(){
-        var live = document.body.innerText.includes("LIVE MEETING RUNNING");
-
-        if(!live){
-            var now = new Date();
-            localStorage.setItem("za_last_meeting_end", now.toLocaleString());
-        }
-    }
-
-    setInterval(function(){
-        bindDurations();
-        tick();
-        captureMeetingEnd();
-        injectLastMeeting();
-    },1000);
-
-})();
-</script>
 '''
 except Exception:
     pass
