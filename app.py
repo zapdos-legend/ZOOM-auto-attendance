@@ -3268,12 +3268,52 @@ def clamp_score(value, minimum=0, maximum=100):
     return round(max(minimum, min(maximum, value)), 2)
 
 
-def calculate_attendance_score(present_count, late_count, absent_count):
-    total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
-    if total <= 0:
+def calculate_attendance_percentage(present_count=0, late_count=0, absent_count=0, unknown_count=0, total_count=None):
+    """Single attendance percentage truth helper.
+
+    Late records have one consistent business meaning everywhere: half credit
+    toward attendance percentage. Final status classification still belongs to
+    classify_row_for_meeting(); this helper only converts already-classified
+    counts into a percentage for profile, analytics, member intelligence,
+    attendance register, reports, and AI summaries.
+    """
+    try:
+        present_count = float(present_count or 0)
+        late_count = float(late_count or 0)
+        absent_count = float(absent_count or 0)
+        unknown_count = float(unknown_count or 0)
+        if total_count is None:
+            total = present_count + late_count + absent_count + unknown_count
+        else:
+            total = float(total_count or 0)
+        if total <= 0:
+            return 0.0
+        effective_present = present_count + (late_count * 0.5)
+        return clamp_score((effective_present / total) * 100.0)
+    except Exception:
         return 0.0
-    attendance_ratio = ((int(present_count or 0) * 1.0) + (int(late_count or 0) * 0.6)) / total
-    return clamp_score(attendance_ratio * 100.0)
+
+
+def attendance_status_bucket(status):
+    status = str(status or "ABSENT").upper().strip()
+    if status in ("PRESENT", "HOST"):
+        return 1, 0, 0, 0
+    if status == "LATE":
+        return 0, 1, 0, 0
+    if status in ("UNKNOWN", "UNMAPPED"):
+        return 0, 0, 0, 1
+    return 0, 0, 1, 0
+
+
+def calculate_attendance_status_score(status, duration_pct=0, status_weight=0.65, duration_weight=0.35):
+    present, late, absent, unknown = attendance_status_bucket(status)
+    status_score = calculate_attendance_percentage(present, late, absent, unknown)
+    duration_pct = clamp_score(duration_pct)
+    return clamp_score((status_score * status_weight) + (duration_pct * duration_weight))
+
+
+def calculate_attendance_score(present_count, late_count, absent_count):
+    return calculate_attendance_percentage(present_count, late_count, absent_count)
 
 
 def calculate_engagement_score(minutes_attended, rejoins, meetings_count, present_count, late_count, absent_count, avg_minutes_reference):
@@ -3285,7 +3325,7 @@ def calculate_engagement_score(minutes_attended, rejoins, meetings_count, presen
     rejoins = max(float(rejoins or 0), 0.0)
     attended_ratio = min(minutes_attended / (avg_minutes_reference * meetings_count), 1.25)
     attended_component = min(attended_ratio / 1.25, 1.0) * 55.0
-    consistency_ratio = ((int(present_count or 0) * 1.0) + (int(late_count or 0) * 0.6)) / meetings_count
+    consistency_ratio = calculate_attendance_percentage(present_count, late_count, absent_count, total_count=meetings_count) / 100.0
     consistency_component = min(max(consistency_ratio, 0.0), 1.0) * 30.0
     rejoins_per_meeting = rejoins / meetings_count
     rejoin_component = max(0.0, 15.0 - min(rejoins_per_meeting * 7.5, 15.0))
@@ -3344,7 +3384,7 @@ def build_member_intelligence(person, avg_minutes_reference):
     attendance_pct = calculate_attendance_score(present, late, absent)
     if meetings > 0:
         stability_penalty = min((rejoins / meetings) * 12.0, 24.0)
-        attendance_consistency_pct = clamp_score((((present * 1.0) + (late * 0.65)) / meetings) * 100.0 - stability_penalty)
+        attendance_consistency_pct = clamp_score(calculate_attendance_percentage(present, late, absent, total_count=meetings) - stability_penalty)
     else:
         attendance_consistency_pct = 0.0
     duration_pct = clamp_score(min(minutes / max(avg_minutes_reference * max(meetings, 1), 1.0), 1.15) / 1.15 * 100.0)
@@ -3425,16 +3465,7 @@ def _truth_status_from_duration(status_value, total_seconds, meeting_seconds, pr
 
 
 def _truth_status_score(status, duration_pct):
-    status = str(status or "ABSENT").upper()
-    if status in ("PRESENT", "HOST"):
-        base = 100.0
-    elif status == "LATE":
-        base = 64.0
-    elif status in ("UNKNOWN", "UNMAPPED"):
-        base = 35.0
-    else:
-        base = 0.0
-    return round(max(0.0, min(100.0, (base * 0.60) + (float(duration_pct or 0) * 0.40))), 2)
+    return calculate_attendance_status_score(status, duration_pct, status_weight=0.60, duration_weight=0.40)
 
 
 def get_attendance_truth_rows(conn, member_id=None, start_date=None, end_date=None, include_inactive_meetings=False):
@@ -3571,7 +3602,7 @@ def summarize_attendance_truth_rows(rows):
     total_minutes = round(total_seconds / 60.0, 2)
     avg_minutes = round(total_minutes / total, 2) if total else 0.0
     total_rejoins = sum(int(r.get("rejoin_count") or 0) for r in rows)
-    attendance_percent = round(((present + late) / total) * 100.0, 2) if total else 0.0
+    attendance_percent = calculate_attendance_percentage(present, late, absent, total_count=total)
     return {
         "total": total,
         "meetings": total,
@@ -3780,7 +3811,7 @@ def build_member_profile_insights(member_id: int):
 
 def calculate_meeting_health_score(present_count, late_count, absent_count, avg_duration_minutes, reference_duration_minutes, unknown_count=0, host_present=False):
     total = max(int(present_count or 0) + int(late_count or 0) + int(absent_count or 0), 0)
-    attendance_component = safe_percent((int(present_count or 0) + (int(late_count or 0) * 0.6)), total) * 0.5
+    attendance_component = calculate_attendance_percentage(present_count, late_count, absent_count, total_count=total) * 0.5
     duration_component = clamp_score(min(float(avg_duration_minutes or 0) / max(float(reference_duration_minutes or 0), 1.0), 1.15) / 1.15 * 100.0) * 0.3
     unknown_penalty = min(int(unknown_count or 0) * 4.0, 18.0)
     host_bonus = 6.0 if host_present else -6.0
@@ -4202,7 +4233,7 @@ def _analytics_data_uncached(filters):
     member_rows = total_rows - unknown_rows
     avg_minutes = round(sum((r.get("total_seconds") or 0) for r in rows) / 60 / total_rows, 2) if total_rows else 0
     avg_rejoins = round(sum((r.get("rejoin_count") or 0) for r in rows) / total_rows, 2) if total_rows else 0
-    attendance_health = round(((present_rows + late_rows) / total_rows) * 100, 2) if total_rows else 0
+    attendance_health = calculate_attendance_percentage(present_rows, late_rows, absent_rows, unknown_rows, total_count=total_rows)
 
     by_person = {}
     by_meeting = {}
@@ -6581,7 +6612,7 @@ def home():
             recent_activity = cur.fetchall()
 
     total_classified = present + late + absent
-    health = round(((present + late) / total_classified) * 100, 2) if total_classified else 0
+    health = calculate_attendance_percentage(present, late, absent, total_count=total_classified)
     latest_meeting = recent_meetings[0] if recent_meetings else None
 
     host_now = "No"
@@ -7735,19 +7766,8 @@ def _za_wow_member_trend_payload(member_id):
 
                     duration_pct = min(100, max(0, (attended_seconds / meeting_seconds) * 100)) if meeting_seconds else 0
 
-                    if status in ("PRESENT", "HOST"):
-                        status_score = 100
-                    elif status == "LATE":
-                        status_score = 64
-                    elif status in ("JOINED", "LEFT", "LIVE"):
-                        status_score = 45
-                    elif status in ("UNKNOWN", "UNMAPPED"):
-                        status_score = 35
-                    else:
-                        status_score = 0
-
-                    # Real trend score for each meeting: final status + actual stayed duration + rejoin penalty
-                    score = (status_score * 0.62) + (duration_pct * 0.38)
+                    # Real trend score for each meeting uses the shared attendance truth helper.
+                    score = calculate_attendance_status_score(status, duration_pct, status_weight=0.62, duration_weight=0.38)
                     if rejoins > 3:
                         score -= min(12, (rejoins - 3) * 2)
                     score = round(max(0, min(100, score)), 2)
@@ -8167,24 +8187,14 @@ def _za_elite_member_trend_html(member_id):
 # ===== COHORT COMPARISON SYSTEM V1 =====
 def _za_status_score_for_cohort(status, row_minutes=0):
     """Small scoring helper used only for member cohort comparison."""
-    status = str(status or "").upper().strip()
-    if status in ("PRESENT", "HOST"):
-        base = 100.0
-    elif status == "LATE":
-        base = 62.0
-    elif status == "ABSENT":
-        base = 20.0
-    elif status in ("JOINED", "LEFT", "LIVE"):
-        base = 50.0
-    else:
-        base = 35.0
+    base = calculate_attendance_status_score(status, 0, status_weight=1.0, duration_weight=0.0)
     try:
         row_minutes = float(row_minutes or 0)
     except Exception:
         row_minutes = 0.0
     if row_minutes > 0:
         base = min(100.0, base + min(row_minutes / 3.0, 16.0))
-    return round(max(0.0, min(100.0, base)), 2)
+    return clamp_score(base)
 
 
 def _za_member_cohort_payload(member_id):
@@ -8253,7 +8263,7 @@ def _za_member_cohort_payload(member_id):
                     total_seconds = float(r.get("total_seconds") or 0)
                     rejoins = int(r.get("rejoins") or 0)
 
-                    attendance_pct = round(((present_count + late_count) / total_meetings) * 100, 2)
+                    attendance_pct = calculate_attendance_percentage(present_count, late_count, total_count=total_meetings)
                     avg_duration_min = round((total_seconds / 60) / total_meetings, 2)
                     duration_score = min(100, avg_duration_min * 3.5)
                     stability_score = max(0, 100 - min(60, rejoins * 3))
@@ -10242,7 +10252,7 @@ def _attendance_register_payload_uncached(year=None, month=None, search="", page
                 totals[mark] += 1
             cells.append(mark)
         counted = totals["P"] + totals["L"] + totals["A"] + totals["U"]
-        attendance_pct = round(((totals["P"] + totals["L"] * 0.5) / counted) * 100, 2) if counted else 0
+        attendance_pct = calculate_attendance_percentage(totals["P"], totals["L"], totals["A"], totals["U"], total_count=counted)
         total_meetings = counted
         rows.append({
             "id": mid,
@@ -11868,7 +11878,7 @@ def _ai_member_stats(days=None, limit=None):
     result=[]
     for row in rows:
         total=int(row.get('total_records') or 0); present=int(row.get('present_count') or 0); late=int(row.get('late_count') or 0); absent=int(row.get('absent_count') or 0)
-        attendance_pct=_ai_percent(present + late*0.5, total); absent_pct=_ai_percent(absent,total)
+        attendance_pct=calculate_attendance_percentage(present, late, absent, total_count=total); absent_pct=_ai_percent(absent,total)
         if attendance_pct < 50: risk='Critical'; suggestion='Immediate follow-up needed. Send reminder and personally check availability.'
         elif attendance_pct < 75: risk='Warning'; suggestion='Send reminder before next meeting and monitor consistency.'
         else: risk='Healthy'; suggestion='Maintain current engagement.'
@@ -11898,7 +11908,7 @@ def _ai_recent_meetings(limit=8):
 def _ai_meeting_health_score(meeting):
     present = int(meeting.get('present_count') or 0); late = int(meeting.get('late_count') or 0); absent = int(meeting.get('absent_count') or 0); unknown = int(meeting.get('unknown_participants') or 0)
     total = present + late + absent
-    score = (_ai_percent(present + late, total) if total else 0) - min(30, unknown*5) + (10 if meeting.get('host_present') else -10)
+    score = calculate_attendance_percentage(present, late, absent, total_count=total) - min(30, unknown*5) + (10 if meeting.get('host_present') else -10)
     return max(0, min(100, round(score, 1)))
 
 def generate_ai_level3_insights():
@@ -12334,10 +12344,14 @@ def _ai_answer_compare_last_meetings():
     if len(ms)<2:
         return 'Need at least two meetings to compare.'
     latest, prev = ms[0], ms[1]
-    def attended(m): return int(m.get('present_count') or 0)+int(m.get('late_count') or 0)
-    def total(m): return attended(m)+int(m.get('absent_count') or 0)
-    latest_pct=_ai_percent(attended(latest), total(latest))
-    prev_pct=_ai_percent(attended(prev), total(prev))
+    def pct(m):
+        return calculate_attendance_percentage(
+            int(m.get('present_count') or 0),
+            int(m.get('late_count') or 0),
+            int(m.get('absent_count') or 0),
+        )
+    latest_pct=pct(latest)
+    prev_pct=pct(prev)
     delta=round(latest_pct-prev_pct,2)
     return (
         f"Last 2 meetings comparison:\n"
@@ -12704,7 +12718,7 @@ def calculate_member_score(attendance, consistency, duration):
         attendance = max(0, min(100, float(attendance or 0)))
         consistency = max(0, min(100, float(consistency or 0)))
         duration = max(0, min(100, float(duration or 0)))
-        score = (attendance * 0.5) + (consistency * 0.3) + (duration * 0.2)
+        score = calculate_weighted_member_score(attendance, consistency, duration)
         if score >= 80:
             status = "Healthy"
         elif score >= 50:
@@ -12770,7 +12784,7 @@ def api_member_risk_summary():
                     total = len(rows)
                     present_like = sum(1 for r in rows if str(r.get("status") or "").upper() in ("PRESENT", "HOST"))
                     late_like = sum(1 for r in rows if str(r.get("status") or "").upper() == "LATE")
-                    attendance_pct = ((present_like + late_like * 0.5) / total * 100) if total else 0
+                    attendance_pct = calculate_attendance_percentage(present_like, late_like, total_count=total)
 
                     good_streak = 0
                     for r in rows:
@@ -13013,21 +13027,8 @@ def api_member_trend_details(member_id):
                     if meeting_seconds > 0:
                         duration_pct = min(100, max(0, (attended_seconds / meeting_seconds) * 100))
 
-                    # Status score is intentionally aligned with your attendance meaning:
-                    # Present/Host high, Late middle, Joined/Left lower, Absent zero.
-                    if status in ("PRESENT", "HOST"):
-                        status_score = 100
-                    elif status == "LATE":
-                        status_score = 62
-                    elif status in ("JOINED", "LEFT", "LIVE"):
-                        status_score = 45
-                    elif status in ("UNKNOWN", "UNMAPPED"):
-                        status_score = 35
-                    else:
-                        status_score = 0
-
-                    # Score combines final status and actual duration, with a small penalty for many rejoins.
-                    score = (status_score * 0.65) + (duration_pct * 0.35)
+                    # Score combines final status and actual duration through the shared attendance truth helper.
+                    score = calculate_attendance_status_score(status, duration_pct, status_weight=0.65, duration_weight=0.35)
                     if rejoins > 3:
                         score -= min(12, (rejoins - 3) * 2)
                     score = round(max(0, min(100, score)), 2)
@@ -13397,18 +13398,7 @@ def _za_member_trend_details_payload(member_id):
 
                     duration_pct = min(100, max(0, (attended_seconds / meeting_seconds) * 100)) if meeting_seconds else 0
 
-                    if status in ("PRESENT", "HOST"):
-                        status_score = 100
-                    elif status == "LATE":
-                        status_score = 62
-                    elif status in ("JOINED", "LEFT", "LIVE"):
-                        status_score = 45
-                    elif status in ("UNKNOWN", "UNMAPPED"):
-                        status_score = 35
-                    else:
-                        status_score = 0
-
-                    score = (status_score * 0.65) + (duration_pct * 0.35)
+                    score = calculate_attendance_status_score(status, duration_pct, status_weight=0.65, duration_weight=0.35)
                     if rejoins > 3:
                         score -= min(12, (rejoins - 3) * 2)
                     score = round(max(0, min(100, score)), 2)
@@ -13642,165 +13632,6 @@ def za_option_a_premium_force_css_inject(response):
 
 
 
-# ===== GPT55 FINAL TRUTH ENGINE PATCH =====
-ATTENDANCE_TRUTH_ENGINE_VERSION = "gpt55_truth_engine_v1"
-
-def calculate_precise_duration_seconds(join_time, leave_time=None):
-    """
-    Backend-only duration truth calculator.
-    Uses server timestamps only.
-    """
-    try:
-        join_dt = parse_dt(join_time)
-        end_dt = parse_dt(leave_time) if leave_time else now_local()
-        if not join_dt or not end_dt:
-            return 0
-        seconds = int((end_dt - join_dt).total_seconds())
-        return max(0, seconds)
-    except Exception:
-        return 0
-
-
-def cumulative_duration_from_sessions(sessions):
-    total = 0
-    try:
-        for item in (sessions or []):
-            total += calculate_precise_duration_seconds(
-                item.get("join_time"),
-                item.get("leave_time"),
-            )
-    except Exception:
-        pass
-    return max(0, int(total))
-
-
-def unified_attendance_percentage(present_count, total_count):
-    """
-    Common attendance truth engine for:
-    - profile analytics
-    - attendance register
-    - popup summaries
-    """
-    try:
-        present_count = float(present_count or 0)
-        total_count = float(total_count or 0)
-        if total_count <= 0:
-            return 0.0
-        return round((present_count / total_count) * 100, 2)
-    except Exception:
-        return 0.0
-
-
-def build_cumulative_attendance_payload(month_rows):
-    payload = {
-        "months": [],
-        "total_present": 0,
-        "total_meetings": 0,
-        "overall_percentage": 0,
-    }
-
-    try:
-        for row in (month_rows or []):
-            present = int(row.get("present", 0) or 0)
-            total = int(row.get("total", 0) or 0)
-
-            payload["months"].append({
-                "month": row.get("month", "-"),
-                "present": present,
-                "total": total,
-                "percentage": unified_attendance_percentage(present, total),
-            })
-
-            payload["total_present"] += present
-            payload["total_meetings"] += total
-
-        payload["overall_percentage"] = unified_attendance_percentage(
-            payload["total_present"],
-            payload["total_meetings"],
-        )
-    except Exception:
-        pass
-
-    return payload
-# ===== END GPT55 FINAL TRUTH ENGINE PATCH =====
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5000"))
-    if socketio:
-        socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
-    else:
-        app.run(host="0.0.0.0", port=port, debug=True)
-
-
-# ================= GPT55 FINAL LIVE TRUTH PATCH =================
-
-def unified_attendance_percentage(present_count=0, late_count=0, absent_count=0):
-    try:
-        present_count = int(present_count or 0)
-        late_count = int(late_count or 0)
-        absent_count = int(absent_count or 0)
-
-        total = present_count + late_count + absent_count
-        if total <= 0:
-            return 0.0
-
-        effective_present = present_count + (late_count * 0.5)
-
-        percentage = round((effective_present / total) * 100, 2)
-
-        return max(0.0, min(100.0, percentage))
-    except Exception:
-        return 0.0
-
-
-def build_cumulative_attendance_payload(month_rows):
-    payload = {
-        "months": [],
-        "grand_total_percentage": 0.0,
-        "total_present": 0,
-        "total_late": 0,
-        "total_absent": 0,
-    }
-
-    total_present = 0
-    total_late = 0
-    total_absent = 0
-
-    for row in (month_rows or []):
-        present = int(row.get("present_count", 0) or 0)
-        late = int(row.get("late_count", 0) or 0)
-        absent = int(row.get("absent_count", 0) or 0)
-
-        month_percentage = unified_attendance_percentage(
-            present,
-            late,
-            absent
-        )
-
-        payload["months"].append({
-            "month": row.get("month", "-"),
-            "attendance_percentage": month_percentage,
-            "present_count": present,
-            "late_count": late,
-            "absent_count": absent,
-        })
-
-        total_present += present
-        total_late += late
-        total_absent += absent
-
-    payload["total_present"] = total_present
-    payload["total_late"] = total_late
-    payload["total_absent"] = total_absent
-
-    payload["grand_total_percentage"] = unified_attendance_percentage(
-        total_present,
-        total_late,
-        total_absent
-    )
-
-    return payload
-
 LAST_MEETING_ENDED_CACHE = globals().get("LAST_MEETING_ENDED_CACHE", None)
 
 
@@ -13987,3 +13818,11 @@ canvas{
 '''
 except Exception:
     pass
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "5000"))
+    if socketio:
+        socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
+    else:
+        app.run(host="0.0.0.0", port=port, debug=True)
