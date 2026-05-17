@@ -714,7 +714,6 @@ button[type="submit"]{margin-top:20px!important;}
 .chart-container,
 .analytics-chart-wrap,
 .member-chart-wrap,
-canvas{
     overflow: visible !important;
 }
 
@@ -792,7 +791,6 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
-from urllib.parse import urlencode
 from xml.sax.saxutils import escape as xml_escape
 html_escape = xml_escape
 
@@ -857,16 +855,6 @@ except Exception:
     PERFORMANCE_CACHE_TTL_SECONDS = 45
 
 
-
-# ===== SAFE ALERT AUTOMATION DEFAULTS =====
-# Prevents after_request warning when older DB/runtime loads before alert automation state exists.
-ALERT_AUTOMATION_BG_RUNNING = globals().get("ALERT_AUTOMATION_BG_RUNNING", False)
-ALERT_AUTOMATION_LAST_RUN_TS = globals().get("ALERT_AUTOMATION_LAST_RUN_TS", 0)
-ALERT_AUTOMATION_RUN_EVERY_SECONDS = int(os.getenv("ALERT_AUTOMATION_RUN_EVERY_SECONDS", "60") or "60")
-
-
-# ===== ADVANCED REALTIME UI ALERT DEFAULTS =====
-ALERT_AUTOMATION_RUN_EVERY_SECONDS = globals().get("ALERT_AUTOMATION_RUN_EVERY_SECONDS", int(os.getenv("ALERT_AUTOMATION_RUN_EVERY_SECONDS", "60") or "60"))
 
 ACTIVE_MEMBER_SQL = "CAST(active AS TEXT) IN ('1','true','t','True','TRUE')"
 ACTIVE_USER_SQL = "CAST(is_active AS TEXT) IN ('1','true','t','True','TRUE')"
@@ -1283,10 +1271,6 @@ def login_required(f):
     return decorated_function
 
 
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if session.get("role") != "admin":
             flash("Admin access required.", "error")
             return redirect(url_for("home"))
         return f(*args, **kwargs)
@@ -5747,8 +5731,6 @@ button[type="submit"]{margin-top:20px!important;}
     padding: 4px;
     cursor: pointer;
 }
-.toggle-btn span {
-    flex: 1;
     text-align: center;
     padding: 6px 10px;
     border-radius: 50px;
@@ -5759,9 +5741,7 @@ button[type="submit"]{margin-top:20px!important;}
     color: #111;
 }
 
-input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-
 
 
 button:active {
@@ -5769,9 +5749,7 @@ button:active {
     transition: transform 0.1s;
 }
 
-input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-
 </style>
 
 </head>
@@ -6195,8 +6173,6 @@ def quick_live_nav_active() -> bool:
     try:
         with db() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
                     SELECT m.id,
                            COALESCE(m.start_time, m.created_at) AS started_at,
                            COUNT(a.id) FILTER (WHERE a.current_join IS NOT NULL) AS active_rows
@@ -7103,14 +7079,12 @@ button[type="submit"]{margin-top:20px!important;}
             }
             .za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important}
             .za-elite-bars{margin-top:54px!important;position:relative!important}
-            .za-elite-bar:hover::after{
                 bottom:calc(100% + 54px)!important;
                 background:rgba(2,6,23,.98)!important;
                 border:1px solid rgba(56,189,248,.42)!important;
                 box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
                 z-index:999999!important;
             }
-
 </style>
 
         <div class="live-fix-hero">
@@ -8787,8 +8761,6 @@ button[type="submit"]{margin-top:20px!important;}
         <div class="card">
             <h3>Meeting-wise Member History</h3>
             <div class="table-wrap">
-                <table>
-                    <tr><th>Meeting</th><th>Date</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr>
                     {% for r in data.rows %}
                     <tr><td>{{ r.topic }}</td><td>{{ r.date }}</td><td>{{ r.join }}</td><td>{{ r.leave }}</td><td>{{ r.duration }} min</td><td>{{ r.rejoins }}</td><td><span class="badge {% if r.status == 'PRESENT' %}ok{% elif r.status == 'LATE' %}warn{% elif r.status == 'ABSENT' %}danger{% else %}info{% endif %}">{{ r.status }}</span></td></tr>
                     {% else %}<tr><td colspan="7">No attendance records found for this member.</td></tr>{% endfor %}
@@ -9273,8 +9245,6 @@ button[type="submit"]{margin-top:20px!important;}
                 <nav class="dash-mini-nav">
                     <a class="active" href="#graphAnalyticsSection">Overview</a>
                     <a href="#gaTrendChart">Attendance Graphs</a>
-                    <a href="{{ url_for('attendance_register') }}">Register View</a>
-                    <a href="#analyticsRows">Participants</a>
                     <a href="{{ export_pdf_url }}">Reports</a>
                 </nav>
                 <div class="dash-note"><b>GRAPH 1: PARTICIPATION OVER TIME</b><br>Line graph with 4 lines: Present, Late, Absent and Unknown.</div>
@@ -9332,8 +9302,6 @@ button[type="submit"]{margin-top:20px!important;}
                                         <label><input type="checkbox" value="__all__" checked> All Years</label>
                                         {% for year in graph_options.years %}<label><input type="checkbox" value="{{ year }}"> {{ year }}</label>{% endfor %}
                                     </div>
-                                </div>
-                            </div>
                         </div>
                     </aside>
                 </div>
@@ -10354,9 +10322,7 @@ button[type="submit"]{margin-top:20px!important;}
 }
 
 
-input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-
 </style>
         <div class="reg-dashboard-shell">
             <aside class="reg-side-note">
@@ -10438,8 +10404,6 @@ button[type="submit"]{margin-top:20px!important;}
                 <h3>FEATURES</h3>
                 <ul>
                     <li>Book-style monthly pages</li>
-                    <li>Auto adjust days 28/29/30/31</li>
-                    <li>Color coded attendance</li>
                     <li>Click name → View summary</li>
                     <li>Easy month navigation</li>
                     <li>PDF, Excel and Print</li>
@@ -10623,11 +10587,7 @@ def export_analytics_csv():
     data = analytics_data(filters)
     content = export_csv_bytes(data["rows"])
     filename = f"analytics_{slugify(now_local().strftime('%Y%m%d_%H%M%S'))}.csv"
-    return Response(content, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
-
-@app.route("/analytics/export.pdf")
-@login_required
 def export_analytics_pdf():
     filters = dict(request.args)
     filters["member_ids"] = request.args.getlist("member_ids")
@@ -11485,13 +11445,7 @@ button[type="submit"]{margin-top:20px!important;}
                 let subscription = await registration.pushManager.getSubscription();
                 if (!subscription) {{
                     subscription = await registration.pushManager.subscribe({{
-                        userVisibleOnly: true,
-                        applicationServerKey: urlBase64ToUint8Array(vapidData.publicKey)
-                    }});
-                }}
 
-                const saveResp = await fetch('{url_for('push_subscribe')}', {{
-                    method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify(subscription)
                 }});
@@ -11728,8 +11682,6 @@ def _ai_member_stats(days=None, limit=None):
                     COALESCE(SUM(a.total_seconds),0) AS total_seconds,
                     MAX(mt.start_time) AS last_seen
                 FROM members m
-                LEFT JOIN attendance a ON a.member_id=m.id
-                LEFT JOIN meetings mt ON mt.meeting_uuid=a.meeting_uuid
                 WHERE {ACTIVE_MEMBER_SQL} {date_filter}
                 GROUP BY m.id, name, m.email
                 ORDER BY name ASC
@@ -12063,8 +12015,6 @@ def run_ai_level4_auto_actions(execute=False, max_members=20):
 
 @app.route('/api/ai-level4/predictions')
 @login_required
-def api_ai_level4_predictions(): return jsonify({'predictions':generate_ai_level4_predictions(),'recommendations':generate_ai_level4_recommendations()})
-
 @app.route('/api/ai-level4/auto-actions', methods=['POST'])
 @login_required
 @admin_required
@@ -12497,46 +12447,6 @@ def emit_live_snapshot(reason="update", meeting_uuid=None, target_sid=None):
     try:
         if not socketio:
             return
-        return jsonify({
-        "ok": True,
-        "disabled": True,
-        "transport": "snapshot_only_mode"
-    })
-        payload["socket_reason"] = reason
-        payload["socket_meeting_uuid"] = meeting_uuid
-        if target_sid:
-            socketio.emit("live_snapshot", payload, to=target_sid, namespace="/")
-            socketio.emit("live_summary", build_live_summary_from_snapshot(payload), to=target_sid, namespace="/")
-        else:
-            socketio.emit("live_snapshot", payload, namespace="/")
-            socketio.emit("live_summary", build_live_summary_from_snapshot(payload), namespace="/")
-        print(f"📡 SOCKET LIVE SNAPSHOT: {reason}")
-    except Exception as exc:
-        print(f"⚠️ live snapshot socket emit skipped: {exc}")
-
-
-def emit_smart_alert_realtime(title, message, alert_type="smart_alert", entity_id="system"):
-    try:
-        emit_realtime("smart_alert", {
-            "title": title,
-            "message": message,
-            "alert_type": alert_type,
-            "entity_id": str(entity_id),
-            "ts": time.time(),
-        })
-    except Exception as exc:
-        print(f"⚠️ realtime smart alert skipped: {exc}")
-
-def calculate_member_score(attendance, consistency, duration):
-    try:
-        attendance = max(0, min(100, float(attendance or 0)))
-        consistency = max(0, min(100, float(consistency or 0)))
-        duration = max(0, min(100, float(duration or 0)))
-        score = calculate_weighted_member_score(attendance, consistency, duration)
-        if score >= 80:
-            status = "Healthy"
-        elif score >= 50:
-            status = "Warning"
         else:
             status = "Critical"
         return round(score, 2), status
@@ -13128,8 +13038,6 @@ def _za_member_trend_details_payload(member_id):
                 if has_final_status and has_status:
                     status_expr = "COALESCE(a.final_status, a.status, 'ABSENT')"
                 elif has_final_status:
-                    status_expr = "COALESCE(a.final_status, 'ABSENT')"
-                elif has_status:
                     status_expr = "COALESCE(a.status, 'ABSENT')"
                 else:
                     status_expr = "'ABSENT'"
