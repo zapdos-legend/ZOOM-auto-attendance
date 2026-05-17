@@ -6137,6 +6137,7 @@ button[type="submit"]{margin-top:20px!important;}
     }
 
     function removeRequestedAnalyticsSections(){
+        if (location.pathname !== '/analytics') return;
         const blocked = new Set(['Analytics Filters','Attendance Trend','Member Duration','Duration Distribution','Status Mix']);
         document.querySelectorAll('h1,h2,h3').forEach((heading) => {
             const text = (heading.textContent || '').trim().replace(/\\s+/g,' ');
