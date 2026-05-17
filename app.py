@@ -250,31 +250,7 @@ button:active,.btn:active,a.btn:active{
 .za-tooltip-ready{
   position:relative;
 }
-.za-tooltip-ready::after{
-  content:attr(data-za-tooltip);
-  position:absolute;
-  right:10px;
-  top:10px;
-  max-width:260px;
-  padding:8px 10px;
-  border-radius:12px;
-  font-size:12px;
-  line-height:1.35;
-  font-weight:800;
-  color:#e5e7eb;
-  background:rgba(15,23,42,.96);
-  border:1px solid rgba(148,163,184,.24);
-  box-shadow:0 18px 42px rgba(0,0,0,.32);
-  opacity:0;
-  transform:translateY(-4px);
-  pointer-events:none;
-  transition:opacity .2s ease, transform .2s ease;
-  z-index:9999;
-}
-.za-tooltip-ready:hover::after{
-  opacity:1;
-  transform:translateY(0);
-}
+
 .za-toast-wrap{
   position:fixed;
   right:18px;
@@ -565,6 +541,10 @@ button:active,.btn:active,a.btn:active{
     window.ZoomAttendanceMotionEngine.start();
   }
 })();
+/* ===== SINGLE GLOBAL FLOATING TOOLTIP ENGINE ===== */
+.card,.analytics-card,.panel,.chart-container,.member-chart-wrap,.analytics-chart-wrap,canvas,.za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important;}
+#zaGlobalTooltip{position:fixed;z-index:2147483647;display:none;pointer-events:none;padding:11px 13px;max-width:340px;border-radius:14px;background:rgba(2,6,23,.98);color:#f8fafc;border:1px solid rgba(56,189,248,.45);box-shadow:0 24px 70px rgba(0,0,0,.72);font-size:12px;font-weight:900;line-height:1.35;}
+
 /* ===== END OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
 
 
@@ -746,13 +726,7 @@ button[type="submit"]{margin-top:20px!important;}
 /* FINAL TREND TOOLTIP FIX: keep tooltip above bars, not covering readable data */
 .za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important}
 .za-elite-bars{margin-top:54px!important;position:relative!important}
-.za-elite-bar:hover::after{
-    bottom:calc(100% + 54px)!important;
-    background:rgba(2,6,23,.98)!important;
-    border:1px solid rgba(56,189,248,.42)!important;
-    box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
-    z-index:999999!important;
-}
+
 
 /* FINAL TIMER + TOOLTIP FIX */
 .live-fix-conn,.live-fix-conn.ok,.live-fix-conn.bad{
@@ -762,7 +736,7 @@ button[type="submit"]{margin-top:20px!important;}
   box-shadow:0 16px 44px rgba(0,0,0,.42)!important;
 }
 .live-fix-duration{min-width:64px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;font-variant-numeric:tabular-nums!important}
-#zaEliteTrendHero .za-elite-bar:hover::after{display:none!important}
+#zaEliteTrendHero 
 #zaFinalFloatingTrendTip{
   position:fixed!important;z-index:2147483647!important;overflow:visible!important;max-width:340px!important;padding:11px 13px!important;border-radius:14px!important;
   background:rgba(2,6,23,.98)!important;color:#f8fafc!important;border:1px solid rgba(56,189,248,.45)!important;
@@ -7238,13 +7212,7 @@ button[type="submit"]{margin-top:20px!important;}
             }
             .za-elite-chart,.za-elite-bars,.za-elite-bar{overflow:visible!important}
             .za-elite-bars{margin-top:54px!important;position:relative!important}
-            .za-elite-bar:hover::after{
-                bottom:calc(100% + 54px)!important;
-                background:rgba(2,6,23,.98)!important;
-                border:1px solid rgba(56,189,248,.42)!important;
-                box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
-                z-index:999999!important;
-            }
+            
 </style>
 
 </style>
@@ -8848,7 +8816,7 @@ def member_profile(member_id):
 .za-elite-bar i{position:absolute!important;left:50%!important;bottom:calc(100% + 6px)!important;transform:translateX(-50%)!important;font-style:normal!important;color:#e5e7eb!important;font-size:10px!important;font-weight:1000!important;opacity:.88!important}
 @keyframes zaEliteBarGrow{from{height:8px;opacity:.22;transform:translateY(15px) scaleX(.82)}78%{transform:translateY(-2px) scaleX(1.035)}to{height:var(--h);opacity:1;transform:translateY(0) scaleX(1)}}
 .za-elite-bar:hover{filter:brightness(1.26)!important;transform:translateY(-7px) scaleY(1.055)!important}
-.za-elite-bar:hover::after{content:attr(data-tip);position:absolute!important;left:50%!important;bottom:calc(100% + 26px)!important;transform:translateX(-50%)!important;z-index:99999!important;min-width:230px!important;padding:10px 11px!important;border-radius:14px!important;background:rgba(15,23,42,.98)!important;color:#e5e7eb!important;border:1px solid rgba(148,163,184,.24)!important;box-shadow:0 18px 42px rgba(0,0,0,.42)!important;font-size:11px!important;font-weight:850!important;text-align:center!important;line-height:1.35!important}
+
 .za-elite-mini{margin-top:15px!important;display:grid!important;grid-template-columns:repeat(auto-fit,minmax(145px,1fr))!important;gap:11px!important}
 .za-elite-mini div{border-radius:18px!important;padding:12px 13px!important;background:rgba(15,23,42,.50)!important;border:1px solid rgba(148,163,184,.14)!important}
 .za-elite-mini small{display:block!important;color:#94a3b8!important;font-size:10px!important;font-weight:1000!important;text-transform:uppercase!important;letter-spacing:.08em!important}
@@ -14261,3 +14229,33 @@ canvas{
 '''
 except Exception:
     pass
+
+
+GLOBAL_TOOLTIP_JS = """
+<script>
+(function(){
+if(window.zaGlobalTooltipLoaded)return;
+window.zaGlobalTooltipLoaded=true;
+document.addEventListener("DOMContentLoaded",function(){
+const t=document.createElement("div");
+t.id="zaGlobalTooltip";
+document.body.appendChild(t);
+document.querySelectorAll("[data-za-tooltip],.card,.analytics-card,.za-elite-bar,canvas").forEach(el=>{
+el.addEventListener("mouseenter",()=>{
+let txt=el.getAttribute("data-za-tooltip")||(el.innerText||"").trim().replace(/\s+/g," ").slice(0,120);
+if(!txt)return;
+t.innerText=txt;
+t.style.display="block";
+});
+el.addEventListener("mouseleave",()=>t.style.display="none");
+});
+document.addEventListener("mousemove",(e)=>{
+if(t.style.display==="block"){
+t.style.left=(e.clientX+16)+"px";
+t.style.top=(e.clientY-50)+"px";
+}
+});
+});
+})();
+</script>
+"""
