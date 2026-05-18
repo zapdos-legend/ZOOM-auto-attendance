@@ -679,7 +679,6 @@ td .btn:last-child, td button:last-child, td form:last-child{ margin-right: 0 !i
 td form{ display:inline-block !important; vertical-align:middle !important; }
 .status-toggle-btn{ margin-left: 8px !important; margin-right: 8px !important; }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
 
@@ -734,17 +733,6 @@ div[id*="tooltip"]{
 }
 
 
-/* GPT55 LAST MEETING STATUS */
-.last-meeting-ended-card{
-    margin-top:12px;
-    padding:10px 14px;
-    border-radius:14px;
-    background:rgba(15,23,42,.72);
-    border:1px solid rgba(148,163,184,.18);
-    color:#cbd5e1;
-    font-weight:800;
-}
-
 
 /* ===== GPT55 TOOLTIP FIX ===== */
 .chartjs-tooltip,
@@ -757,19 +745,6 @@ canvas + div,
     position: relative !important;
 }
 
-</style>
-
-
-.za-last-meeting-card{
-  margin-top:14px;
-  padding:14px 16px;
-  border-radius:18px;
-  background:rgba(15,23,42,.88);
-  border:1px solid rgba(56,189,248,.28);
-  color:#e0f2fe;
-  font-weight:900;
-  box-shadow:0 16px 40px rgba(0,0,0,.32);
-}
 
 </style>
 '''
@@ -822,17 +797,6 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 load_dotenv()
 
 
-
-# ===== GPT55 FINAL LIVE FIX ENGINE =====
-LAST_MEETING_META = {
-    "ended_at": None
-}
-
-def za_store_last_meeting_end():
-    try:
-        LAST_MEETING_META["ended_at"] = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
-    except Exception:
-        pass
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
@@ -12457,49 +12421,6 @@ try:
 except Exception as _ai_route_patch_exc:
     print(f"AI assistant route patch skipped: {_ai_route_patch_exc}")
 
-# Robust frontend patch for AI Intelligence page: guarantees Thinking... and response rendering.
-_AI_FRONTEND_PATCH_V112 = """
-<script>
-(function(){
-  async function askAttendanceAI(q, targetId){
-    q = (q || '').trim();
-    const box = document.getElementById(targetId || 'aiLevel3Answer') || document.getElementById('aiBotAnswer');
-    if(!q){ if(box) box.innerText='Please type a question first.'; return; }
-    if(box) box.innerText='Thinking...';
-    try{
-      const res = await fetch('/api/ai-assistant-level3', {
-        method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin',
-        body: JSON.stringify({query:q})
-      });
-      let data = {};
-      try { data = await res.json(); } catch(e){ data = {response:'Server returned a non-JSON response.'}; }
-      if(box) box.innerText = data.response || 'No answer found.';
-    }catch(err){
-      if(box) box.innerText = 'AI assistant connection error: ' + (err.message || err);
-    }
-  }
-  window.aiAsk = function(q){ return askAttendanceAI(q, 'aiLevel3Answer'); };
-  window.aiBotAsk = function(q){ return askAttendanceAI(q, 'aiBotAnswer'); };
-  document.addEventListener('DOMContentLoaded', function(){
-    const btns = Array.from(document.querySelectorAll('button'));
-    btns.forEach(function(btn){
-      const text=(btn.textContent||'').trim().toLowerCase();
-      if(text === 'ask ai'){
-        btn.addEventListener('click', function(ev){ ev.preventDefault(); const input=document.getElementById('aiLevel3Input'); askAttendanceAI(input ? input.value : '', 'aiLevel3Answer'); });
-      }
-      if(text === 'ask'){
-        const panel = btn.closest('.ai-bot-panel');
-        if(panel){ btn.addEventListener('click', function(ev){ ev.preventDefault(); const input=document.getElementById('aiBotInput'); askAttendanceAI(input ? input.value : '', 'aiBotAnswer'); }); }
-      }
-    });
-  });
-})();
-</script>
-"""
-
-# Removed malformed ai_frontend_patch_v112 injected block to restore deployment.
-
-
 
 # ===== SAFE SMART SCHEDULER FALLBACK =====
 def run_smart_scheduler(force=False):
@@ -13548,13 +13469,6 @@ def za_option_a_premium_force_css_inject(response):
 # ===== END OPTION A PREMIUM CSS INJECTION =====
 
 
-
-
-
-
-LAST_MEETING_ENDED_CACHE = globals().get("LAST_MEETING_ENDED_CACHE", None)
-
-
 # ===== GPT55 FINAL LIVE UI FIX =====
 try:
     DARK_THEME_CSS += r'''
@@ -13571,24 +13485,6 @@ canvas{
     overflow:visible !important;
 }
 
-/* LAST MEETING ENDED CARD */
-.za-last-meeting-ended{
-    margin-top:14px;
-    display:flex;
-    align-items:center;
-    gap:10px;
-    padding:12px 16px;
-    border-radius:16px;
-    background:rgba(15,23,42,.72);
-    border:1px solid rgba(239,68,68,.22);
-    color:#f8fafc;
-    font-weight:800;
-    font-size:13px;
-    box-shadow:0 10px 28px rgba(0,0,0,.25);
-}
-.za-last-meeting-ended b{
-    color:#fca5a5;
-}
 
 /* FORCE DURATION TEXT ABOVE */
 .live-fix-duration{
