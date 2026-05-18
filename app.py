@@ -5954,6 +5954,25 @@ button[type="submit"]{margin-top:20px!important;}
     window.zaApplyLiveSummary = function(data){ updateGlobalLiveNavState(data); };
     window.addEventListener('za:live-snapshot', function(e){ updateGlobalLiveNavState(e.detail || {}); });
 
+    function startGlobalLiveSidebarUpdater(){
+        if(window.__ZA_GLOBAL_LIVE_SUMMARY_UPDATER__) return;
+        window.__ZA_GLOBAL_LIVE_SUMMARY_UPDATER__ = true;
+        let busy=false;
+        const tick = async function(reason){
+            if(busy) return;
+            busy=true;
+            try{
+                const res = await fetch('/api/live-summary?t='+Date.now()+'&source='+encodeURIComponent(reason||'global_nav'), {cache:'no-store', credentials:'same-origin'});
+                if(!res.ok) throw new Error('live-summary failed');
+                const data = await res.json();
+                updateGlobalLiveNavState(data || {});
+            }catch(_e){}
+            finally{ busy=false; }
+        };
+        tick('boot');
+        setInterval(function(){ tick('interval'); }, 5000);
+        document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') tick('tab_visible'); });
+    }
 
 
     function applyFinalDashboardTooltips(){
@@ -6018,6 +6037,7 @@ button[type="submit"]{margin-top:20px!important;}
         polishLayoutSpacing();
         enhanceWowEffects();
         updateGlobalLiveNavState(window.__zaLastSocketSnapshot || null);
+        startGlobalLiveSidebarUpdater();
     });
 })();
 </script>
@@ -7047,7 +7067,7 @@ button[type="submit"]{margin-top:20px!important;}
                         <thead><tr><th>Name</th><th>Category</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr></thead>
                         <tbody id="lfRows">
                             {% for p in data.participants %}
-                            <tr class="{{ '' if p.is_active else 'live-fix-left' }}">
+                            <tr class="{{ '' if p.is_active else 'live-fix-left' }}" data-row-id="{{ (p.id|string)|lower|replace(' ', '_') }}">
                                 <td><b>{{ p.name }}</b>{% if p.is_host %} <span class="badge info">HOST</span>{% endif %}</td>
                                 <td><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
                                 <td>{{ p.first_join }}</td>
@@ -7076,6 +7096,7 @@ button[type="submit"]{margin-top:20px!important;}
             let lastServerNowMs = 0;
             let pollBusy = false;
             let pollTimer = null;
+            let durationTimer = null;
 
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
@@ -7090,6 +7111,68 @@ button[type="submit"]{margin-top:20px!important;}
                 return cell;
             }
             function setBadgeClass(el, className){ if(el && el.className!==className) el.className=className; }
+            function parseHms(value){
+                const text=String(value||'').trim();
+                const m=text.match(/^(\\d+):(\\d{2}):(\\d{2})$/);
+                if(!m) return 0;
+                return (parseInt(m[1],10)*3600)+(parseInt(m[2],10)*60)+parseInt(m[3],10);
+            }
+            function formatHms(total){
+                const sec=Math.max(0,parseInt(total||0,10));
+                const h=String(Math.floor(sec/3600)).padStart(2,'0');
+                const m=String(Math.floor((sec%3600)/60)).padStart(2,'0');
+                const s=String(sec%60).padStart(2,'0');
+                return h+':'+m+':'+s;
+            }
+            function syncDurationBases(data){
+                const nowMs=Date.now();
+                const rows=(data&&data.participants)||[];
+                rows.forEach(function(p){
+                    const id=rowId(p);
+                    const row=document.querySelector('#lfRows tr[data-row-id="'+id+'"]');
+                    if(!row) return;
+                    const backendSec=Math.max(0,parseInt(p.duration_seconds||0,10));
+                    const prevShown=Math.max(parseInt(row.dataset.displayedDurationSeconds||'0',10), parseHms(p.duration_display));
+                    row.dataset.backendDurationSeconds=String(backendSec);
+                    row.dataset.durationBaseMs=String(nowMs);
+                    row.dataset.isActive=(p.is_active?'1':'0');
+                    row.dataset.displayedDurationSeconds=String(Math.max(prevShown, backendSec));
+                });
+                const head=document.getElementById('lfDuration');
+                if(head){
+                    const backendMeetingSec=parseHms((data&&data.summary&&data.summary.meeting_duration_display)||'00:00:00');
+                    const prevMeeting=parseInt(head.dataset.displayedDurationSeconds||'0',10);
+                    head.dataset.backendDurationSeconds=String(backendMeetingSec);
+                    head.dataset.durationBaseMs=String(nowMs);
+                    head.dataset.isActive=(data&&data.has_live)?'1':'0';
+                    head.dataset.displayedDurationSeconds=String(Math.max(prevMeeting, backendMeetingSec));
+                }
+            }
+            function tickDurations(){
+                const nowMs=Date.now();
+                document.querySelectorAll('#lfRows tr[data-row-id]').forEach(function(row){
+                    const baseSec=parseInt(row.dataset.backendDurationSeconds||'0',10);
+                    const baseMs=parseInt(row.dataset.durationBaseMs||'0',10);
+                    const active=row.dataset.isActive==='1';
+                    const elapsed=active&&baseMs?Math.floor((nowMs-baseMs)/1000):0;
+                    const next=Math.max(parseInt(row.dataset.displayedDurationSeconds||'0',10), baseSec+Math.max(elapsed,0));
+                    row.dataset.displayedDurationSeconds=String(next);
+                    setCell(row,'duration','<span class="live-fix-duration">'+formatHms(next)+'</span>',formatHms(next));
+                    row.dataset.durationSeconds=String(next);
+                });
+                const head=document.getElementById('lfDuration');
+                if(head){
+                    const baseSec=parseInt(head.dataset.backendDurationSeconds||'0',10);
+                    const baseMs=parseInt(head.dataset.durationBaseMs||'0',10);
+                    const active=head.dataset.isActive==='1';
+                    const elapsed=active&&baseMs?Math.floor((nowMs-baseMs)/1000):0;
+                    const next=Math.max(parseInt(head.dataset.displayedDurationSeconds||'0',10), baseSec+Math.max(elapsed,0));
+                    head.dataset.displayedDurationSeconds=String(next);
+                    head.textContent='Duration '+formatHms(next);
+                }
+                sortLiveRowsByDuration();
+            }
+
             function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);if(el.textContent!==String(next))el.textContent=String(next);}
             function sortLiveRowsByDuration(){
                 const body=document.getElementById('lfRows');
@@ -7103,6 +7186,16 @@ button[type="submit"]{margin-top:20px!important;}
                 (rows||[]).forEach(function(p){
                     const id=rowId(p); seen.add(id);
                     let row=tbody.querySelector('tr[data-row-id="'+id+'"]');
+                    const dupes=[...tbody.querySelectorAll('tr[data-row-id="'+id+'"]')];
+                    if(dupes.length>1){
+                        row=dupes[0];
+                        dupes.slice(1).forEach(function(d){
+                            const durA=parseInt(row.dataset.durationSeconds||'0',10);
+                            const durB=parseInt(d.dataset.durationSeconds||'0',10);
+                            if(durB>durA){ row=d; }
+                        });
+                        dupes.forEach(function(d){ if(d!==row) d.remove(); });
+                    }
                     if(!row){ row=document.createElement('tr'); row.setAttribute('data-row-id', id); tbody.appendChild(row); }
                     row.classList.toggle('live-fix-left', !p.is_active);
                     const nameHtml='<b>'+esc(p.name)+'</b>'+(p.is_host?' <span class="badge info">HOST</span>':'');
@@ -7157,6 +7250,8 @@ button[type="submit"]{margin-top:20px!important;}
                 setDisplay('lfEmpty',rows.length?'none':'block');
                 setDisplay('lfTableWrap',rows.length?'block':'none');
                 updateParticipantRows(rows, summary);
+                syncDurationBases(data);
+                tickDurations();
                 renderFeed(data.feed||[]);
                 renderMissing(data.not_joined||[]);
                 const conn=document.getElementById('lfConn');
@@ -7191,12 +7286,15 @@ button[type="submit"]{margin-top:20px!important;}
             if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
             setTimeout(function(){ pollLiveSnapshot('initial'); },350);
             pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },1000);
+            if(durationTimer) clearInterval(durationTimer);
+            durationTimer=setInterval(tickDurations,1000);
             window[engineKey]=pollTimer;
             document.addEventListener('visibilitychange', function(){
                 if(document.visibilityState==='visible') pollLiveSnapshot('tab_visible');
             });
             window.addEventListener('beforeunload', function(){
                 if(pollTimer) clearInterval(pollTimer);
+                if(durationTimer) clearInterval(durationTimer);
                 if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
             });
         })();
