@@ -315,214 +315,8 @@ button:active,.btn:active,a.btn:active{
 
 
 
-<script>
-(function(){
-  if(location.pathname === '/login'){ return; }
-  if(window.ZoomAttendanceMotionEngine){ return; }
-  window.ZoomAttendanceMotionEngine = {
-    started:false,
-    easer:function(t){ return 1 - Math.pow(1 - t, 3); },
-    parseNumber:function(text){
-      var m = String(text || "").replace(/,/g,"").match(/-?\\d+(\\.\\d+)?/);
-      return m ? Number(m[0]) : null;
-    },
-    animateNumber:function(el, target){
-      if(!el || el.dataset.zaAnimated === "1") return;
-      if(target === null || isNaN(target)) return;
-      el.dataset.zaAnimated = "1";
-      var original = el.textContent || "";
-      var prefix = original.match(/^\\D*/)[0] || "";
-      var suffix = (original.match(/\\D*$/) || [""])[0] || "";
-      var start = 0, duration = 850, started = null, self = this;
-      function step(ts){
-        if(!started) started = ts;
-        var p = Math.min((ts - started) / duration, 1);
-        var v = Math.round(start + (target - start) * self.easer(p));
-        el.textContent = prefix + v.toLocaleString() + suffix;
-        if(p < 1) requestAnimationFrame(step);
-        else {
-          el.style.transform = "scale(1.045)";
-          setTimeout(function(){ el.style.transform = ""; }, 140);
-        }
-      }
-      requestAnimationFrame(step);
-    },
-    initCounters:function(){
-      var self = this;
-      var candidates = document.querySelectorAll(".card strong,.mini-card strong,.analytics-card strong,.activity-clean-card strong,.stat-value,.metric-value,.kpi-value");
-      candidates.forEach(function(el){
-        var n = self.parseNumber(el.textContent);
-        if(n !== null && Math.abs(n) < 1000000) self.animateNumber(el,n);
-      });
-    },
-    initHeartbeat:function(){
-      var labels = Array.from(document.querySelectorAll("body *")).filter(function(el){
-        var t = (el.textContent || "").trim().toLowerCase();
-        return t === "live" || t === "active" || t.indexOf("live dashboard") !== -1;
-      }).slice(0,8);
-      labels.forEach(function(el){
-        if(el.dataset.zaPulseBound === "1") return;
-        el.dataset.zaPulseBound = "1";
-        var dot = document.createElement("span");
-        dot.className = "za-live-dot";
-        el.insertBefore(dot, el.firstChild);
-      });
-    },
-    initCards:function(){
-      var cards = document.querySelectorAll(".card,.mini-card,.analytics-card,.glass-panel,.panel,.activity-clean-card");
-      cards.forEach(function(card, idx){
-        card.classList.add("za-card-enter","za-tooltip-ready");
-        card.style.animationDelay = Math.min(idx*70, 420) + "ms";
-        if(!card.dataset.zaTooltip){
-          var heading = card.querySelector("h1,h2,h3,h4,strong,b");
-          var raw = ((heading && heading.textContent) || card.textContent || "").replace(/\\s+/g," ").trim().slice(0,90);
-          card.dataset.zaTooltip = raw ? ("This section shows: " + raw) : "This section shows important attendance insight.";
-        }
-      });
-    },
-    initButtons:function(){
-      document.addEventListener("click", function(e){
-        var btn = e.target.closest("button,.btn,a.btn");
-        if(!btn) return;
-        var ripple = document.createElement("span");
-        ripple.style.position="absolute";
-        ripple.style.borderRadius="999px";
-        ripple.style.pointerEvents="none";
-        ripple.style.width=ripple.style.height="10px";
-        ripple.style.background="rgba(255,255,255,.35)";
-        ripple.style.transform="scale(1)";
-        ripple.style.opacity="1";
-        ripple.style.transition="transform .45s ease, opacity .45s ease";
-        if(getComputedStyle(btn).position === "static") btn.style.position="relative";
-        btn.style.overflow="hidden";
-        var rect = btn.getBoundingClientRect();
-        ripple.style.left=(e.clientX-rect.left-5)+"px";
-        ripple.style.top=(e.clientY-rect.top-5)+"px";
-        btn.appendChild(ripple);
-        requestAnimationFrame(function(){ ripple.style.transform="scale(18)"; ripple.style.opacity="0"; });
-        setTimeout(function(){ ripple.remove(); },500);
-      }, true);
-    },
-    toast:function(msg){
-      var wrap = document.querySelector(".za-toast-wrap");
-      if(!wrap){
-        wrap = document.createElement("div");
-        wrap.className = "za-toast-wrap";
-        document.body.appendChild(wrap);
-      }
-      var t = document.createElement("div");
-      t.className = "za-toast";
-      t.textContent = "✅ " + (msg || "Action completed");
-      wrap.appendChild(t);
-      setTimeout(function(){ t.remove(); },2400);
-    },
-    initFlashToasts:function(){
-      var alerts = document.querySelectorAll(".alert,.flash,.message,[role='alert']");
-      alerts.forEach(function(a){
-        var txt = (a.textContent || "").replace(/\\s+/g," ").trim();
-        if(txt && !a.dataset.zaToasted){
-          a.dataset.zaToasted="1";
-          window.ZoomAttendanceMotionEngine.toast(txt.slice(0,120));
-        }
-      });
-    },
-    initTrends:function(){
-      document.querySelectorAll("td,span,div").forEach(function(el){
-        var t = (el.textContent || "").trim();
-        if(t.indexOf("↑") !== -1 || /improving/i.test(t)) el.classList.add("za-trend-up");
-        if(t.indexOf("↓") !== -1 || /declining/i.test(t)) el.classList.add("za-trend-down");
-        if(/critical|host absent|low attendance/i.test(t)) {
-          var card = el.closest(".card,.panel,.analytics-card,tr") || el;
-          card.classList.add("za-critical");
-        }
-      });
-    },
-    initFocus:function(){
-      document.addEventListener("click", function(e){
-        var target = e.target.closest(".card,.mini-card,.analytics-card,.panel,tr");
-        if(!target) return;
-        document.querySelectorAll(".za-focus-mode").forEach(function(x){ if(x !== target) x.classList.remove("za-focus-mode"); });
-        target.classList.add("za-focus-mode");
-        setTimeout(function(){ target.classList.remove("za-focus-mode"); },1600);
-      }, true);
-    },
+/* Dead motion-engine script removed from DARK_THEME_CSS. */
 
-    initRealtimeSocket:function(){
-      return; // Stabilization: Socket.IO client/fallback code disabled. /live uses /api/live-snapshot polling only.
-    },
-    initRiskBadges:function(){
-      function applyBadgeToRow(name, status, score){
-        if(!name) return;
-        var rows = document.querySelectorAll("tbody tr");
-        rows.forEach(function(row){
-          if(row.dataset.zaRiskBound === "1") return;
-          var txt = (row.textContent || "").toLowerCase();
-          if(txt.indexOf(String(name).toLowerCase()) === -1) return;
-          row.dataset.zaRiskBound = "1";
-          var badge = document.createElement("span");
-          var cls = status === "Healthy" ? "ok" : (status === "Warning" ? "warn" : "danger");
-          badge.className = "badge " + cls;
-          badge.textContent = status + " " + Math.round(score || 0);
-          badge.style.marginLeft = "8px";
-          var first = row.querySelector("td");
-          if(first) first.appendChild(badge);
-        });
-      }
-      if(!location.pathname.includes("members") && !location.pathname.includes("analytics")) return;
-      fetch("/api/member-risk-summary?t="+Date.now(), {cache:"no-store", credentials:"same-origin"})
-        .then(function(r){ return r.ok ? r.json() : null; })
-        .then(function(data){
-          if(!data || !data.ok) return;
-          (data.members || []).forEach(function(m){ applyBadgeToRow(m.name, m.risk_status, m.score); });
-        }).catch(function(){});
-    },
-
-    initCharts:function(){
-      if(window.Chart && window.Chart.defaults){
-        window.Chart.defaults.animation = {duration: 900, easing: "easeOutQuart"};
-        window.Chart.defaults.transitions = {
-          active: {animation: {duration: 350}},
-          resize: {animation: {duration: 350}},
-          show: {animations: {x: {from: 0}, y: {from: 0}}}
-        };
-      }
-    },
-    initLivePollingPolish:function(){
-      if(location.pathname !== '/live') return;
-      if(window.__zaLivePolishTimer) clearInterval(window.__zaLivePolishTimer);
-      window.__zaLivePolishTimer = setInterval(function(){
-        document.querySelectorAll("tbody tr").forEach(function(row,idx){
-          if(!row.dataset.zaSeen){
-            row.dataset.zaSeen="1";
-            row.style.animation = "zaCardEnter .38s cubic-bezier(.16,1,.3,1) both";
-            row.style.animationDelay = Math.min(idx*20, 180) + "ms";
-          }
-        });
-      },2000);
-    },
-    start:function(){
-      if(this.started) return;
-      this.started = true;
-      this.initCards();
-      this.initButtons();
-      this.initCounters();
-      this.initHeartbeat();
-      this.initFlashToasts();
-      this.initTrends();
-      this.initFocus();
-      if(location.pathname === '/live'){ this.initRealtimeSocket(); }
-      this.initRiskBadges();
-      this.initCharts();
-      this.initLivePollingPolish();
-    }
-  };
-  if(document.readyState === "loading"){
-    document.addEventListener("DOMContentLoaded", function(){ window.ZoomAttendanceMotionEngine.start(); });
-  } else {
-    window.ZoomAttendanceMotionEngine.start();
-  }
-})();
-/* ===== END OPTION A SAFE SAAS MOTION ENGINE V1 ===== */
 
 
 body.za-realtime-connected .za-live-dot{animation-duration:1s!important;}
@@ -1218,30 +1012,8 @@ input{border-radius:14px!important;padding:13px 14px!important;background:#37415
 form input[name="password"]{display:block!important;margin-bottom:34px!important;}
 form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
 button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
-
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
-
-</style>
-"""
-
-
-LIGHT_LOGIN_CSS = """
-<style>
-body{background:linear-gradient(135deg,#111,#3b0508)!important;color:#f8fafc;font-family:Inter,system-ui,sans-serif;}
-.card,.login-card,.auth-card{background:rgba(24,24,27,.88)!important;border:1px solid rgba(255,255,255,.12)!important;border-radius:26px!important;box-shadow:0 24px 70px rgba(0,0,0,.38)!important;}
-input{border-radius:14px!important;padding:13px 14px!important;background:#374151!important;color:#fff!important;border:1px solid rgba(239,68,68,.35)!important;}
-form input[name="password"]{display:block!important;margin-bottom:34px!important;}
-form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
-button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
-
-<style>
-input[type="password"]{margin-bottom:40px!important;}
-button[type="submit"]{margin-top:20px!important;}
-</style>
-
 </style>
 """
 
@@ -5550,11 +5322,11 @@ BASE_HTML = """
         @media (max-width: 900px){.content{padding:18px}.alert-rail{grid-template-columns:1fr}.table-wrap{overflow:auto}.hero-stats{justify-content:flex-start}}
 
 
-        /* =========================================================
+        /* ---------------------------------------------------------
            UI_UPDATE_V8_APPEARANCE_ENGINE_SKELETON_APPLIED
            SaaS Appearance Engine + Premium Skeleton Layer
            Safe CSS-only theme layer. Does not modify attendance/webhook logic.
-        ========================================================= */
+        --------------------------------------------------------- */
         :root{--theme-accent:#6366f1;--theme-accent-2:#8b5cf6;--theme-accent-3:#22d3ee;--theme-danger:#ef4444;--theme-success:#22c55e;--theme-warning:#f59e0b;--theme-bg:#0b1020;--theme-bg-2:#111827;--theme-card:rgba(15,23,42,.82);--theme-card-soft:rgba(255,255,255,.075);--theme-text:#f8fafc;--theme-muted:#94a3b8;--theme-line:rgba(148,163,184,.18);--theme-glow:rgba(99,102,241,.25);}
         body[data-app-theme="default-saas-dark"]{--bg:#07111f;--bg2:#0f172a;--card:rgba(15,23,42,.88);--card-soft:rgba(255,255,255,.07);--text:#f8fafc;--muted:#9ca3af;--line:rgba(148,163,184,.18);--surface-ring:rgba(99,102,241,.22);--brand:#6366f1;--brand2:#8b5cf6;--theme-accent:#6366f1;--theme-accent-2:#8b5cf6;--theme-accent-3:#22d3ee;--theme-glow:rgba(99,102,241,.28);--hero-grad:linear-gradient(135deg,#1d4ed8,#6d28d9,#0891b2);--shadow:0 18px 55px rgba(2,6,23,.44);--shadow-soft:0 14px 34px rgba(2,6,23,.25);}
         body[data-app-theme="notion-clean"]{--bg:#f7f6f3;--bg2:#ffffff;--card:#ffffff;--card-soft:#fbfaf8;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;--surface-ring:#e5e7eb;--brand:#111827;--brand2:#6b7280;--theme-accent:#111827;--theme-accent-2:#64748b;--theme-accent-3:#0f766e;--theme-glow:rgba(15,23,42,.08);--hero-grad:linear-gradient(135deg,#ffffff,#f3f4f6);--shadow:0 16px 36px rgba(15,23,42,.08);--shadow-soft:0 10px 26px rgba(15,23,42,.06);}
@@ -11673,10 +11445,10 @@ def appearance():
     return page("Appearance Studio", body, "appearance")
 
 
-# =========================
+# -------------------------
 # UI_UPDATE_V10_AI_LEVEL3_SMART_ENGINE_APPLIED = True
 # UI_UPDATE_V10_1_AI_LEVEL3_PERFORMANCE_FIX_APPLIED = True
-# =========================
+# -------------------------
 
 AI_LEVEL3_LOW_ATTENDANCE_DEFAULT = 50.0
 
@@ -12000,9 +11772,9 @@ button[type="submit"]{margin-top:20px!important;}
     """, insights=insights, members=members, critical=critical, warning=warning, latest_score=latest_score, avg_duration=avg_duration, logs=logs, heat=heat, heat_meetings=heat_meetings, fmt_date=fmt_date, fmt_dt=fmt_dt, basis=basis, preds=preds, recs=recs, high=high, med=med, consistent=consistent, risky=risky)
     return page('AI Intelligence', body, 'ai_intelligence')
 
-# =========================
+# -------------------------
 # END UI_UPDATE_V10_AI_LEVEL3_SMART_ENGINE_APPLIED
-# =========================
+# -------------------------
 
 # UI_UPDATE_V11_AI_LEVEL4_CORE_APPLIED = True
 # UI_UPDATE_V11_1_AI_MERGED_DASHBOARD_ASSISTANT_FIX_APPLIED = True
@@ -12482,7 +12254,7 @@ def api_alerts_run_now():
 
 
 
-# ================== PHASE 2 SAFE REALTIME + INTELLIGENCE ==================
+# ---------- PHASE 2 SAFE REALTIME + INTELLIGENCE ----------
 # Socket.IO is disabled by default on Render sync Gunicorn because websocket requests block the only worker.
 # Live dashboard uses safe polling mode. Enable only after deploying with a proper async worker.
 socketio = None
@@ -12699,7 +12471,7 @@ if socketio:
         socketio.on_event("request_live_snapshot", _za_socket_request_live_snapshot, namespace="/")
     except Exception as exc:
         print(f"⚠️ socket event registration skipped: {exc}")
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
 @app.route("/api/realtime-test")
@@ -12994,12 +12766,6 @@ ZA_FINAL_DYNAMIC_TREND_ASSET = r"""
   border-radius:14px!important;background:rgba(15,23,42,.98)!important;color:#e5e7eb!important;border:1px solid rgba(148,163,184,.24)!important;
   box-shadow:0 18px 42px rgba(0,0,0,.36)!important;font-size:11px!important;font-weight:850!important;line-height:1.35!important;z-index:99999!important;
 }
-
-<style>
-input[type="password"]{margin-bottom:40px!important;}
-button[type="submit"]{margin-top:20px!important;}
-</style>
-
 </style>
 <script id="za-final-dynamic-trend-script">
 (function(){
@@ -13437,12 +13203,6 @@ ZA_OPTION_A_PREMIUM_CSS = r"""
 #zaMemberTrendSinglePanel{display:none!important;}
 @media(max-width:900px){.za-premium-trend-grid{grid-template-columns:1fr!important}.za-premium-title{font-size:24px!important}.za-premium-bars{height:115px!important}}
 /* ===== END OPTION A PREMIUM FORCE UI ===== */
-
-<style>
-input[type="password"]{margin-bottom:40px!important;}
-button[type="submit"]{margin-top:20px!important;}
-</style>
-
 </style>
 """
 
@@ -13469,33 +13229,8 @@ def za_option_a_premium_force_css_inject(response):
 # ===== END OPTION A PREMIUM CSS INJECTION =====
 
 
-# ===== GPT55 FINAL LIVE UI FIX =====
-try:
-    DARK_THEME_CSS += r'''
-<style>
-/* FIX TOOLTIP OVER BAR */
-.chartjs-tooltip,
-div[id*="tooltip"],
-.chart-tooltip,
-.analytics-tooltip{
-    z-index:999999 !important;
-    position:relative !important;
-}
-canvas{
-    overflow:visible !important;
-}
+# Duplicate final live tooltip/duration CSS patch removed; consolidated in DARK_THEME_CSS.
 
-
-/* FORCE DURATION TEXT ABOVE */
-.live-fix-duration{
-    position:relative !important;
-    z-index:9999 !important;
-    font-variant-numeric:tabular-nums !important;
-}
-</style>
-'''
-except Exception:
-    pass
 
 
 if __name__ == "__main__":
