@@ -7073,12 +7073,13 @@ button[type="submit"]{margin-top:20px!important;}
             window.__ZA_LIVE_STABILIZED_ENGINE_V1__ = true;
 
             let lastPayload = {{ data|tojson }};
+            let lastServerNowMs = 0;
             let pollBusy = false;
             let pollTimer = null;
 
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
-            function rowId(p){return String(p.id || p.email || p.name || '').toLowerCase().replace(/[^a-z0-9_-]+/g,'_') || 'row_unknown';}
+            function rowId(p){return String((p && p.id) || '').toLowerCase().replace(/[^a-z0-9_-]+/g,'_') || 'row_unknown';}
             function setText(id, value){const el=document.getElementById(id); if(el && el.textContent!==String(value)) el.textContent=String(value);}
             function setDisplay(id, value){const el=document.getElementById(id); if(el && el.style.display!==value) el.style.display=value;}
             function setCell(row, col, html, textValue){
@@ -7136,7 +7137,13 @@ button[type="submit"]{margin-top:20px!important;}
                 const badge=document.getElementById('lfBadgeWrap'); if(badge) badge.classList.toggle('is-live', !!data.has_live);
                 setDisplay('lfMetaRow', data.has_live?'flex':'none');
                 const liveNav=[...document.querySelectorAll('.sidebar a')].find(a=>a.getAttribute('href')&&a.getAttribute('href').includes('/live'));
-                if(liveNav){liveNav.classList.toggle('live-nav-live',!!data.has_live); liveNav.classList.toggle('live-nav-idle',!data.has_live);}
+                if(liveNav){
+                    liveNav.classList.toggle('live-status-live',!!data.has_live);
+                    liveNav.classList.toggle('live-status-idle',!data.has_live);
+                    const icon=liveNav.querySelector('.nav-icon');
+                    if(icon) icon.textContent = data.has_live ? '🟢' : '🔴';
+                    liveNav.title = data.has_live ? 'Live meeting is running' : 'No live meeting running';
+                }
                 setText('lfTopic', data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting');
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
@@ -7163,6 +7170,13 @@ button[type="submit"]{margin-top:20px!important;}
                     const res=await fetch('/api/live-snapshot?t='+Date.now()+'&source='+encodeURIComponent(reason||'live_page'), {cache:'no-store', credentials:'same-origin'});
                     if(!res.ok) throw new Error('live-snapshot failed');
                     const data=await res.json();
+                    const serverNowMs = Date.parse((data && data.server_now) || '') || 0;
+                    if(serverNowMs && lastServerNowMs && serverNowMs < lastServerNowMs){
+                        return;
+                    }
+                    if(serverNowMs){
+                        lastServerNowMs = serverNowMs;
+                    }
                     render(data);
                 }catch(e){
                     const conn=document.getElementById('lfConn');
@@ -7173,9 +7187,18 @@ button[type="submit"]{margin-top:20px!important;}
             window.zaApplyLiveSnapshot=function(data){ render(data); };
             window.zaLiveRefresh=function(){ pollLiveSnapshot('manual'); return true; };
             render(lastPayload);
+            const engineKey='__ZA_LIVE_POLL_TIMER_V1__';
+            if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
             setTimeout(function(){ pollLiveSnapshot('initial'); },350);
             pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },1000);
-            window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); });
+            window[engineKey]=pollTimer;
+            document.addEventListener('visibilitychange', function(){
+                if(document.visibilityState==='visible') pollLiveSnapshot('tab_visible');
+            });
+            window.addEventListener('beforeunload', function(){
+                if(pollTimer) clearInterval(pollTimer);
+                if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
+            });
         })();
         </script>
         """,
