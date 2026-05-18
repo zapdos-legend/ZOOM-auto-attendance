@@ -619,6 +619,14 @@ DEFAULT_SETTINGS = {
 DB_INITIALIZED = False
 LAST_STALE_CHECK_TS = 0
 SETTINGS_CACHE = {}
+LIVE_SNAPSHOT_MEMORY = {"payload": None, "updated_at": 0, "meeting_uuid": None}
+
+try:
+    LIVE_MEETING_STALE_SECONDS = int(os.getenv("LIVE_MEETING_STALE_SECONDS", "21600") or "21600")
+except Exception:
+    LIVE_MEETING_STALE_SECONDS = 21600
+if LIVE_MEETING_STALE_SECONDS < 600:
+    LIVE_MEETING_STALE_SECONDS = 600
 
 # Lightweight in-process cache for heavy dashboards. Safe on Render: short TTL, no behavior change.
 PERF_CACHE = {}
@@ -1411,7 +1419,8 @@ def finalize_stale_live_meetings():
         finalize_seconds = cast_setting_value(DEFAULT_SETTINGS.get("meeting_finalize_seconds", "30"), int)
         if finalize_seconds <= 0:
             finalize_seconds = 30
-    threshold_time = now_local() - timedelta(seconds=finalize_seconds)
+    now_dt = now_local()
+    threshold_time = now_dt - timedelta(seconds=finalize_seconds)
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -1428,20 +1437,41 @@ def finalize_stale_live_meetings():
                     (meeting_uuid,),
                 )
                 rows = cur.fetchall()
-                if not rows:
-                    continue
-
-                anybody_live = any(r.get("current_join") is not None for r in rows)
-                if anybody_live:
-                    continue
-
                 last_activity = get_meeting_rows_last_activity(rows)
+                started_at = parse_dt(meeting.get("start_time")) or parse_dt(meeting.get("created_at"))
+                stale_by_age = is_meeting_too_old_for_live(meeting, now_dt)
 
-                if last_activity and last_activity <= threshold_time:
+                if rows:
+                    anybody_live = any(r.get("current_join") is not None for r in rows)
+                    if anybody_live and not stale_by_age:
+                        continue
+
+                    finalize_at = last_activity or started_at or now_dt
+                    if stale_by_age or (finalize_at and finalize_at <= threshold_time):
+                        try:
+                            finalize_meeting(meeting_uuid, finalize_at)
+                        except Exception as e:
+                            print(f"⚠️ finalize_meeting skipped for {meeting_uuid}: {e}")
+                    continue
+
+                # meeting.started can arrive before participants. Keep a short grace window only;
+                # otherwise a no-participant live row can stay active forever and resurrect later.
+                if stale_by_age or (started_at and started_at <= threshold_time):
                     try:
-                        finalize_meeting(meeting_uuid, last_activity)
+                        cur.execute(
+                            """
+                            UPDATE meetings
+                            SET end_time=COALESCE(end_time, %s),
+                                status='ended',
+                                finalized_at=COALESCE(finalized_at, NOW())
+                            WHERE meeting_uuid=%s AND status='live'
+                            """,
+                            (started_at or now_dt, meeting_uuid),
+                        )
+                        clear_live_runtime_state(meeting_uuid)
                     except Exception as e:
-                        print(f"⚠️ finalize_meeting skipped for {meeting_uuid}: {e}")
+                        print(f"⚠️ stale empty meeting cleanup skipped for {meeting_uuid}: {e}")
+        conn.commit()
 
 
 def init_db():
@@ -1725,52 +1755,94 @@ def find_member(name: str, email: str | None = None):
     return None
 
 
-def participant_key(name, email=None):
+def participant_key(name, email=None, participant_id=None):
     if email:
         return f"email::{email.strip().lower()}"
+    if participant_id:
+        return f"pid::{str(participant_id).strip().lower()}"
     return f"name::{(name or '').strip().lower()}"
 
 
-def ensure_meeting(payload_object):
-    """Create/resolve a Zoom meeting safely.
+def ensure_meeting(payload_object, event_time=None, event_name=None):
+    """Create/resolve the canonical Zoom live meeting session.
 
-    Important fix for recurring Zoom meetings:
-    Zoom can reuse the same numeric meeting ID, but each actual session gets a new UUID.
-    The old code reused an older live row by meeting_id even when a fresh UUID arrived.
-    That caused the Live page to read the wrong meeting/session. This keeps UUID as the
-    primary session key and only falls back to meeting_id when Zoom did not send a UUID.
+    UUID remains the primary Zoom session key. If a late participant_joined retry points
+    at an ended row, it is ignored unless the event timestamp is newer than the row's
+    finalized/end timestamp, which indicates Zoom is reporting a newer active session.
     """
+    payload_object = payload_object or {}
     meeting_uuid = str(payload_object.get("uuid") or "").strip()
     meeting_id = str(payload_object.get("id") or payload_object.get("meeting_id") or "").strip()
     topic = (payload_object.get("topic") or payload_object.get("meeting_topic") or "Zoom Meeting").strip()
     host_name = (payload_object.get("host_name") or payload_object.get("host_email") or "").strip()
-    start_time = parse_dt(payload_object.get("start_time")) or now_local()
+    resolved_event_time = parse_dt(event_time) or parse_dt(payload_object.get("start_time")) or now_local()
+    start_time = parse_dt(payload_object.get("start_time")) or resolved_event_time
+    event_name = (event_name or "").strip()
 
     if not meeting_uuid and not meeting_id:
         return None
+
+    def event_is_newer_than_ended(row):
+        ended_marker = parse_dt(row.get("finalized_at")) or parse_dt(row.get("end_time")) or parse_dt(row.get("start_time"))
+        if not ended_marker:
+            return True
+        return resolved_event_time > ended_marker
+
+    def event_is_safe_to_reopen(row):
+        if event_name not in ("meeting.started", "meeting.participant_joined"):
+            return False
+        if is_meeting_too_old_for_live({"start_time": resolved_event_time}):
+            return False
+        return event_is_newer_than_ended(row)
 
     with db() as conn:
         with conn.cursor() as cur:
             # 1) UUID is the real Zoom session key. Reuse/update only the exact UUID row.
             if meeting_uuid:
-                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
                 row = cur.fetchone()
                 if row:
+                    current_status = str(row.get("status") or "").strip().lower()
+                    if current_status == "ended" and not event_is_safe_to_reopen(row):
+                        print(
+                            "⚠️ Refusing to attach live event to ended meeting:",
+                            {"meeting_uuid": meeting_uuid, "event": event_name, "event_time": str(resolved_event_time)},
+                        )
+                        return None
+
+                    should_reopen = current_status == "ended" and event_is_safe_to_reopen(row)
                     cur.execute(
                         """
                         UPDATE meetings
                         SET meeting_id=COALESCE(NULLIF(%s, ''), meeting_id),
                             topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
                             host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
-                            start_time=COALESCE(%s, start_time),
-                            status=CASE WHEN status IS NULL OR status='' THEN 'live' ELSE status END
+                            start_time=CASE WHEN %s THEN %s ELSE COALESCE(start_time, %s) END,
+                            end_time=CASE WHEN %s THEN NULL ELSE end_time END,
+                            finalized_at=CASE WHEN %s THEN NULL ELSE finalized_at END,
+                            status=CASE WHEN %s THEN 'live' WHEN status IS NULL OR status='' THEN 'live' ELSE status END
                         WHERE id=%s
                         RETURNING *
                         """,
-                        (meeting_id, topic, topic, host_name, host_name, start_time, row["id"]),
+                        (
+                            meeting_id,
+                            topic,
+                            topic,
+                            host_name,
+                            host_name,
+                            should_reopen,
+                            start_time,
+                            start_time,
+                            should_reopen,
+                            should_reopen,
+                            should_reopen,
+                            row["id"],
+                        ),
                     )
                     row = cur.fetchone()
                     conn.commit()
+                    if should_reopen:
+                        clear_live_runtime_state(meeting_uuid)
                     return row
 
                 # Do NOT reuse an old recurring meeting_id row when UUID is new.
@@ -1784,11 +1856,12 @@ def ensure_meeting(payload_object):
                 )
                 row = cur.fetchone()
                 conn.commit()
+                clear_live_runtime_state(meeting_uuid)
                 return row
 
-            # 2) Fallback only for rare payloads with no UUID.
+            # 2) Fallback only for rare payloads with no UUID. Never use ended rows.
             cur.execute(
-                "SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY id DESC LIMIT 1",
+                "SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY start_time DESC NULLS LAST, id DESC LIMIT 1",
                 (meeting_id,),
             )
             row = cur.fetchone()
@@ -1798,7 +1871,7 @@ def ensure_meeting(payload_object):
                     UPDATE meetings
                     SET topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
                         host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
-                        start_time=COALESCE(%s, start_time)
+                        start_time=COALESCE(start_time, %s)
                     WHERE id=%s
                     RETURNING *
                     """,
@@ -1818,6 +1891,7 @@ def ensure_meeting(payload_object):
             row = cur.fetchone()
         conn.commit()
 
+    clear_live_runtime_state(row.get("meeting_uuid") if row else None)
     return row
 
 def get_row_visible_span_seconds(row, end_time=None):
@@ -1850,11 +1924,49 @@ def get_row_effective_total_seconds(row, end_time=None):
 
 
 def calculate_live_duration(row, end_time=None):
-    """Backend-only live duration truth for /live and live API payloads."""
+    """Backend-only live duration truth for /live and live API payloads.
+
+    The only live formula is:
+        completed total_seconds + (now - current_join)
+    for rows that still have current_join. The frontend only renders this value.
+    """
     try:
-        return int(get_row_effective_total_seconds(row or {}, end_time))
+        row = row or {}
+        completed_duration = max(cast_setting_value(row.get("total_seconds") or 0, int), 0)
+        current_join_dt = parse_dt(row.get("current_join"))
+        end_dt = parse_dt(end_time) or now_local()
+        if current_join_dt:
+            if current_join_dt > end_dt:
+                return completed_duration
+            return completed_duration + max(int((end_dt - current_join_dt).total_seconds()), 0)
+        return completed_duration
     except Exception:
         return 0
+
+
+def is_meeting_too_old_for_live(meeting, now_dt=None):
+    """Reject resurrected live meetings that are far beyond any real Zoom session."""
+    now_dt = parse_dt(now_dt) or now_local()
+    started_dt = parse_dt((meeting or {}).get("start_time")) or parse_dt((meeting or {}).get("created_at"))
+    if not started_dt:
+        return False
+    return (now_dt - started_dt).total_seconds() > LIVE_MEETING_STALE_SECONDS
+
+
+def clear_live_runtime_state(meeting_uuid=None):
+    """Clear all in-process live caches so finalized meetings cannot reappear."""
+    LIVE_SNAPSHOT_MEMORY["payload"] = None
+    LIVE_SNAPSHOT_MEMORY["updated_at"] = 0
+    LIVE_SNAPSHOT_MEMORY["meeting_uuid"] = None
+    try:
+        globals().get("_ZA_LIVE_SUMMARY_CACHE", {}).update({"ts": 0, "payload": None})
+    except Exception:
+        pass
+    for prefix in ("analytics", "graph_analytics", "attendance_register"):
+        try:
+            _cache_clear_prefix(prefix)
+        except Exception:
+            pass
 
 
 def get_meeting_rows_last_activity(attendance_rows):
@@ -1866,12 +1978,71 @@ def get_meeting_rows_last_activity(attendance_rows):
     return last_activity
 
 
-def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type, is_host_override=False):
+def merge_duplicate_live_rows(rows, end_time=None):
+    """Collapse legacy duplicate attendance rows for one meeting participant in memory."""
+    rows = list(rows or [])
+    if not rows:
+        return None
+    canonical = dict(rows[0])
+    for row in rows[1:]:
+        canonical["total_seconds"] = (
+            cast_setting_value(canonical.get("total_seconds") or 0, int)
+            + cast_setting_value(row.get("total_seconds") or 0, int)
+        )
+        c_first = parse_dt(canonical.get("first_join"))
+        r_first = parse_dt(row.get("first_join"))
+        if r_first and (not c_first or r_first < c_first):
+            canonical["first_join"] = row.get("first_join")
+        c_leave = parse_dt(canonical.get("last_leave"))
+        r_leave = parse_dt(row.get("last_leave"))
+        if r_leave and (not c_leave or r_leave > c_leave):
+            canonical["last_leave"] = row.get("last_leave")
+        c_join = parse_dt(canonical.get("current_join"))
+        r_join = parse_dt(row.get("current_join"))
+        if r_join and (not c_join or r_join < c_join):
+            canonical["current_join"] = row.get("current_join")
+        canonical["rejoin_count"] = cast_setting_value(canonical.get("rejoin_count") or 0, int) + cast_setting_value(row.get("rejoin_count") or 0, int)
+        canonical["is_member"] = bool(canonical.get("is_member") or row.get("is_member"))
+        canonical["is_host"] = bool(canonical.get("is_host") or row.get("is_host"))
+        if not canonical.get("member_id") and row.get("member_id"):
+            canonical["member_id"] = row.get("member_id")
+        if not canonical.get("participant_email") and row.get("participant_email"):
+            canonical["participant_email"] = row.get("participant_email")
+        if not canonical.get("participant_name") and row.get("participant_name"):
+            canonical["participant_name"] = row.get("participant_name")
+    canonical["duration_seconds"] = calculate_live_duration(canonical, end_time)
+    return canonical
+
+
+def close_duplicate_participant_sessions(cur, meeting_uuid, participant_key_value, keep_id, event_time):
+    """Close duplicate active DB rows without deleting legacy records."""
+    if not participant_key_value or not keep_id:
+        return
+    try:
+        cur.execute(
+            """
+            UPDATE attendance
+            SET current_join=NULL,
+                last_leave=COALESCE(last_leave, %s),
+                status='LEFT',
+                updated_at=NOW()
+            WHERE meeting_uuid=%s
+              AND participant_key=%s
+              AND id<>%s
+              AND current_join IS NOT NULL
+            """,
+            (event_time, meeting_uuid, participant_key_value, keep_id),
+        )
+    except Exception as exc:
+        print(f"⚠️ duplicate participant session cleanup skipped: {exc}")
+
+
+def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type, is_host_override=False, participant_id=None):
     name_for_host = (participant_name or "").strip().lower()
     email_for_host = (participant_email or "").strip().lower()
     is_host = bool(is_host_override) or bool(HOST_NAME_HINT and (HOST_NAME_HINT in name_for_host or HOST_NAME_HINT in email_for_host))
     member = find_member(participant_name, participant_email)
-    key = participant_key(participant_name, participant_email)
+    key = participant_key(participant_name, participant_email, participant_id)
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -1892,10 +2063,17 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                     return
 
             cur.execute(
-                "SELECT * FROM attendance WHERE meeting_uuid=%s AND participant_key=%s",
+                """
+                SELECT * FROM attendance
+                WHERE meeting_uuid=%s AND participant_key=%s
+                ORDER BY current_join DESC NULLS LAST, updated_at DESC NULLS LAST, id DESC
+                """,
                 (meeting_uuid, key),
             )
-            row = cur.fetchone()
+            duplicate_rows = cur.fetchall()
+            row = duplicate_rows[0] if duplicate_rows else None
+            if row:
+                close_duplicate_participant_sessions(cur, meeting_uuid, key, row["id"], event_time)
 
             if not row:
                 first_join = event_time if event_type == "join" else None
@@ -2257,6 +2435,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
             )
             updated = cur.fetchone()
         conn.commit()
+    clear_live_runtime_state(meeting_uuid)
     if run_post_tasks:
         try:
             evaluate_smart_alerts_for_meeting(meeting_uuid)
@@ -2315,15 +2494,13 @@ def get_live_status_for_row(row, meeting_start):
 
 
 def read_live_snapshot():
-    """Return the best current live meeting snapshot.
+    """Return the current live meeting snapshot from backend truth only.
 
-    Production fix:
-    - Do not depend on the browser JS to discover live data.
-    - Prefer the newest live meeting that has active participant rows.
-    - Fallback to the newest live meeting even before participants join.
-    - Also fallback to a very recent meeting row because Render/Zoom retries can leave
-      status inconsistencies while the meeting is still visible on Home.
+    Only meetings explicitly marked live and still within the live freshness window are
+    eligible. Ended/historical meetings and stale live rows are never returned.
     """
+    maybe_finalize_stale_live_meetings()
+    now_dt = now_local()
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -2334,34 +2511,18 @@ def read_live_snapshot():
                        COUNT(a.id) AS total_rows
                 FROM meetings m
                 LEFT JOIN attendance a ON a.meeting_uuid = m.meeting_uuid
-                WHERE COALESCE(m.status, 'live') = 'live'
+                WHERE m.status = 'live'
                   AND COALESCE(m.meeting_uuid, '') <> ''
+                  AND COALESCE(m.start_time, m.created_at, NOW()) >= NOW() - (%s * INTERVAL '1 second')
                 GROUP BY m.id
-                ORDER BY active_rows DESC, total_rows DESC, activity_sort DESC, m.id DESC
+                ORDER BY active_rows DESC, activity_sort DESC, m.id DESC
                 LIMIT 1
-                """
+                """,
+                (LIVE_MEETING_STALE_SECONDS,),
             )
             meeting = cur.fetchone()
 
-            if not meeting:
-                cur.execute(
-                    """
-                    SELECT m.*,
-                           COALESCE(MAX(a.updated_at), m.start_time, m.created_at) AS activity_sort,
-                           COUNT(a.id) FILTER (WHERE a.current_join IS NOT NULL) AS active_rows,
-                           COUNT(a.id) AS total_rows
-                    FROM meetings m
-                    LEFT JOIN attendance a ON a.meeting_uuid = m.meeting_uuid
-                    WHERE COALESCE(m.meeting_uuid, '') <> ''
-                      AND COALESCE(m.start_time, m.created_at) >= NOW() - INTERVAL '12 hours'
-                    GROUP BY m.id
-                    ORDER BY active_rows DESC, total_rows DESC, activity_sort DESC, m.id DESC
-                    LIMIT 1
-                    """
-                )
-                meeting = cur.fetchone()
-
-            if not meeting:
+            if not meeting or is_meeting_too_old_for_live(meeting, now_dt):
                 return None
 
             meeting_uuid = meeting.get("meeting_uuid")
@@ -2374,7 +2535,8 @@ def read_live_snapshot():
                     ORDER BY current_join DESC NULLS LAST,
                              total_seconds DESC,
                              first_join ASC NULLS LAST,
-                             participant_name ASC
+                             participant_name ASC,
+                             id DESC
                     """,
                     (meeting_uuid, meeting.get("id")),
                 )
@@ -2386,22 +2548,28 @@ def read_live_snapshot():
                     ORDER BY current_join DESC NULLS LAST,
                              total_seconds DESC,
                              first_join ASC NULLS LAST,
-                             participant_name ASC
+                             participant_name ASC,
+                             id DESC
                     """,
                     (meeting_uuid,),
                 )
-            participants = cur.fetchall()
+            raw_participants = cur.fetchall()
 
-            # Do not show stale old live rows as an active live meeting.
-            # Keep a small grace period so meeting.started can appear before participant_joined.
+            # One rendered/backend row per meeting participant. Legacy duplicates remain in
+            # the database for audit compatibility but never become duplicate live rows.
+            grouped = {}
+            for row in raw_participants:
+                key = row.get("participant_key") or participant_key(row.get("participant_name"), row.get("participant_email"), row.get("participant_id"))
+                grouped.setdefault(key, []).append(row)
+            participants = [merge_duplicate_live_rows(rows, now_dt) for rows in grouped.values()]
+            participants = [p for p in participants if p]
+
             active_now_rows = [r for r in participants if r.get("current_join") is not None]
-            now_dt = now_local()
             activity_dt = parse_dt(meeting.get("activity_sort")) or parse_dt(meeting.get("start_time")) or parse_dt(meeting.get("created_at"))
             started_dt = parse_dt(meeting.get("start_time")) or parse_dt(meeting.get("created_at"))
             if not active_now_rows:
                 age_seconds = (now_dt - (activity_dt or now_dt)).total_seconds()
                 start_age_seconds = (now_dt - (started_dt or now_dt)).total_seconds()
-                # If there are no people inside and the row is older than 5 minutes, this is not a live meeting.
                 if age_seconds > 300 and start_age_seconds > 300:
                     return None
 
@@ -5968,12 +6136,14 @@ def quick_live_nav_active() -> bool:
                            COUNT(a.id) FILTER (WHERE a.current_join IS NOT NULL) AS active_rows
                     FROM meetings m
                     LEFT JOIN attendance a ON a.meeting_uuid = m.meeting_uuid
-                    WHERE COALESCE(m.status, 'live')='live'
+                    WHERE m.status='live'
                       AND COALESCE(m.meeting_uuid, '') <> ''
+                      AND COALESCE(m.start_time, m.created_at, NOW()) >= NOW() - (%s * INTERVAL '1 second')
                     GROUP BY m.id
                     ORDER BY active_rows DESC, COALESCE(m.start_time, m.created_at) DESC, m.id DESC
                     LIMIT 1
-                    """
+                    """,
+                    (LIVE_MEETING_STALE_SECONDS,),
                 )
                 row = cur.fetchone()
                 if not row:
@@ -6600,16 +6770,18 @@ def _live_seconds_since(value):
 
 def build_live_snapshot_payload(include_feed=True):
     """Lightweight live dashboard payload for AJAX polling. Does not change attendance logic."""
-    # Do not auto-finalize from the polling endpoint. The Live page must display
-    # a meeting immediately after Zoom sends meeting.started / participant_joined.
+    # Polling reads backend truth only. Stale live rows are finalized/hidden before
+    # this payload is built so ended meetings cannot resurrect in the browser.
     info = read_live_snapshot()
     server_now = now_local()
     if not info:
-        return {
+        clear_live_runtime_state()
+        payload = {
             "ok": True,
             "has_live": False,
             "server_now": server_now.isoformat(),
             "meeting": None,
+            "live": {"active": False, "sidebar_class": "live-status-idle", "sidebar_icon": "🔴"},
             "summary": {
                 "active_now": 0,
                 "known_count": 0,
@@ -6625,6 +6797,7 @@ def build_live_snapshot_payload(include_feed=True):
             "not_joined": [],
             "feed": [],
         }
+        return payload
 
     meeting = info.get("meeting") or {}
     participants = info.get("participants") or []
@@ -6660,7 +6833,7 @@ def build_live_snapshot_payload(include_feed=True):
         else:
             unknown_total += 1
 
-        row_id = str(p.get("id") or p.get("participant_key") or p.get("participant_name") or "")
+        row_id = str(p.get("participant_key") or p.get("id") or p.get("participant_name") or "")
         participant_payload.append({
             "id": row_id,
             "name": p.get("participant_name") or "-",
@@ -6705,10 +6878,11 @@ def build_live_snapshot_payload(include_feed=True):
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
-    return {
+    payload = {
         "ok": True,
         "has_live": True,
         "server_now": server_now.isoformat(),
+        "live": {"active": True, "sidebar_class": "live-status-live", "sidebar_icon": "🟢"},
         "meeting": {
             "uuid": meeting.get("meeting_uuid") or "",
             "id": meeting.get("meeting_id") or "-",
@@ -6740,6 +6914,10 @@ def build_live_snapshot_payload(include_feed=True):
         ],
         "feed": feed_items,
     }
+    LIVE_SNAPSHOT_MEMORY["payload"] = payload
+    LIVE_SNAPSHOT_MEMORY["updated_at"] = time.time()
+    LIVE_SNAPSHOT_MEMORY["meeting_uuid"] = meeting.get("meeting_uuid") or None
+    return payload
 
 
 @app.route("/api/live-snapshot")
@@ -6772,6 +6950,7 @@ def api_live_summary():
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
         "server_now": payload.get("server_now"),
+        "live": payload.get("live"),
         "meeting": payload.get("meeting"),
         "summary": payload.get("summary"),
         "participants": payload.get("participants", []),
@@ -6848,10 +7027,6 @@ def live():
 }
 
 
-<style>
-input[type="password"]{margin-bottom:40px!important;}
-button[type="submit"]{margin-top:20px!important;}
-
             /* LIVE FINAL FIX: dark readable update pill + compact table */
             .live-fix-conn,
             .live-fix-conn.ok,
@@ -6877,8 +7052,6 @@ button[type="submit"]{margin-top:20px!important;}
                 box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
                 z-index:999999!important;
             }
-</style>
-
 </style>
 
         <div class="live-fix-hero">
@@ -6915,14 +7088,14 @@ button[type="submit"]{margin-top:20px!important;}
                         <thead><tr><th>Name</th><th>Category</th><th>Join</th><th>Leave</th><th>Duration</th><th>Rejoins</th><th>Status</th></tr></thead>
                         <tbody id="lfRows">
                             {% for p in data.participants %}
-                            <tr class="{{ '' if p.is_active else 'live-fix-left' }}">
-                                <td><b>{{ p.name }}</b>{% if p.is_host %} <span class="badge info">HOST</span>{% endif %}</td>
-                                <td><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
-                                <td>{{ p.first_join }}</td>
-                                <td>{{ p.last_leave }}</td>
-                                <td><span class="live-fix-duration">{{ p.duration_display }}</span></td>
-                                <td>{{ p.rejoins }}</td>
-                                <td><span class="badge {{ 'ok' if p.status == 'LIVE' else 'gray' }}">{{ p.status }}</span></td>
+                            <tr class="{{ '' if p.is_active else 'live-fix-left' }}" data-row-id="{{ p.id }}" data-duration-seconds="{{ p.duration_seconds }}">
+                                <td data-col="name" data-val="{{ p.name }}|{{ 'host' if p.is_host else '' }}"><b>{{ p.name }}</b>{% if p.is_host %} <span class="badge info">HOST</span>{% endif %}</td>
+                                <td data-col="type" data-val="{{ p.type }}"><span class="badge {{ 'info' if p.type == 'HOST' else ('ok' if p.type == 'MEMBER' else 'warn') }}">{{ p.type }}</span></td>
+                                <td data-col="first_join" data-val="{{ p.first_join }}">{{ p.first_join }}</td>
+                                <td data-col="last_leave" data-val="{{ p.last_leave }}">{{ p.last_leave }}</td>
+                                <td data-col="duration" data-val="{{ p.duration_display }}"><span class="live-fix-duration">{{ p.duration_display }}</span></td>
+                                <td data-col="rejoins" data-val="{{ p.rejoins }}">{{ p.rejoins }}</td>
+                                <td data-col="status" data-val="{{ p.status }}"><span class="badge {{ 'ok' if p.status == 'LIVE' else 'gray' }}">{{ p.status }}</span></td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -6946,7 +7119,7 @@ button[type="submit"]{margin-top:20px!important;}
 
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
-            function rowId(p){return String(p.participant_id || p.user_id || p.email || p.name || '').toLowerCase().replace(/[^a-z0-9_-]+/g,'_') || ('row_'+Math.random().toString(36).slice(2));}
+            function rowId(p){return String(p.id || p.email || p.name || '').toLowerCase().replace(/[^a-z0-9_-]+/g,'_') || 'row_unknown';}
             function setText(id, value){const el=document.getElementById(id); if(el && el.textContent!==String(value)) el.textContent=String(value);}
             function setDisplay(id, value){const el=document.getElementById(id); if(el && el.style.display!==value) el.style.display=value;}
             function setCell(row, col, html, textValue){
@@ -7000,14 +7173,16 @@ button[type="submit"]{margin-top:20px!important;}
             function render(data){
                 if(!data) return; lastPayload=data;
                 const summary=data.summary||{};
-                setText('lfBadge', data.has_live?'LIVE MEETING RUNNING':'NO LIVE MEETING');
-                const badge=document.getElementById('lfBadgeWrap'); if(badge) badge.classList.toggle('is-live', !!data.has_live);
-                setDisplay('lfMetaRow', data.has_live?'flex':'none');
+                const liveMeta=data.live||{active:!!data.has_live,sidebar_class:(data.has_live?'live-status-live':'live-status-idle'),sidebar_icon:(data.has_live?'🟢':'🔴')};
+                const isLive=!!liveMeta.active;
+                setText('lfBadge', isLive?'LIVE MEETING RUNNING':'NO LIVE MEETING');
+                const badge=document.getElementById('lfBadgeWrap'); if(badge) badge.classList.toggle('is-live', isLive);
+                setDisplay('lfMetaRow', isLive?'flex':'none');
                 const liveNav=[...document.querySelectorAll('.sidebar a')].find(a=>a.getAttribute('href')&&a.getAttribute('href').includes('/live'));
-                if(liveNav){liveNav.classList.toggle('live-nav-live',!!data.has_live); liveNav.classList.toggle('live-nav-idle',!data.has_live);}
-                setText('lfTopic', data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting');
-                setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
-                setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
+                if(liveNav){liveNav.classList.toggle('live-nav-live',isLive); liveNav.classList.toggle('live-nav-idle',!isLive); liveNav.classList.toggle(liveMeta.sidebar_class,isLive); const icon=liveNav.querySelector('.nav-icon'); if(icon) icon.textContent=liveMeta.sidebar_icon||'🔴';}
+                setText('lfTopic', isLive?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting');
+                setText('lfMeetingId','Meeting ID '+(isLive?(data.meeting.id||'-'):'-'));
+                setText('lfStarted','Started '+(isLive?(data.meeting.start_time||'-'):'-'));
                 setText('lfDuration','Duration '+(summary.meeting_duration_display||'00:00:00'));
                 animateLiveNumber('lfActive',summary.active_now||0);
                 animateLiveNumber('lfKnown',summary.known_count||0);
@@ -7042,7 +7217,7 @@ button[type="submit"]{margin-top:20px!important;}
             window.zaLiveRefresh=function(){ pollLiveSnapshot('manual'); return true; };
             render(lastPayload);
             setTimeout(function(){ pollLiveSnapshot('initial'); },350);
-            pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },2000);
+            pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },1000);
             window.addEventListener('beforeunload', function(){ if(pollTimer) clearInterval(pollTimer); });
         })();
         </script>
@@ -10964,20 +11139,17 @@ def zoom_webhook():
         print("📌 PARTICIPANT:", participant)
 
         if event == "meeting.started":
-            meeting = ensure_meeting(obj)
+            started_event_time = parse_dt(obj.get("start_time")) or (
+                datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME))
+                if isinstance(payload.get("event_ts"), (int, float))
+                else now_local()
+            )
+            meeting = ensure_meeting(obj, event_time=started_event_time, event_name=event)
             print("✅ MEETING STARTED RESOLVED:", meeting)
             print("📝 WEBHOOK LOG zoom_started:", meeting["meeting_uuid"] if meeting else "unknown")
             return jsonify({"ok": True})
 
         if "participant_joined" in event or "participant_left" in event:
-            meeting = ensure_meeting(obj)
-            print("✅ PARTICIPANT EVENT MEETING:", meeting)
-
-            if not meeting:
-                print("❌ meeting not resolved")
-                return jsonify({"ok": False, "reason": "meeting not resolved"}), 200
-
-            meeting_uuid = meeting["meeting_uuid"]
             event_type = "join" if "participant_joined" in event else "leave"
 
             event_raw = (
@@ -10992,6 +11164,18 @@ def zoom_webhook():
                 )
             )
             event_time = parse_dt(event_raw) or now_local()
+
+            meeting = ensure_meeting(obj, event_time=event_time, event_name=event)
+            print("✅ PARTICIPANT EVENT MEETING:", meeting)
+
+            if not meeting:
+                print("⚠️ participant event ignored because no active canonical meeting was resolved")
+                return jsonify({"ok": True, "ignored": "no active meeting"}), 200
+
+            meeting_uuid = meeting["meeting_uuid"]
+            if str(meeting.get("status") or "").lower() == "ended":
+                print("⚠️ participant event ignored because resolved meeting is ended")
+                return jsonify({"ok": True, "ignored": "ended meeting"}), 200
 
             participant_name = (
                 participant.get("user_name")
@@ -11024,6 +11208,7 @@ def zoom_webhook():
                 str(participant.get("participant_user_id") or "").strip(),
                 str(participant.get("user_id") or "").strip(),
             }
+            participant_identity = next((pid for pid in participant_ids if pid), None)
             is_host_override = bool(zoom_host_id and zoom_host_id in participant_ids) or (
                 bool(obj.get("host_email")) and str(obj.get("host_email")).strip().lower() == str(participant_email or "").strip().lower()
             )
@@ -11035,19 +11220,30 @@ def zoom_webhook():
                 event_time,
                 event_type,
                 is_host_override=is_host_override,
+                participant_id=participant_identity,
             )
             print("📝 WEBHOOK LOG zoom_participant_event:", f"{event} :: {meeting_uuid} :: {participant_name}")
             return jsonify({"ok": True})
 
         if event in ("meeting.ended", "meeting.end"):
-            meeting = ensure_meeting(obj)
+            meeting_uuid = str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip()
+            meeting_id = str(obj.get("id") or obj.get("meeting_id") or "").strip()
+            with db() as conn:
+                with conn.cursor() as cur:
+                    if meeting_uuid:
+                        cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                    else:
+                        cur.execute("SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY id DESC LIMIT 1", (meeting_id,))
+                    meeting = cur.fetchone()
             print("✅ MEETING ENDED RESOLVED:", meeting)
 
             if not meeting:
-                print("❌ meeting not resolved")
-                return jsonify({"ok": False, "reason": "meeting not resolved"}), 200
+                clear_live_runtime_state(meeting_uuid or None)
+                print("ℹ️ meeting.end received for unknown/non-live meeting; live state cleared")
+                return jsonify({"ok": True, "finalized": False, "reason": "meeting not found"}), 200
 
             finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local(), run_post_tasks=False)
+            clear_live_runtime_state(meeting["meeting_uuid"])
             print("✅ FINALIZED:", finalized)
             print("📝 WEBHOOK LOG zoom_meeting_ended:", meeting["meeting_uuid"])
             return jsonify({"ok": True, "finalized": bool(finalized)})
