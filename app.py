@@ -739,7 +739,6 @@ td .btn:last-child, td button:last-child, td form:last-child{ margin-right: 0 !i
 td form{ display:inline-block !important; vertical-align:middle !important; }
 .status-toggle-btn{ margin-left: 8px !important; margin-right: 8px !important; }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
 
@@ -817,7 +816,6 @@ canvas + div,
     position: relative !important;
 }
 
-</style>
 
 
 .za-last-meeting-card{
@@ -883,16 +881,6 @@ load_dotenv()
 
 
 
-# ===== GPT55 FINAL LIVE FIX ENGINE =====
-LAST_MEETING_META = {
-    "ended_at": None
-}
-
-def za_store_last_meeting_end():
-    try:
-        LAST_MEETING_META["ended_at"] = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
-    except Exception:
-        pass
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-secret")
@@ -1307,10 +1295,8 @@ form input[name="password"]{display:block!important;margin-bottom:34px!important
 form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
 button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 """
@@ -1325,10 +1311,8 @@ form input[name="password"]{display:block!important;margin-bottom:34px!important
 form input[name="password"] + button, form button[type="submit"]{display:block!important;margin-top:18px!important;}
 button,input[type=submit],.btn{border-radius:16px!important;background:linear-gradient(90deg,#ef1717,#ff6a16)!important;color:#fff!important;font-weight:950!important;}
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 """
@@ -5771,10 +5755,8 @@ button.status-toggle-btn:focus-visible{ outline:3px solid rgba(168,85,247,.45) !
 /* ===== END V9 PATCH ===== */
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -5799,10 +5781,8 @@ button[type="submit"]{margin-top:20px!important;}
     color: #111;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -5813,10 +5793,8 @@ button:active {
     transition: transform 0.1s;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -6220,10 +6198,8 @@ button[type="submit"]{margin-top:20px!important;}
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style><div class="ai-floating-bot"><div class="ai-bot-panel" id="aiBotPanel"><b>🧠 AI Assistant</b><div class="ai-bot-actions"><button onclick="aiBotAsk('Who is at risk?')">Risk</button><button onclick="aiBotAsk('List members below 50%')">Below 50%</button><button onclick="aiBotAsk('Summarize last meeting')">Summary</button><button onclick="location.href='/ai-intelligence'">Dashboard</button></div><textarea id="aiBotInput" placeholder="Ask attendance question..."></textarea><button onclick="aiBotAsk(document.getElementById('aiBotInput').value)">Ask</button><div class="ai-bot-answer" id="aiBotAnswer">Ask me anything related to attendance, members, risk, late trend, reminders, or reports.</div></div><div class="ai-bot-orb" onclick="document.getElementById('aiBotPanel').classList.toggle('open')">🤖</div></div><script>function aiBotAsk(q){if(!q)return;const a=document.getElementById('aiBotAnswer');a.innerText='Thinking...';fetch('/api/ai-assistant-level3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})}).then(r=>r.json()).then(d=>{a.innerText=d.response||'No answer';}).catch(()=>{a.innerText='AI assistant temporarily unavailable.';});}</script>
 {% endif %}
@@ -7128,7 +7104,6 @@ def live():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
 
@@ -7157,7 +7132,6 @@ button[type="submit"]{margin-top:20px!important;}
                 box-shadow:0 22px 60px rgba(0,0,0,.62)!important;
                 z-index:999999!important;
             }
-</style>
 
 </style>
 
@@ -8812,10 +8786,8 @@ def member_profile(member_id):
 /* ===== END COHORT COMPARISON UI V1 ===== */
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
         <div class="member-profile-layout-fix"><div class="member-profile-hero">
@@ -9298,10 +9270,8 @@ def analytics():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -9357,10 +9327,8 @@ button[type="submit"]{margin-top:20px!important;}
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
         <div class="analytics-tab-shell" id="analyticsTabsV3">
@@ -10374,10 +10342,8 @@ def attendance_register():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -10463,10 +10429,8 @@ button[type="submit"]{margin-top:20px!important;}
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
         <div class="reg-dashboard-shell">
@@ -10648,10 +10612,8 @@ def attendance_register_export_excel():
     color: #111;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -10662,10 +10624,8 @@ button:active {
     transition: transform 0.1s;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -11510,10 +11470,8 @@ def push_setup():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
     
@@ -11538,10 +11496,8 @@ button[type="submit"]{margin-top:20px!important;}
     color: #111;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -11552,10 +11508,8 @@ button:active {
     transition: transform 0.1s;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 
@@ -11753,10 +11707,8 @@ def notification_control():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
         <div class="hero"><div class="hero-grid"><div><div class="badge">Notification Control Center</div><h1 class="hero-title">Smart alert delivery controls</h1><div class="hero-copy">Enable or disable Email/Push, select alert types, customize messages, test delivery, and review alert logs.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Email</div><div class="big">{{ 'ON' if settings.email_enabled else 'OFF' }}</div></div><div class="hero-chip"><div class="small">Push</div><div class="big">{{ 'ON' if settings.push_enabled else 'OFF' }}</div></div></div></div></div>
@@ -12088,10 +12040,8 @@ def ai_intelligence():
 }
 
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
     <div class="hero"><div class="hero-grid"><div><div class="badge info">AI Intelligence Center</div><h1 class="hero-title">🧠 AI Intelligence + Level 4</h1><div class="hero-copy">Smart assistant, current-month member intelligence, risk heatmap, prediction engine, behavioral tags, auto-actions, and smart reports — merged into one dashboard.</div></div><div class="hero-stats"><div class="hero-chip"><div class="small">Health Score</div><div class="big">{{ latest_score }}/100</div></div><div class="hero-chip"><div class="small">Basis</div><div class="big" style="font-size:18px">{{ basis }}</div></div></div></div></div>
@@ -12522,47 +12472,6 @@ try:
 except Exception as _ai_route_patch_exc:
     print(f"AI assistant route patch skipped: {_ai_route_patch_exc}")
 
-# Robust frontend patch for AI Intelligence page: guarantees Thinking... and response rendering.
-_AI_FRONTEND_PATCH_V112 = """
-<script>
-(function(){
-  async function askAttendanceAI(q, targetId){
-    q = (q || '').trim();
-    const box = document.getElementById(targetId || 'aiLevel3Answer') || document.getElementById('aiBotAnswer');
-    if(!q){ if(box) box.innerText='Please type a question first.'; return; }
-    if(box) box.innerText='Thinking...';
-    try{
-      const res = await fetch('/api/ai-assistant-level3', {
-        method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin',
-        body: JSON.stringify({query:q})
-      });
-      let data = {};
-      try { data = await res.json(); } catch(e){ data = {response:'Server returned a non-JSON response.'}; }
-      if(box) box.innerText = data.response || 'No answer found.';
-    }catch(err){
-      if(box) box.innerText = 'AI assistant connection error: ' + (err.message || err);
-    }
-  }
-  window.aiAsk = function(q){ return askAttendanceAI(q, 'aiLevel3Answer'); };
-  window.aiBotAsk = function(q){ return askAttendanceAI(q, 'aiBotAnswer'); };
-  document.addEventListener('DOMContentLoaded', function(){
-    const btns = Array.from(document.querySelectorAll('button'));
-    btns.forEach(function(btn){
-      const text=(btn.textContent||'').trim().toLowerCase();
-      if(text === 'ask ai'){
-        btn.addEventListener('click', function(ev){ ev.preventDefault(); const input=document.getElementById('aiLevel3Input'); askAttendanceAI(input ? input.value : '', 'aiLevel3Answer'); });
-      }
-      if(text === 'ask'){
-        const panel = btn.closest('.ai-bot-panel');
-        if(panel){ btn.addEventListener('click', function(ev){ ev.preventDefault(); const input=document.getElementById('aiBotInput'); askAttendanceAI(input ? input.value : '', 'aiBotAnswer'); }); }
-      }
-    });
-  });
-})();
-</script>
-"""
-
-# Removed malformed ai_frontend_patch_v112 injected block to restore deployment.
 
 
 
@@ -13153,10 +13062,8 @@ ZA_FINAL_DYNAMIC_TREND_ASSET = r"""
   box-shadow:0 18px 42px rgba(0,0,0,.36)!important;font-size:11px!important;font-weight:850!important;line-height:1.35!important;z-index:99999!important;
 }
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 <script id="za-final-dynamic-trend-script">
@@ -13607,10 +13514,8 @@ ZA_OPTION_A_PREMIUM_CSS = r"""
 @media(max-width:900px){.za-premium-trend-grid{grid-template-columns:1fr!important}.za-premium-title{font-size:24px!important}.za-premium-bars{height:115px!important}}
 /* ===== END OPTION A PREMIUM FORCE UI ===== */
 
-<style>
 input[type="password"]{margin-bottom:40px!important;}
 button[type="submit"]{margin-top:20px!important;}
-</style>
 
 </style>
 """
@@ -13800,8 +13705,6 @@ def build_cumulative_attendance_payload(month_rows):
     )
 
     return payload
-
-LAST_MEETING_ENDED_CACHE = globals().get("LAST_MEETING_ENDED_CACHE", None)
 
 
 # ===== GPT55 FINAL LIVE UI FIX =====
