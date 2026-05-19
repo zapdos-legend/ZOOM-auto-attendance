@@ -7281,6 +7281,12 @@ button[type="submit"]{margin-top:20px!important;}
                 }
                 sortLiveRowsByDuration();
             }
+            function startDurationEngine(){
+                if(truthEngine.timers.liveDuration){ clearInterval(truthEngine.timers.liveDuration); console.log('DUPLICATE_ENGINE_REMOVED timer=liveDuration'); }
+                if(durationTimer){ clearInterval(durationTimer); }
+                durationTimer=setInterval(tickDurations,1000);
+                truthEngine.timers.liveDuration = durationTimer;
+            }
 
             function animateLiveNumber(id,next){const el=document.getElementById(id);if(!el)return;next=parseInt(next||0,10);if(el.textContent!==String(next))el.textContent=String(next);}
             function sortLiveRowsByDuration(){
@@ -7379,9 +7385,7 @@ button[type="submit"]{margin-top:20px!important;}
                 if(serverNowMs) lastServerNowMs = serverNowMs;
                 render(data);
                 if(data && data.has_live && !durationTimer){
-                    if(truthEngine.timers.liveDuration){ clearInterval(truthEngine.timers.liveDuration); console.log('DUPLICATE_ENGINE_REMOVED timer=liveDuration'); }
-                    durationTimer=setInterval(tickDurations,1000);
-                    truthEngine.timers.liveDuration = durationTimer;
+                    startDurationEngine();
                 }
             }
 
@@ -7398,8 +7402,7 @@ button[type="submit"]{margin-top:20px!important;}
             render(lastPayload);
             if(durationTimer) clearInterval(durationTimer);
             if((lastPayload&&lastPayload.has_live)===true){
-                durationTimer=setInterval(tickDurations,1000);
-                truthEngine.timers.liveDuration = durationTimer;
+                startDurationEngine();
             }
             window.addEventListener('za:live-summary', function(e){ applySummaryToLive(e.detail || null); });
             if(truthEngine.lastSummary){ applySummaryToLive(truthEngine.lastSummary); }
