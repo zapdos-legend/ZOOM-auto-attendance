@@ -5990,8 +5990,8 @@ button[type="submit"]{margin-top:20px!important;}
     window.ZA_LIVE_STATE = window.ZA_LIVE_STATE || {
         live:false, meeting_id:null, started_at:null, ended_at:null, server_now:null, last_snapshot_ts:0
     };
-    window.__ZA_TRUTH_ENGINE__ = window.__ZA_TRUTH_ENGINE__ || { owner: 'ZA_SINGLE_OWNER', timers: {}, hydrated: false };
-    console.log('LIVE_STATE_OWNER '+window.__ZA_TRUTH_ENGINE__.owner);
+    window.ZA_LIVE_RUNTIME = window.ZA_LIVE_RUNTIME || { owner: 'ZA_SINGLE_OWNER', timers: {}, hydrated: false, lastSummary: null };
+    console.log('LIVE_STATE_OWNER '+window.ZA_LIVE_RUNTIME.owner);
     function updateGlobalLiveNavState(data){
         const liveNav = document.getElementById('globalLiveNavLink');
         if(!liveNav) return;
@@ -6017,13 +6017,15 @@ button[type="submit"]{margin-top:20px!important;}
             last_snapshot_ts: Date.now()
         };
         updateGlobalLiveNavState(summary);
+        window.ZA_LIVE_RUNTIME.lastSummary = summary;
         window.dispatchEvent(new CustomEvent('za:live-state-updated', {detail: window.ZA_LIVE_STATE}));
+        window.dispatchEvent(new CustomEvent('za:live-summary', {detail: summary}));
     }
     window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data || {}); };
     window.addEventListener('za:live-snapshot', function(e){ applyLiveStateFromSummary(e.detail || {}); });
 
     function startGlobalLiveSidebarUpdater(){
-        const engine = window.__ZA_TRUTH_ENGINE__;
+        const engine = window.ZA_LIVE_RUNTIME;
         console.log('LIVE_STATE_OWNER '+engine.owner+' start=global_sidebar');
         let busy=false;
         const tick = async function(reason){
@@ -6115,7 +6117,7 @@ button[type="submit"]{margin-top:20px!important;}
 
 
 
-<!-- Stabilization: duplicate global live smooth/auto-refresh scripts removed. /live owns live polling via /api/live-snapshot. -->
+<!-- Stabilization: one global live updater owns polling via /api/live-summary and dispatches canonical live state. -->
 
 
 
@@ -7187,14 +7189,12 @@ button[type="submit"]{margin-top:20px!important;}
 
         <script>
         (function(){
-            window.__ZA_TRUTH_ENGINE__ = window.__ZA_TRUTH_ENGINE__ || { owner: 'ZA_SINGLE_OWNER', timers: {}, hydrated: false };
-            const truthEngine = window.__ZA_TRUTH_ENGINE__;
+            window.ZA_LIVE_RUNTIME = window.ZA_LIVE_RUNTIME || { owner: 'ZA_SINGLE_OWNER', timers: {}, hydrated: false, lastSummary: null };
+            const truthEngine = window.ZA_LIVE_RUNTIME;
             console.log('LIVE_STATE_OWNER '+truthEngine.owner+' start=live_page');
 
             let lastPayload = {{ data|tojson }};
             let lastServerNowMs = 0;
-            let pollBusy = false;
-            let pollTimer = null;
             let durationTimer = null;
 
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
@@ -7372,54 +7372,39 @@ button[type="submit"]{margin-top:20px!important;}
                 if(conn){ conn.className='live-fix-conn ok'; conn.textContent='● Live updated '+new Date().toLocaleTimeString(); }
             }
 
-            async function pollLiveSnapshot(reason){
-                if(location.pathname !== '/live' || pollBusy) return;
-                pollBusy=true;
-                try{
-                    const res=await fetch('/api/live-snapshot?t='+Date.now()+'&source='+encodeURIComponent(reason||'live_page'), {cache:'no-store', credentials:'same-origin'});
-                    if(!res.ok) throw new Error('live-snapshot failed');
-                    const data=await res.json();
-                    const serverNowMs = Date.parse((data && data.server_now) || '') || 0;
-                    if(serverNowMs && lastServerNowMs && serverNowMs < lastServerNowMs){
-                        return;
-                    }
-                    if(serverNowMs){
-                        lastServerNowMs = serverNowMs;
-                    }
-                    render(data);
-                    if(data && data.has_live && !durationTimer){
-                        durationTimer=setInterval(tickDurations,1000);
-                    }
-                }catch(e){
-                    const conn=document.getElementById('lfConn');
-                    if(conn){ conn.className='live-fix-conn bad'; conn.textContent='● Safe polling retrying'; }
-                }finally{ pollBusy=false; }
+            function applySummaryToLive(data){
+                if(!data) return;
+                const serverNowMs = Date.parse((data && data.server_now) || '') || 0;
+                if(serverNowMs && lastServerNowMs && serverNowMs < lastServerNowMs) return;
+                if(serverNowMs) lastServerNowMs = serverNowMs;
+                render(data);
+                if(data && data.has_live && !durationTimer){
+                    if(truthEngine.timers.liveDuration){ clearInterval(truthEngine.timers.liveDuration); console.log('DUPLICATE_ENGINE_REMOVED timer=liveDuration'); }
+                    durationTimer=setInterval(tickDurations,1000);
+                    truthEngine.timers.liveDuration = durationTimer;
+                }
             }
 
             window.zaApplyLiveSnapshot=function(data){ render(data); };
-            window.zaLiveRefresh=function(){ pollLiveSnapshot('manual'); return true; };
+            window.zaLiveRefresh=async function(){
+                try{
+                    const res=await fetch('/api/live-summary?t='+Date.now()+'&source=live_manual', {cache:'no-store', credentials:'same-origin'});
+                    if(!res.ok) return false;
+                    const data=await res.json();
+                    applySummaryToLive(data);
+                    return true;
+                }catch(_e){ return false; }
+            };
             render(lastPayload);
-            const engineKey='__ZA_LIVE_POLL_TIMER_V1__';
-            if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
-            pollLiveSnapshot('initial');
-            if(truthEngine.timers.livePoll){ clearInterval(truthEngine.timers.livePoll); console.log('DUPLICATE_ENGINE_REMOVED timer=livePoll'); }
-            pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },1000);
             if(durationTimer) clearInterval(durationTimer);
             if((lastPayload&&lastPayload.has_live)===true){
-                if(truthEngine.timers.liveDuration){ clearInterval(truthEngine.timers.liveDuration); console.log('DUPLICATE_ENGINE_REMOVED timer=liveDuration'); }
                 durationTimer=setInterval(tickDurations,1000);
+                truthEngine.timers.liveDuration = durationTimer;
             }
-            window[engineKey]=pollTimer;
-            truthEngine.timers.livePoll = pollTimer;
-            truthEngine.timers.liveDuration = durationTimer;
-            document.addEventListener('visibilitychange', function(){
-                if(document.visibilityState==='visible') pollLiveSnapshot('tab_visible');
-            });
-            window.addEventListener('pageshow', function(){ pollLiveSnapshot('pageshow'); });
+            window.addEventListener('za:live-summary', function(e){ applySummaryToLive(e.detail || null); });
+            if(truthEngine.lastSummary){ applySummaryToLive(truthEngine.lastSummary); }
             window.addEventListener('beforeunload', function(){
-                if(pollTimer) clearInterval(pollTimer);
                 if(durationTimer) clearInterval(durationTimer);
-                if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
                 console.log('LIVE_STATE_STOP unload');
             });
         })();
