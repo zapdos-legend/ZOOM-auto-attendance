@@ -5946,6 +5946,9 @@ button[type="submit"]{margin-top:20px!important;}
     window.setupAppearanceEngineV8=setupAppearanceEngineV8;
 
 
+    window.ZA_LIVE_STATE = window.ZA_LIVE_STATE || {
+        live:false, meeting_id:null, started_at:null, ended_at:null, server_now:null, last_snapshot_ts:0
+    };
     function updateGlobalLiveNavState(data){
         const liveNav = document.getElementById('globalLiveNavLink');
         if(!liveNav) return;
@@ -5956,8 +5959,24 @@ button[type="submit"]{margin-top:20px!important;}
         if(icon) icon.textContent = isLive ? '🟢' : '🔴';
         liveNav.title = isLive ? 'Live meeting is running' : 'No live meeting running';
     }
-    window.zaApplyLiveSummary = function(data){ updateGlobalLiveNavState(data); };
-    window.addEventListener('za:live-snapshot', function(e){ updateGlobalLiveNavState(e.detail || {}); });
+    function applyLiveStateFromSummary(data){
+        const summary = data || {};
+        const meeting = summary.meeting || {};
+        const serverNow = summary.server_now || null;
+        const endedAt = (summary.has_live ? null : (window.ZA_LIVE_STATE.ended_at || serverNow));
+        window.ZA_LIVE_STATE = {
+            live: !!summary.has_live,
+            meeting_id: meeting.id || null,
+            started_at: meeting.start_time || null,
+            ended_at: endedAt,
+            server_now: serverNow,
+            last_snapshot_ts: Date.now()
+        };
+        updateGlobalLiveNavState(summary);
+        window.dispatchEvent(new CustomEvent('za:live-state-updated', {detail: window.ZA_LIVE_STATE}));
+    }
+    window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data || {}); };
+    window.addEventListener('za:live-snapshot', function(e){ applyLiveStateFromSummary(e.detail || {}); });
 
     function startGlobalLiveSidebarUpdater(){
         window.__ZA_LIVE_ENGINE_V3__ = window.__ZA_LIVE_ENGINE_V3__ || {};
@@ -5971,13 +5990,14 @@ button[type="submit"]{margin-top:20px!important;}
                 const res = await fetch('/api/live-summary?t='+Date.now()+'&source='+encodeURIComponent(reason||'global_nav'), {cache:'no-store', credentials:'same-origin'});
                 if(!res.ok) throw new Error('live-summary failed');
                 const data = await res.json();
-                updateGlobalLiveNavState(data || {});
+                applyLiveStateFromSummary(data || {});
             }catch(_e){}
             finally{ busy=false; }
         };
         tick('boot');
         setInterval(function(){ tick('interval'); }, 5000);
         document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') tick('tab_visible'); });
+        window.addEventListener('pageshow', function(){ tick('pageshow'); });
     }
 
 
@@ -6142,7 +6162,7 @@ def quick_live_nav_active() -> bool:
 def page(title, body, active="home"):
     live_nav_active = quick_live_nav_active()
     live_nav_icon = "🟢" if live_nav_active else "🔴"
-    live_nav_class = "live-status-live" if live_nav_active else "live-status-idle"
+    live_nav_class = ""
     nav = [
         {"key": "home", "label": "🏠 Home", "href": url_for("home")},
         {"key": "live", "label": f"{live_nav_icon} Live", "href": url_for("live"), "id": "globalLiveNavLink", "class": live_nav_class},
@@ -7135,7 +7155,10 @@ button[type="submit"]{margin-top:20px!important;}
                     const prevShown=Math.max(parseInt(row.dataset.displayedDurationSeconds||'0',10), parseHms(p.duration_display));
                     row.dataset.backendDurationSeconds=String(backendSec);
                     row.dataset.durationBaseMs=String(nowMs);
-                    row.dataset.isActive=(p.is_active?'1':'0');
+                    row.dataset.isActive=((data&&data.has_live&&p.is_active)?'1':'0');
+                    const leaveSec=parseHms(p.last_leave||'');
+                    const joinSec=parseHms(p.first_join||'');
+                    row.dataset.maxDurationSeconds=String(leaveSec>joinSec?Math.max(backendSec,leaveSec-joinSec):0);
                     row.dataset.displayedDurationSeconds=String(Math.max(prevShown, backendSec));
                 });
                 const head=document.getElementById('lfDuration');
@@ -7145,6 +7168,9 @@ button[type="submit"]{margin-top:20px!important;}
                     head.dataset.backendDurationSeconds=String(backendMeetingSec);
                     head.dataset.durationBaseMs=String(nowMs);
                     head.dataset.isActive=(data&&data.has_live)?'1':'0';
+                    const startedSec=parseHms((data&&data.meeting&&data.meeting.start_time)||'');
+                    const endedSec=parseHms((data&&data.meeting&&data.meeting.end_time)||'');
+                    head.dataset.maxDurationSeconds=String(endedSec>startedSec?Math.max(backendMeetingSec,endedSec-startedSec):0);
                     head.dataset.displayedDurationSeconds=String(Math.max(prevMeeting, backendMeetingSec));
                 }
             }
@@ -7155,7 +7181,9 @@ button[type="submit"]{margin-top:20px!important;}
                     const baseMs=parseInt(row.dataset.durationBaseMs||'0',10);
                     const active=row.dataset.isActive==='1';
                     const elapsed=active&&baseMs?Math.floor((nowMs-baseMs)/1000):0;
-                    const next=Math.max(parseInt(row.dataset.displayedDurationSeconds||'0',10), baseSec+Math.max(elapsed,0));
+                    const maxCap=parseInt(row.dataset.maxDurationSeconds||'0',10);
+                    let next=Math.max(baseSec+Math.max(elapsed,0), parseInt(row.dataset.displayedDurationSeconds||'0',10));
+                    if(maxCap>0) next=Math.min(next,maxCap);
                     row.dataset.displayedDurationSeconds=String(next);
                     setCell(row,'duration','<span class="live-fix-duration">'+formatHms(next)+'</span>',formatHms(next));
                     row.dataset.durationSeconds=String(next);
@@ -7166,7 +7194,9 @@ button[type="submit"]{margin-top:20px!important;}
                     const baseMs=parseInt(head.dataset.durationBaseMs||'0',10);
                     const active=head.dataset.isActive==='1';
                     const elapsed=active&&baseMs?Math.floor((nowMs-baseMs)/1000):0;
-                    const next=Math.max(parseInt(head.dataset.displayedDurationSeconds||'0',10), baseSec+Math.max(elapsed,0));
+                    const maxCap=parseInt(head.dataset.maxDurationSeconds||'0',10);
+                    let next=Math.max(baseSec+Math.max(elapsed,0), parseInt(head.dataset.displayedDurationSeconds||'0',10));
+                    if(maxCap>0) next=Math.min(next,maxCap);
                     head.dataset.displayedDurationSeconds=String(next);
                     head.textContent='Duration '+formatHms(next);
                 }
@@ -7254,6 +7284,7 @@ button[type="submit"]{margin-top:20px!important;}
                 if(data.has_live){
                     tickDurations();
                 }else{
+                    window.ZA_LIVE_STATE = {live:false, meeting_id:null, started_at:null, ended_at:(data.server_now||new Date().toISOString()), server_now:(data.server_now||null), last_snapshot_ts:Date.now()};
                     if(durationTimer){ clearInterval(durationTimer); durationTimer=null; }
                 }
                 renderFeed(data.feed||[]);
@@ -7291,7 +7322,7 @@ button[type="submit"]{margin-top:20px!important;}
             render(lastPayload);
             const engineKey='__ZA_LIVE_POLL_TIMER_V1__';
             if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
-            setTimeout(function(){ pollLiveSnapshot('initial'); },350);
+            pollLiveSnapshot('initial');
             pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },1000);
             if(durationTimer) clearInterval(durationTimer);
             if((lastPayload&&lastPayload.has_live)===true){
@@ -7301,6 +7332,7 @@ button[type="submit"]{margin-top:20px!important;}
             document.addEventListener('visibilitychange', function(){
                 if(document.visibilityState==='visible') pollLiveSnapshot('tab_visible');
             });
+            window.addEventListener('pageshow', function(){ pollLiveSnapshot('pageshow'); });
             window.addEventListener('beforeunload', function(){
                 if(pollTimer) clearInterval(pollTimer);
                 if(durationTimer) clearInterval(durationTimer);
