@@ -2430,22 +2430,29 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
             if not meeting:
                 return None
 
-            start_time = parse_dt(meeting["start_time"]) or ended_at
+            start_time = parse_dt(meeting.get("started_at")) or parse_dt(meeting.get("start_time")) or ended_at
 
             cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
             rows = cur.fetchall()
 
             derived_last_activity = get_meeting_rows_last_activity(rows)
-            if derived_last_activity and derived_last_activity >= start_time:
-                if ended_at > derived_last_activity:
-                    end_time = derived_last_activity
-                else:
-                    end_time = ended_at
-            else:
-                end_time = ended_at
-
+            truth_seconds, truth_end_dt = calculate_truth_duration(
+                start_time,
+                payload_end_time=ended_at,
+                participant_leave_time=derived_last_activity,
+                now_time=now_local(),
+                meeting_status="ended",
+            )
+            end_time = parse_dt(truth_end_dt) or parse_dt(ended_at) or start_time
             if end_time < start_time:
                 end_time = start_time
+            meeting_total_seconds = max(int(truth_seconds or 0), 0)
+            if meeting_total_seconds == 0 and end_time > start_time:
+                meeting_total_seconds = max(int((end_time - start_time).total_seconds()), 0)
+            print(
+                f"MEETING_DURATION_FINAL meeting_uuid={meeting_uuid} "
+                f"start={fmt_dt(start_time)} end={fmt_dt(end_time)} seconds={meeting_total_seconds}"
+            )
 
             present_count = 0
             late_count = 0
@@ -2552,6 +2559,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
     finalized_marker = parse_dt((updated or {}).get("finalized_at"))
     updated_status = str((updated or {}).get("status") or "").strip().lower()
     if updated_status == "ended" and finalized_marker:
+        print(f"RUNTIME_STOP_ALLOWED meeting_uuid={meeting_uuid} status={updated_status} finalized_at={fmt_dt(finalized_marker)}")
         clear_live_runtime_state(meeting_uuid)
     else:
         print(
@@ -6112,6 +6120,7 @@ button[type="submit"]{margin-top:20px!important;}
         };
         updateGlobalLiveNavState(summary);
         try{ localStorage.setItem('za_live_has_live', summary.has_live ? '1' : '0'); }catch(_e){}
+        try{ window.ZA_LIVE_RUNTIME.lastLiveState = summary; sessionStorage.setItem('za_live_runtime_state', JSON.stringify(summary||{})); }catch(_e){}
         window.dispatchEvent(new CustomEvent('za:live-state-updated', {detail: window.ZA_LIVE_STATE}));
     }
     window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data || {}); };
@@ -6138,9 +6147,23 @@ button[type="submit"]{margin-top:20px!important;}
             }catch(_e){}
             finally{ busy=false; }
         };
-        const cachedLive = localStorage.getItem('za_live_has_live');
-        if(cachedLive === '1'){ updateGlobalLiveNavState({has_live:true}); }
-        if(window.ZA_LIVE_STATE && window.ZA_LIVE_STATE.live){ updateGlobalLiveNavState({has_live:true}); }
+        const hydrateFromCache = function(){
+            let hydrated = null;
+            try{ if(runtime.lastLiveState && typeof runtime.lastLiveState.has_live !== 'undefined'){ hydrated = runtime.lastLiveState; } }catch(_e){}
+            if(!hydrated){
+                try{ const raw=sessionStorage.getItem('za_live_runtime_state'); if(raw) hydrated=JSON.parse(raw); }catch(_e){}
+            }
+            if(!hydrated){
+                const cachedLive = localStorage.getItem('za_live_has_live');
+                if(cachedLive === '1') hydrated = {has_live:true};
+            }
+            if(!hydrated && window.ZA_LIVE_STATE && window.ZA_LIVE_STATE.live){ hydrated={has_live:true}; }
+            if(hydrated){
+                updateGlobalLiveNavState(hydrated);
+                console.log('LIVE_STATE_HYDRATED source=cache has_live='+(hydrated.has_live?'1':'0'));
+            }
+        };
+        hydrateFromCache();
         tick('boot');
         if(runtime.timers.sidebar){ clearInterval(runtime.timers.sidebar); console.log('DUPLICATE_RUNTIME_REMOVED timer=sidebar'); }
         runtime.timers.sidebar = setInterval(function(){ tick('interval'); }, 1000);
@@ -7331,8 +7354,14 @@ button[type="submit"]{margin-top:20px!important;}
                     if(!row) return;
                     const backendSec=Math.max(0,parseInt(p.duration_seconds||0,10));
                     const prevShown=Math.max(parseInt(row.dataset.displayedDurationSeconds||'0',10), parseHms(p.duration_display));
-                    row.dataset.backendDurationSeconds=String(backendSec);
-                    row.dataset.durationBaseMs=String(nowMs);
+                    const prevBackend=Math.max(0,parseInt(row.dataset.backendDurationSeconds||'0',10));
+                    const prevBaseMs=parseInt(row.dataset.durationBaseMs||'0',10);
+                    const elapsedFromPrev=(prevBaseMs?Math.floor((nowMs-prevBaseMs)/1000):0);
+                    const projected=prevBackend+Math.max(elapsedFromPrev,0);
+                    if(backendSec < prevBackend || backendSec >= projected + 5 || !prevBaseMs){
+                        row.dataset.backendDurationSeconds=String(Math.max(backendSec, prevBackend));
+                        row.dataset.durationBaseMs=String(nowMs);
+                    }
                     row.dataset.isActive=((data&&data.has_live&&p.is_active)?'1':'0');
                     row.dataset.maxDurationSeconds='0';
                     row.dataset.displayedDurationSeconds=String(Math.max(prevShown, backendSec));
@@ -7341,8 +7370,14 @@ button[type="submit"]{margin-top:20px!important;}
                 if(head){
                     const backendMeetingSec=parseHms((data&&data.summary&&data.summary.meeting_duration_display)||'00:00:00');
                     const prevMeeting=parseInt(head.dataset.displayedDurationSeconds||'0',10);
-                    head.dataset.backendDurationSeconds=String(backendMeetingSec);
-                    head.dataset.durationBaseMs=String(nowMs);
+                    const prevBackend=Math.max(0,parseInt(head.dataset.backendDurationSeconds||'0',10));
+                    const prevBaseMs=parseInt(head.dataset.durationBaseMs||'0',10);
+                    const elapsedFromPrev=(prevBaseMs?Math.floor((nowMs-prevBaseMs)/1000):0);
+                    const projected=prevBackend+Math.max(elapsedFromPrev,0);
+                    if(backendMeetingSec < prevBackend || backendMeetingSec >= projected + 5 || !prevBaseMs){
+                        head.dataset.backendDurationSeconds=String(Math.max(backendMeetingSec, prevBackend));
+                        head.dataset.durationBaseMs=String(nowMs);
+                    }
                     head.dataset.isActive=(data&&data.has_live)?'1':'0';
                     head.dataset.maxDurationSeconds='0';
                     head.dataset.displayedDurationSeconds=String(Math.max(prevMeeting, backendMeetingSec));
@@ -11552,8 +11587,7 @@ def zoom_webhook():
             print("✅ MEETING ENDED RESOLVED:", meeting)
 
             if not meeting:
-                clear_live_runtime_state(meeting_uuid or None)
-                print("ℹ️ meeting.end received for unknown/non-live meeting; live state cleared")
+                print("ℹ️ meeting.end received for unknown/non-live meeting; live state unchanged")
                 return jsonify({"ok": True, "finalized": False, "reason": "meeting not found"}), 200
 
             payload_end_time = parse_dt(obj.get("end_time")) or (
@@ -11562,7 +11596,6 @@ def zoom_webhook():
                 else None
             ) or now_local()
             finalized = finalize_meeting(meeting["meeting_uuid"], payload_end_time, run_post_tasks=False)
-            clear_live_runtime_state(meeting["meeting_uuid"])
             print("✅ FINALIZED:", finalized)
             print("📝 WEBHOOK LOG zoom_meeting_ended:", meeting["meeting_uuid"])
             return jsonify({"ok": True, "finalized": bool(finalized)})
