@@ -6804,6 +6804,10 @@ def build_live_snapshot_payload(include_feed=True):
     participants = info.get("participants") or []
     not_joined_members = info.get("not_joined_members") or []
     start_dt = parse_dt(meeting.get("start_time")) or server_now
+    payload_end_dt = parse_dt(meeting.get("end_time"))
+    meeting_status = str(meeting.get("status") or "").strip().lower()
+    should_force_not_live = bool((payload_end_dt and server_now >= payload_end_dt) or (meeting_status and meeting_status != "live"))
+    effective_now = payload_end_dt if payload_end_dt and payload_end_dt < server_now else server_now
 
     active_now = 0
     known_active = 0
@@ -6818,10 +6822,10 @@ def build_live_snapshot_payload(include_feed=True):
         is_active_now = p.get("current_join") is not None
         is_known = bool(p.get("is_member"))
         is_host = bool(p.get("is_host"))
-        live_total = calculate_live_duration(p, server_now)
-        live_status = "LIVE" if is_active_now else "LEFT"
+        live_total = calculate_live_duration(p, effective_now)
+        live_status = "LIVE" if (is_active_now and not should_force_not_live) else "LEFT"
         category = "HOST" if is_host else ("MEMBER" if is_known else "UNKNOWN")
-        if is_active_now:
+        if is_active_now and not should_force_not_live:
             active_now += 1
             if is_known:
                 known_active += 1
@@ -6879,10 +6883,17 @@ def build_live_snapshot_payload(include_feed=True):
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
+    max_duration_seconds = max(int((effective_now - start_dt).total_seconds()), 0)
+    is_live = (not should_force_not_live) and active_now > 0
     payload = {
         "ok": True,
-        "has_live": True,
+        "has_live": is_live,
+        "is_live": is_live,
+        "status": "ended" if should_force_not_live else "live",
         "server_now": server_now.isoformat(),
+        "payload_start_time": start_dt.isoformat(),
+        "payload_end_time": payload_end_dt.isoformat() if payload_end_dt else None,
+        "max_duration_seconds": max_duration_seconds,
         "meeting": {
             "uuid": meeting.get("meeting_uuid") or "",
             "id": meeting.get("meeting_id") or "-",
@@ -6899,8 +6910,13 @@ def build_live_snapshot_payload(include_feed=True):
             "not_joined_count": len(not_joined_members),
             "total_tracked": len(participants),
             "host_present": host_present,
-            "meeting_duration_seconds": max(int((server_now - start_dt).total_seconds()), 0),
-            "meeting_duration_display": format_live_duration(max(int((server_now - start_dt).total_seconds()), 0)),
+            "meeting_duration_seconds": max_duration_seconds,
+            "meeting_duration_display": format_live_duration(max_duration_seconds),
+            "payload_start_time": start_dt.isoformat(),
+            "payload_end_time": payload_end_dt.isoformat() if payload_end_dt else None,
+            "status": "ended" if should_force_not_live else "live",
+            "is_live": is_live,
+            "max_duration_seconds": max_duration_seconds,
             "risk": risk,
         },
         "participants": participant_payload,
@@ -6942,7 +6958,12 @@ def api_live_summary():
         "transport": "safe_polling_fresh",
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
+        "is_live": payload.get("is_live"),
+        "status": payload.get("status"),
         "server_now": payload.get("server_now"),
+        "payload_start_time": payload.get("payload_start_time"),
+        "payload_end_time": payload.get("payload_end_time"),
+        "max_duration_seconds": payload.get("max_duration_seconds"),
         "meeting": payload.get("meeting"),
         "summary": payload.get("summary"),
         "participants": payload.get("participants", []),
@@ -6965,7 +6986,12 @@ def api_live_feed():
     response = jsonify({
         "ok": payload.get("ok"),
         "has_live": payload.get("has_live"),
+        "is_live": payload.get("is_live"),
+        "status": payload.get("status"),
         "server_now": payload.get("server_now"),
+        "payload_start_time": payload.get("payload_start_time"),
+        "payload_end_time": payload.get("payload_end_time"),
+        "max_duration_seconds": payload.get("max_duration_seconds"),
         "feed": payload.get("feed", []),
     })
 
@@ -11283,17 +11309,12 @@ def zoom_webhook():
             meeting_uuid = meeting["meeting_uuid"]
             event_type = "join" if "participant_joined" in event else "leave"
 
-            event_raw = (
-                participant.get("join_time")
-                or participant.get("leave_time")
-                or obj.get("join_time")
-                or obj.get("leave_time")
-                or (
-                    datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME)).isoformat()
-                    if isinstance(payload.get("event_ts"), (int, float))
-                    else None
-                )
-            )
+            if event_type == "join":
+                event_raw = participant.get("join_time") or obj.get("join_time")
+            else:
+                event_raw = participant.get("leave_time") or obj.get("leave_time")
+            if not event_raw and isinstance(payload.get("event_ts"), (int, float)):
+                event_raw = datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME)).isoformat()
             event_time = parse_dt(event_raw) or now_local()
 
             participant_name = (
@@ -11339,6 +11360,10 @@ def zoom_webhook():
                 event_type,
                 is_host_override=is_host_override,
             )
+            leave_reason = str(participant.get("leave_reason") or obj.get("leave_reason") or "").strip().lower()
+            if event_type == "leave" and "host ended the meeting" in leave_reason:
+                finalize_meeting(meeting_uuid, event_time, run_post_tasks=False)
+                clear_live_runtime_state(meeting_uuid)
             print("📝 WEBHOOK LOG zoom_participant_event:", f"{event} :: {meeting_uuid} :: {participant_name}")
             return jsonify({"ok": True})
 
@@ -11359,7 +11384,12 @@ def zoom_webhook():
                 print("ℹ️ meeting.end received for unknown/non-live meeting; live state cleared")
                 return jsonify({"ok": True, "finalized": False, "reason": "meeting not found"}), 200
 
-            finalized = finalize_meeting(meeting["meeting_uuid"], parse_dt(obj.get("end_time")) or now_local(), run_post_tasks=False)
+            payload_end_time = parse_dt(obj.get("end_time")) or (
+                datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME))
+                if isinstance(payload.get("event_ts"), (int, float))
+                else None
+            ) or now_local()
+            finalized = finalize_meeting(meeting["meeting_uuid"], payload_end_time, run_post_tasks=False)
             clear_live_runtime_state(meeting["meeting_uuid"])
             print("✅ FINALIZED:", finalized)
             print("📝 WEBHOOK LOG zoom_meeting_ended:", meeting["meeting_uuid"])
