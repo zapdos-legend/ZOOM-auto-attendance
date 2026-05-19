@@ -1980,59 +1980,69 @@ def clear_live_runtime_state(meeting_uuid=None):
     print(f"RUNTIME_STOP meeting_uuid={meeting_uuid}")
 
 
-def resolve_active_meeting_for_event(meeting_uuid=None, meeting_id=None):
-    """Resolve the active meeting row for participant events without returning ended rows."""
+def resolve_active_meeting_for_event(meeting_uuid=None, meeting_id=None, event_time=None):
+    """Resolve active meeting row for webhook events without falling back to historical rows."""
     resolved = None
+    source = "none"
     meeting_uuid = str(meeting_uuid or "").strip()
     meeting_id = str(meeting_id or "").strip()
+    event_dt = parse_dt(event_time) or now_local()
+    window_start = event_dt - timedelta(hours=8)
+    window_end = event_dt + timedelta(hours=2)
+
+    def _valid_candidate(row):
+        if not row:
+            return False
+        row_uuid = str(row.get("meeting_uuid") or "").strip()
+        row_start = parse_dt(row.get("start_time")) or parse_dt(row.get("created_at"))
+        has_report = bool((row.get("csv_file") or "").strip() or (row.get("pdf_file") or "").strip())
+        if has_report:
+            print(f"REJECT_OLD_MEETING reason=uuid_null_or_old_report id={row.get('id')} meeting_date={row.get('meeting_date')} resolved_uuid={row_uuid or 'None'} status={row.get('status')}")
+            return False
+        if meeting_uuid and not row_uuid:
+            print(f"REJECT_OLD_MEETING reason=uuid_null_or_old_report id={row.get('id')} meeting_date={row.get('meeting_date')} resolved_uuid=None status={row.get('status')}")
+            return False
+        if row_start and (row_start < window_start or row_start > window_end):
+            print(f"REJECT_OLD_MEETING reason=uuid_null_or_old_report id={row.get('id')} meeting_date={row.get('meeting_date')} resolved_uuid={row_uuid or 'None'} status={row.get('status')}")
+            return False
+        return True
+
     with db() as conn:
         with conn.cursor() as cur:
             if meeting_uuid:
-                cur.execute(
-                    "SELECT * FROM meetings WHERE meeting_uuid=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1",
-                    (meeting_uuid,),
-                )
-                resolved = cur.fetchone()
+                cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                exact = cur.fetchone()
+                if _valid_candidate(exact):
+                    resolved = exact
+                    source = "uuid"
+                else:
+                    obj = {"uuid": meeting_uuid, "id": meeting_id or None, "start_time": fmt_dt(event_dt)}
+                    ensured = ensure_meeting(obj)
+                    if _valid_candidate(ensured):
+                        resolved = ensured
+                        source = "created"
             if not resolved and meeting_id:
                 cur.execute(
-                    "SELECT * FROM meetings WHERE meeting_id=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1",
+                    """
+                    SELECT * FROM meetings
+                    WHERE meeting_id=%s
+                      AND COALESCE(meeting_uuid,'')<>''
+                      AND status IN ('live','host_left_pending')
+                      AND COALESCE(csv_file,'')=''
+                      AND COALESCE(pdf_file,'')=''
+                    ORDER BY COALESCE(start_time, created_at) DESC, id DESC
+                    LIMIT 1
+                    """,
                     (meeting_id,),
                 )
-                resolved = cur.fetchone()
-            if not resolved:
-                cur.execute(
-                    """
-                    SELECT * FROM meetings
-                    WHERE status='live'
-                    ORDER BY COALESCE(start_time, created_at) DESC, id DESC
-                    LIMIT 1
-                    """,
-                )
-                resolved = cur.fetchone()
-            if not resolved:
-                cur.execute(
-                    """
-                    SELECT * FROM meetings
-                    WHERE status='host_left_pending'
-                    ORDER BY COALESCE(start_time, created_at) DESC, id DESC
-                    LIMIT 1
-                    """,
-                )
-                resolved = cur.fetchone()
-            if not resolved:
-                cur.execute(
-                    """
-                    SELECT * FROM meetings
-                    WHERE status NOT IN ('ended','finalized')
-                      AND COALESCE(end_time, finalized_at) IS NULL
-                    ORDER BY COALESCE(start_time, created_at) DESC, id DESC
-                    LIMIT 1
-                    """,
-                )
-                resolved = cur.fetchone()
+                candidate = cur.fetchone()
+                if _valid_candidate(candidate):
+                    resolved = candidate
+                    source = "meeting_id_safe"
+
     print(
         "ACTIVE_MEETING_RESOLVED "
-        f"request_uuid={meeting_uuid or '-'} request_id={meeting_id or '-'} "
+        f"source={source} request_uuid={meeting_uuid or '-'} request_id={meeting_id or '-'} "
         f"resolved_uuid={(resolved or {}).get('meeting_uuid') if resolved else 'None'} "
         f"status={(resolved or {}).get('status') if resolved else 'None'}"
     )
@@ -2588,7 +2598,6 @@ def read_live_snapshot():
     Only meetings explicitly marked live and still within the live freshness window are
     eligible. Ended/historical meetings and stale live rows are never returned.
     """
-    maybe_finalize_stale_live_meetings()
     now_dt = now_local()
     with db() as conn:
         with conn.cursor() as cur:
@@ -4640,7 +4649,7 @@ def build_meeting_report_data(meeting_uuid):
         "date": fmt_date(start_time),
         "start_time": fmt_time_ampm(start_time),
         "end_time": fmt_time_ampm(end_time),
-        "meeting_duration_minutes": mins_from_seconds(int((end_time - start_time).total_seconds())),
+        "meeting_duration_minutes": mins_from_seconds(meeting_total_seconds),
         "total_participants": joined_actual_count,
         "total_members": len(active_members),
         "total_present_members": present_members_count,
@@ -6579,11 +6588,6 @@ def profile():
 @login_required
 
 def home():
-    try:
-        maybe_finalize_stale_live_meetings()
-    except Exception as e:
-        print(f"⚠️ home stale finalization skipped: {e}")
-
     live_info = read_live_snapshot()
 
     with db() as conn:
@@ -9254,7 +9258,6 @@ def analytics():
     if LAZY_ANALYTICS and not (request.args.get('full') == '1'):
         # light mode: avoid heavy recompute
         pass_tstart = _t.time()
-    maybe_finalize_stale_live_meetings()
 
     filters = {
         "period_mode": request.args.get("period_mode", "custom"),
@@ -10840,7 +10843,6 @@ def attendance_register_export_pdf():
 @app.route("/analytics/graph-data")
 @login_required
 def analytics_graph_data():
-    maybe_finalize_stale_live_meetings()
     return jsonify(graph_analytics_payload())
 
 
@@ -11018,7 +11020,6 @@ def auto_send_smart_meeting_report(meeting_uuid, force=False):
 @app.route("/meetings")
 @login_required
 def meetings():
-    maybe_finalize_stale_live_meetings()
     try:
         page_no = max(int(request.args.get("page", 1)), 1)
     except Exception:
@@ -11444,14 +11445,6 @@ def zoom_webhook():
         if "participant_joined" in event or "participant_left" in event:
             meeting_uuid = str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip()
             meeting_id = str(obj.get("id") or obj.get("meeting_id") or "").strip()
-            meeting = resolve_active_meeting_for_event(meeting_uuid=meeting_uuid, meeting_id=meeting_id)
-            print("✅ PARTICIPANT EVENT LIVE MEETING:", meeting)
-
-            if not meeting:
-                print("ℹ️ participant event ignored: no live meeting found")
-                return jsonify({"ok": True, "ignored": "no live meeting"}), 200
-
-            meeting_uuid = meeting["meeting_uuid"]
             event_type = "join" if "participant_joined" in event else "leave"
 
             if event_type == "join":
@@ -11461,6 +11454,15 @@ def zoom_webhook():
             if not event_raw and isinstance(payload.get("event_ts"), (int, float)):
                 event_raw = datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME)).isoformat()
             event_time = parse_dt(event_raw) or now_local()
+
+            meeting = resolve_active_meeting_for_event(meeting_uuid=meeting_uuid, meeting_id=meeting_id, event_time=event_time)
+            print("✅ PARTICIPANT EVENT LIVE MEETING:", meeting)
+
+            if not meeting:
+                print("ℹ️ participant event ignored: no live meeting found")
+                return jsonify({"ok": True, "ignored": "no live meeting"}), 200
+
+            meeting_uuid = meeting["meeting_uuid"]
 
             participant_name = (
                 participant.get("user_name")
@@ -11546,7 +11548,7 @@ def zoom_webhook():
         if event in ("meeting.ended", "meeting.end"):
             meeting_uuid = str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip()
             meeting_id = str(obj.get("id") or obj.get("meeting_id") or "").strip()
-            meeting = resolve_active_meeting_for_event(meeting_uuid=meeting_uuid, meeting_id=meeting_id)
+            meeting = resolve_active_meeting_for_event(meeting_uuid=meeting_uuid, meeting_id=meeting_id, event_time=parse_dt(obj.get("end_time")) or now_local())
             print("✅ MEETING ENDED RESOLVED:", meeting)
 
             if not meeting:
