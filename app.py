@@ -1679,6 +1679,7 @@ def init_db():
             ensure_column(conn, "meetings", "absent_count", "INTEGER NOT NULL DEFAULT 0")
             ensure_column(conn, "meetings", "host_present", "BOOLEAN NOT NULL DEFAULT FALSE")
             ensure_column(conn, "meetings", "host_left_pending", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "meetings", "meeting_started_at", "TIMESTAMPTZ")
             ensure_column(conn, "meetings", "meeting_closed", "BOOLEAN NOT NULL DEFAULT FALSE")
             ensure_column(conn, "meetings", "notes", "TEXT")
 
@@ -1945,6 +1946,37 @@ def calculate_live_duration(row, end_time=None):
         return completed_duration
     except Exception:
         return 0
+
+
+def calculate_meeting_live_duration(meeting_row, now_time=None):
+    """Single meeting duration truth helper used by live views and reporting.
+
+    meeting_total_seconds = current_time - first_host_join_time(meeting_started_at)
+    Stops only when meeting status is ended.
+    """
+    meeting = meeting_row or {}
+    now_dt = parse_dt(now_time) or now_local()
+    started_dt = (
+        parse_dt(meeting.get("meeting_started_at"))
+        or parse_dt(meeting.get("started_at"))
+        or parse_dt(meeting.get("start_time"))
+    )
+    if not started_dt:
+        print(
+            "MEETING_DURATION_TRUTH "
+            f"meeting_uuid={meeting.get('meeting_uuid') or '-'} started=None now={fmt_dt(now_dt)} seconds=0"
+        )
+        return 0, now_dt
+    status = str(meeting.get("status") or "").strip().lower()
+    ended_dt = parse_dt(meeting.get("end_time")) if status == "ended" else None
+    effective_now = ended_dt or now_dt
+    seconds = max(int((effective_now - started_dt).total_seconds()), 0)
+    print(
+        "MEETING_DURATION_TRUTH "
+        f"meeting_uuid={meeting.get('meeting_uuid') or '-'} started={fmt_dt(started_dt)} "
+        f"now={fmt_dt(effective_now)} seconds={seconds}"
+    )
+    return seconds, effective_now
 
 
 def is_meeting_too_old_for_live(meeting, now_dt=None):
@@ -2365,6 +2397,22 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                             row["id"],
                         ),
                     )
+            if event_type == "join" and is_host:
+                cur.execute(
+                    """
+                    UPDATE meetings
+                    SET meeting_started_at=COALESCE(meeting_started_at, %s),
+                        start_time=COALESCE(start_time, %s),
+                        status='live',
+                        host_present=TRUE,
+                        host_left_pending=FALSE,
+                        meeting_closed=FALSE,
+                        end_time=NULL,
+                        finalized_at=NULL
+                    WHERE meeting_uuid=%s
+                    """,
+                    (event_time, event_time, meeting_uuid),
+                )
         conn.commit()
 
     refresh_live_meeting_summary(meeting_uuid)
@@ -2430,25 +2478,23 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
             if not meeting:
                 return None
 
-            start_time = parse_dt(meeting.get("started_at")) or parse_dt(meeting.get("start_time")) or ended_at
+            start_time = (
+                parse_dt(meeting.get("meeting_started_at"))
+                or parse_dt(meeting.get("started_at"))
+                or parse_dt(meeting.get("start_time"))
+                or ended_at
+            )
 
             cur.execute("SELECT * FROM attendance WHERE meeting_uuid=%s ORDER BY participant_name", (meeting_uuid,))
             rows = cur.fetchall()
 
             derived_last_activity = get_meeting_rows_last_activity(rows)
-            truth_seconds, truth_end_dt = calculate_truth_duration(
-                start_time,
-                payload_end_time=ended_at,
-                participant_leave_time=derived_last_activity,
-                now_time=now_local(),
-                meeting_status="ended",
-            )
-            end_time = parse_dt(truth_end_dt) or parse_dt(ended_at) or start_time
+            end_time = parse_dt(ended_at) or parse_dt(derived_last_activity) or start_time
             if end_time < start_time:
                 end_time = start_time
-            meeting_total_seconds = max(int(truth_seconds or 0), 0)
-            if meeting_total_seconds == 0 and end_time > start_time:
-                meeting_total_seconds = max(int((end_time - start_time).total_seconds()), 0)
+            meeting["status"] = "ended"
+            meeting["end_time"] = end_time
+            meeting_total_seconds, _ = calculate_meeting_live_duration(meeting, end_time)
             print(
                 f"MEETING_DURATION_FINAL meeting_uuid={meeting_uuid} "
                 f"start={fmt_dt(start_time)} end={fmt_dt(end_time)} seconds={meeting_total_seconds}"
@@ -2490,6 +2536,16 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
                     WHERE id=%s
                     """,
                     (total, end_time, final_status, row["id"]),
+                )
+                join_dt = parse_dt(row.get("first_join")) or end_time
+                leave_dt = end_time
+                finalized_duration = max(int(total or 0), 0)
+                if leave_dt <= join_dt and finalized_duration > 0:
+                    leave_dt = join_dt + timedelta(seconds=finalized_duration)
+                print(
+                    "PARTICIPANT_SESSION_FINALIZED "
+                    f"participant={row.get('participant_name') or '-'} "
+                    f"join={fmt_dt(join_dt)} leave={fmt_dt(leave_dt)} duration={finalized_duration}"
                 )
 
             cur.execute(
@@ -6123,9 +6179,10 @@ button[type="submit"]{margin-top:20px!important;}
     window.setupAppearanceEngineV8=setupAppearanceEngineV8;
 
 
-    window.ZA_LIVE_STATE = window.ZA_LIVE_STATE || {
+    window.__zaLiveState = window.__zaLiveState || {
         live:false, meeting_id:null, started_at:null, ended_at:null, server_now:null, last_snapshot_ts:0
     };
+    window.ZA_LIVE_STATE = window.__zaLiveState;
     window.ZA_LIVE_RUNTIME = window.ZA_LIVE_RUNTIME || { owner: null, timers: {}, busy: {} };
     function updateGlobalLiveNavState(data){
         const liveNav = document.getElementById('globalLiveNavLink');
@@ -6141,8 +6198,8 @@ button[type="submit"]{margin-top:20px!important;}
         const summary = data || {};
         const meeting = summary.meeting || {};
         const serverNow = summary.server_now || null;
-        const endedAt = (summary.has_live ? null : (window.ZA_LIVE_STATE.ended_at || serverNow));
-        window.ZA_LIVE_STATE = {
+        const endedAt = (summary.has_live ? null : (window.__zaLiveState.ended_at || serverNow));
+        window.__zaLiveState = {
             live: !!summary.has_live,
             meeting_id: meeting.id || null,
             started_at: meeting.start_time || null,
@@ -6150,10 +6207,12 @@ button[type="submit"]{margin-top:20px!important;}
             server_now: serverNow,
             last_snapshot_ts: Date.now()
         };
+        window.ZA_LIVE_STATE = window.__zaLiveState;
+        console.log('SIDEBAR_IMMEDIATE_PAINT status='+(summary.has_live?'live':'idle'));
         updateGlobalLiveNavState(summary);
         try{ localStorage.setItem('za_live_has_live', summary.has_live ? '1' : '0'); }catch(_e){}
         try{ window.ZA_LIVE_RUNTIME.lastLiveState = summary; sessionStorage.setItem('za_live_runtime_state', JSON.stringify(summary||{})); }catch(_e){}
-        window.dispatchEvent(new CustomEvent('za:live-state-updated', {detail: window.ZA_LIVE_STATE}));
+        window.dispatchEvent(new CustomEvent('za:live-state-updated', {detail: window.__zaLiveState}));
     }
     window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data || {}); };
     window.addEventListener('za:live-snapshot', function(e){ applyLiveStateFromSummary(e.detail || {}); });
@@ -6181,25 +6240,26 @@ button[type="submit"]{margin-top:20px!important;}
         };
         const hydrateFromCache = function(){
             let hydrated = null;
+            let cacheSource = '';
             try{ if(runtime.lastLiveState && typeof runtime.lastLiveState.has_live !== 'undefined'){ hydrated = runtime.lastLiveState; } }catch(_e){}
+            if(hydrated){ cacheSource='runtime'; console.log('SIDEBAR_CACHE_SOURCE runtime'); }
             if(!hydrated){
                 try{ const raw=sessionStorage.getItem('za_live_runtime_state'); if(raw) hydrated=JSON.parse(raw); }catch(_e){}
+                if(hydrated){ cacheSource='session'; console.log('SIDEBAR_CACHE_SOURCE session'); }
             }
             if(!hydrated){
                 const cachedLive = localStorage.getItem('za_live_has_live');
                 if(cachedLive === '1') hydrated = {has_live:true};
+                if(hydrated){ cacheSource='local'; console.log('SIDEBAR_CACHE_SOURCE local'); }
             }
-            if(!hydrated && window.ZA_LIVE_STATE && window.ZA_LIVE_STATE.live){ hydrated={has_live:true}; }
+            if(!hydrated && window.__zaLiveState && window.__zaLiveState.live){ hydrated={has_live:true}; cacheSource='runtime'; console.log('SIDEBAR_CACHE_SOURCE runtime'); }
             if(hydrated){
                 applyLiveStateFromSummary(hydrated);
-                const hydratedSource = (runtime.lastLiveState && typeof runtime.lastLiveState.has_live !== 'undefined')
-                    ? 'runtime'
-                    : (sessionStorage.getItem('za_live_runtime_state') ? 'sessionStorage' : 'localStorage');
-                console.log('SIDEBAR_CACHE_HYDRATED has_live='+(hydrated.has_live?'true':'false')+' source='+hydratedSource);
+                console.log('SIDEBAR_CACHE_HYDRATED has_live='+(hydrated.has_live?'true':'false')+' source='+(cacheSource||'unknown'));
             }
         };
         hydrateFromCache();
-        tick('boot');
+        tick('boot').then(function(){ console.log('SIDEBAR_CACHE_SOURCE api'); });
         if(runtime.timers.sidebar){ clearInterval(runtime.timers.sidebar); console.log('DUPLICATE_RUNTIME_REMOVED timer=sidebar'); }
         runtime.timers.sidebar = setInterval(function(){ tick('interval'); }, 1000);
         document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') tick('tab_visible'); });
@@ -7006,11 +7066,15 @@ def build_live_snapshot_payload(include_feed=True):
     meeting = info.get("meeting") or {}
     participants = info.get("participants") or []
     not_joined_members = info.get("not_joined_members") or []
-    start_dt = parse_dt(meeting.get("start_time")) or server_now
+    start_dt = parse_dt(meeting.get("meeting_started_at")) or parse_dt(meeting.get("start_time")) or server_now
     payload_end_dt = parse_dt(meeting.get("end_time"))
     participant_leave_dt = get_meeting_rows_last_activity(participants)
     meeting_status = str(meeting.get("status") or "").strip().lower()
-    truth_duration_seconds, truth_end_dt = calculate_truth_duration(start_dt, payload_end_dt, participant_leave_dt, server_now, meeting_status)
+    meeting_for_truth = dict(meeting)
+    meeting_for_truth["meeting_started_at"] = fmt_dt(start_dt)
+    meeting_for_truth["status"] = meeting_status or meeting_for_truth.get("status")
+    meeting_for_truth["end_time"] = payload_end_dt or meeting_for_truth.get("end_time")
+    truth_duration_seconds, truth_end_dt = calculate_meeting_live_duration(meeting_for_truth, server_now)
     should_force_not_live = bool((truth_end_dt and server_now >= truth_end_dt) or (meeting_status and meeting_status != "live"))
     effective_now = truth_end_dt if truth_end_dt and truth_end_dt < server_now else server_now
 
