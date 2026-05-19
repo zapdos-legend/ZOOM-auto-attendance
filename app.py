@@ -714,6 +714,41 @@ def format_live_duration(seconds):
     return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
 
 
+def calculate_truth_duration(start_time, meeting_status=None, payload_end_time=None, participant_leave_time=None, now_time=None):
+    start_dt = parse_dt(start_time)
+    if not start_dt:
+        print("TRUTH_DURATION start_missing")
+        return 0, None
+    status = str(meeting_status or "").strip().lower()
+    payload_end_dt = parse_dt(payload_end_time)
+    participant_end_dt = parse_dt(participant_leave_time)
+    now_dt = parse_dt(now_time) or now_local()
+    if status == "live":
+        truth_end_dt = None
+        effective_end = now_dt
+        source = "live_now"
+    elif status == "ended" and payload_end_dt:
+        truth_end_dt = payload_end_dt
+        effective_end = payload_end_dt
+        source = "payload_end"
+    elif status == "ended" and participant_end_dt:
+        truth_end_dt = participant_end_dt
+        effective_end = participant_end_dt
+        source = "participant_leave_fallback"
+    else:
+        truth_end_dt = payload_end_dt or participant_end_dt
+        effective_end = truth_end_dt or now_dt
+        source = "server_now_fallback" if not truth_end_dt else "best_known_end"
+    print(f"LIVE_DURATION_SOURCE status={status or '-'} source={source}")
+    print(f"TRUTH_END_SELECTED payload_end={fmt_dt(payload_end_dt)} participant_leave={fmt_dt(participant_end_dt)} selected={fmt_dt(truth_end_dt) if truth_end_dt else 'None'}")
+    if effective_end < start_dt:
+        effective_end = start_dt
+        print("LIVE_DURATION_CAPPED start_boundary")
+    seconds = max(int((effective_end - start_dt).total_seconds()), 0)
+    print(f"TRUTH_DURATION start={fmt_dt(start_dt)} end={fmt_dt(effective_end)} seconds={seconds}")
+    return seconds, truth_end_dt
+
+
 def member_display_name(row):
     if not row:
         return "-"
@@ -1795,6 +1830,7 @@ def ensure_meeting(payload_object):
                             start_time=COALESCE(%s, start_time),
                             status='live',
                             host_present=TRUE,
+                            end_time=NULL,
                             finalized_at=NULL
                         WHERE id=%s
                         RETURNING *
@@ -1802,6 +1838,7 @@ def ensure_meeting(payload_object):
                         (meeting_id, topic, topic, host_name, host_name, start_time, row["id"]),
                     )
                     row = cur.fetchone()
+                    print(f"START_CLEANUP_DONE meeting_uuid={meeting_uuid}")
                     conn.commit()
                     return row
 
@@ -1815,6 +1852,7 @@ def ensure_meeting(payload_object):
                     (meeting_uuid, meeting_id, topic, host_name, start_time),
                 )
                 row = cur.fetchone()
+                print(f"START_CLEANUP_DONE meeting_uuid={meeting_uuid}")
                 conn.commit()
                 return row
 
@@ -1833,6 +1871,7 @@ def ensure_meeting(payload_object):
                         start_time=COALESCE(%s, start_time),
                         status='live',
                         host_present=TRUE,
+                        end_time=NULL,
                         finalized_at=NULL
                     WHERE id=%s
                     RETURNING *
@@ -1840,6 +1879,7 @@ def ensure_meeting(payload_object):
                     (topic, topic, host_name, host_name, start_time, row["id"]),
                 )
                 row = cur.fetchone()
+                print(f"START_CLEANUP_DONE meeting_uuid={meeting_id}")
                 conn.commit()
                 return row
 
@@ -1851,6 +1891,7 @@ def ensure_meeting(payload_object):
                 (meeting_id, meeting_id, topic, host_name, start_time),
             )
             row = cur.fetchone()
+            print(f"START_CLEANUP_DONE meeting_uuid={meeting_id}")
         conn.commit()
 
     return row
@@ -5949,9 +5990,12 @@ button[type="submit"]{margin-top:20px!important;}
     window.ZA_LIVE_STATE = window.ZA_LIVE_STATE || {
         live:false, meeting_id:null, started_at:null, ended_at:null, server_now:null, last_snapshot_ts:0
     };
+    window.__ZA_TRUTH_ENGINE__ = window.__ZA_TRUTH_ENGINE__ || { owner: 'ZA_SINGLE_OWNER', timers: {}, hydrated: false };
+    console.log('LIVE_STATE_OWNER '+window.__ZA_TRUTH_ENGINE__.owner);
     function updateGlobalLiveNavState(data){
         const liveNav = document.getElementById('globalLiveNavLink');
         if(!liveNav) return;
+        if(!data || typeof data.has_live === 'undefined') return;
         const isLive = !!(data && data.has_live);
         liveNav.classList.toggle('live-status-live', isLive);
         liveNav.classList.toggle('live-status-idle', !isLive);
@@ -5979,9 +6023,8 @@ button[type="submit"]{margin-top:20px!important;}
     window.addEventListener('za:live-snapshot', function(e){ applyLiveStateFromSummary(e.detail || {}); });
 
     function startGlobalLiveSidebarUpdater(){
-        window.__ZA_LIVE_ENGINE_V3__ = window.__ZA_LIVE_ENGINE_V3__ || {};
-        if(window.__ZA_LIVE_ENGINE_V3__.globalUpdaterActive) return;
-        window.__ZA_LIVE_ENGINE_V3__.globalUpdaterActive = true;
+        const engine = window.__ZA_TRUTH_ENGINE__;
+        console.log('LIVE_STATE_OWNER '+engine.owner+' start=global_sidebar');
         let busy=false;
         const tick = async function(reason){
             if(busy) return;
@@ -5991,11 +6034,13 @@ button[type="submit"]{margin-top:20px!important;}
                 if(!res.ok) throw new Error('live-summary failed');
                 const data = await res.json();
                 applyLiveStateFromSummary(data || {});
+                if(reason === 'boot'){ engine.hydrated = true; console.log('LIVE_STATE_HYDRATED'); }
             }catch(_e){}
             finally{ busy=false; }
         };
         tick('boot');
-        setInterval(function(){ tick('interval'); }, 5000);
+        if(engine.timers.sidebar){ clearInterval(engine.timers.sidebar); console.log('DUPLICATE_ENGINE_REMOVED timer=sidebar'); }
+        engine.timers.sidebar = setInterval(function(){ tick('interval'); }, 5000);
         document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') tick('tab_visible'); });
         window.addEventListener('pageshow', function(){ tick('pageshow'); });
     }
@@ -6805,9 +6850,17 @@ def build_live_snapshot_payload(include_feed=True):
     not_joined_members = info.get("not_joined_members") or []
     start_dt = parse_dt(meeting.get("start_time")) or server_now
     payload_end_dt = parse_dt(meeting.get("end_time"))
+    participant_leave_dt = get_meeting_rows_last_activity(participants)
+    truth_duration_seconds, truth_end_dt = calculate_truth_duration(
+        start_dt,
+        meeting.get("status"),
+        payload_end_dt,
+        participant_leave_dt,
+        server_now,
+    )
     meeting_status = str(meeting.get("status") or "").strip().lower()
-    should_force_not_live = bool((payload_end_dt and server_now >= payload_end_dt) or (meeting_status and meeting_status != "live"))
-    effective_now = payload_end_dt if payload_end_dt and payload_end_dt < server_now else server_now
+    should_force_not_live = bool((truth_end_dt and server_now >= truth_end_dt) or (meeting_status and meeting_status != "live"))
+    effective_now = truth_end_dt if truth_end_dt and truth_end_dt < server_now else server_now
 
     active_now = 0
     known_active = 0
@@ -6883,7 +6936,7 @@ def build_live_snapshot_payload(include_feed=True):
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
-    max_duration_seconds = max(int((effective_now - start_dt).total_seconds()), 0)
+    max_duration_seconds = truth_duration_seconds
     is_live = (not should_force_not_live) and active_now > 0
     payload = {
         "ok": True,
@@ -6892,7 +6945,7 @@ def build_live_snapshot_payload(include_feed=True):
         "status": "ended" if should_force_not_live else "live",
         "server_now": server_now.isoformat(),
         "payload_start_time": start_dt.isoformat(),
-        "payload_end_time": payload_end_dt.isoformat() if payload_end_dt else None,
+        "payload_end_time": truth_end_dt.isoformat() if truth_end_dt else None,
         "max_duration_seconds": max_duration_seconds,
         "meeting": {
             "uuid": meeting.get("meeting_uuid") or "",
@@ -6913,7 +6966,7 @@ def build_live_snapshot_payload(include_feed=True):
             "meeting_duration_seconds": max_duration_seconds,
             "meeting_duration_display": format_live_duration(max_duration_seconds),
             "payload_start_time": start_dt.isoformat(),
-            "payload_end_time": payload_end_dt.isoformat() if payload_end_dt else None,
+            "payload_end_time": truth_end_dt.isoformat() if truth_end_dt else None,
             "status": "ended" if should_force_not_live else "live",
             "is_live": is_live,
             "max_duration_seconds": max_duration_seconds,
@@ -7134,9 +7187,9 @@ button[type="submit"]{margin-top:20px!important;}
 
         <script>
         (function(){
-            window.__ZA_LIVE_ENGINE_V3__ = window.__ZA_LIVE_ENGINE_V3__ || {};
-            if(window.__ZA_LIVE_ENGINE_V3__.livePageActive) return;
-            window.__ZA_LIVE_ENGINE_V3__.livePageActive = true;
+            window.__ZA_TRUTH_ENGINE__ = window.__ZA_TRUTH_ENGINE__ || { owner: 'ZA_SINGLE_OWNER', timers: {}, hydrated: false };
+            const truthEngine = window.__ZA_TRUTH_ENGINE__;
+            console.log('LIVE_STATE_OWNER '+truthEngine.owner+' start=live_page');
 
             let lastPayload = {{ data|tojson }};
             let lastServerNowMs = 0;
@@ -7311,7 +7364,7 @@ button[type="submit"]{margin-top:20px!important;}
                     tickDurations();
                 }else{
                     window.ZA_LIVE_STATE = {live:false, meeting_id:null, started_at:null, ended_at:(data.server_now||new Date().toISOString()), server_now:(data.server_now||null), last_snapshot_ts:Date.now()};
-                    if(durationTimer){ clearInterval(durationTimer); durationTimer=null; }
+                    if(durationTimer){ clearInterval(durationTimer); durationTimer=null; console.log('INTERPOLATION_STOPPED'); console.log('LIVE_STATE_STOP duration_interval'); }
                 }
                 renderFeed(data.feed||[]);
                 renderMissing(data.not_joined||[]);
@@ -7349,12 +7402,16 @@ button[type="submit"]{margin-top:20px!important;}
             const engineKey='__ZA_LIVE_POLL_TIMER_V1__';
             if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
             pollLiveSnapshot('initial');
+            if(truthEngine.timers.livePoll){ clearInterval(truthEngine.timers.livePoll); console.log('DUPLICATE_ENGINE_REMOVED timer=livePoll'); }
             pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },1000);
             if(durationTimer) clearInterval(durationTimer);
             if((lastPayload&&lastPayload.has_live)===true){
+                if(truthEngine.timers.liveDuration){ clearInterval(truthEngine.timers.liveDuration); console.log('DUPLICATE_ENGINE_REMOVED timer=liveDuration'); }
                 durationTimer=setInterval(tickDurations,1000);
             }
             window[engineKey]=pollTimer;
+            truthEngine.timers.livePoll = pollTimer;
+            truthEngine.timers.liveDuration = durationTimer;
             document.addEventListener('visibilitychange', function(){
                 if(document.visibilityState==='visible') pollLiveSnapshot('tab_visible');
             });
@@ -7363,6 +7420,7 @@ button[type="submit"]{margin-top:20px!important;}
                 if(pollTimer) clearInterval(pollTimer);
                 if(durationTimer) clearInterval(durationTimer);
                 if(window[engineKey]){ clearInterval(window[engineKey]); window[engineKey]=null; }
+                console.log('LIVE_STATE_STOP unload');
             });
         })();
         </script>
