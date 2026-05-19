@@ -4563,7 +4563,39 @@ def build_meeting_report_data(meeting_uuid):
     if end_time < start_time:
         end_time = start_time
 
-    meeting_total_seconds = max(int((end_time - start_time).total_seconds()), 0)
+    meeting_total_seconds = 0
+    meeting_duration_source = "participant_fallback"
+
+    stored_meeting_seconds = 0
+    for key in ("meeting_total_seconds", "total_seconds", "duration_seconds"):
+        raw_val = meeting.get(key)
+        if raw_val is None:
+            continue
+        try:
+            stored_meeting_seconds = max(int(float(raw_val)), 0)
+        except Exception:
+            stored_meeting_seconds = 0
+        if stored_meeting_seconds > 0:
+            break
+
+    if stored_meeting_seconds > 0:
+        meeting_total_seconds = stored_meeting_seconds
+        meeting_duration_source = "meeting_total_seconds"
+    else:
+        end_minus_start_seconds = max(int((end_time - start_time).total_seconds()), 0)
+        if end_minus_start_seconds > 0:
+            meeting_total_seconds = end_minus_start_seconds
+            meeting_duration_source = "end_minus_start"
+        else:
+            fallback_seconds = 0
+            for row in attendance_rows:
+                join_dt = parse_dt(row.get("first_join")) or parse_dt(row.get("current_join"))
+                leave_dt = parse_dt(row.get("last_leave")) or end_time
+                if join_dt and leave_dt and leave_dt > join_dt:
+                    fallback_seconds = max(fallback_seconds, int((leave_dt - join_dt).total_seconds()))
+            meeting_total_seconds = max(fallback_seconds, 0)
+            meeting_duration_source = "participant_fallback"
+    print(f"REPORT_DURATION_SELECTED meeting_uuid={meeting_uuid} source={meeting_duration_source} seconds={meeting_total_seconds}")
     present_threshold_minutes = round(meeting_total_seconds / 60 * get_setting("present_percentage", int) / 100.0, 2)
     late_summary_threshold_minutes = round(max((end_time - start_time).total_seconds(), 0) / 60 * get_setting("late_count_as_present_percentage", int) / 100.0, 2)
 
@@ -6159,8 +6191,11 @@ button[type="submit"]{margin-top:20px!important;}
             }
             if(!hydrated && window.ZA_LIVE_STATE && window.ZA_LIVE_STATE.live){ hydrated={has_live:true}; }
             if(hydrated){
-                updateGlobalLiveNavState(hydrated);
-                console.log('LIVE_STATE_HYDRATED source=cache has_live='+(hydrated.has_live?'1':'0'));
+                applyLiveStateFromSummary(hydrated);
+                const hydratedSource = (runtime.lastLiveState && typeof runtime.lastLiveState.has_live !== 'undefined')
+                    ? 'runtime'
+                    : (sessionStorage.getItem('za_live_runtime_state') ? 'sessionStorage' : 'localStorage');
+                console.log('SIDEBAR_CACHE_HYDRATED has_live='+(hydrated.has_live?'true':'false')+' source='+hydratedSource);
             }
         };
         hydrateFromCache();
