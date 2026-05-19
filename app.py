@@ -714,15 +714,27 @@ def format_live_duration(seconds):
     return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
 
 
-def calculate_truth_duration(start_time, payload_end_time=None, participant_leave_time=None, now_time=None):
+def calculate_truth_duration(start_time, payload_end_time=None, participant_leave_time=None, now_time=None, meeting_status=None):
     start_dt = parse_dt(start_time)
     if not start_dt:
         print("TRUTH_DURATION start_missing")
         return 0, None
-    truth_end_dt = parse_dt(payload_end_time) or parse_dt(participant_leave_time)
-    print(f"TRUTH_END_SELECTED payload_end={fmt_dt(payload_end_time)} participant_leave={fmt_dt(participant_leave_time)} selected={fmt_dt(truth_end_dt) if truth_end_dt else 'None'}")
     now_dt = parse_dt(now_time) or now_local()
-    effective_end = truth_end_dt or now_dt
+    status = str(meeting_status or "").strip().lower()
+    payload_end_dt = parse_dt(payload_end_time)
+    participant_leave_dt = parse_dt(participant_leave_time)
+
+    if status == "ended":
+        truth_end_dt = payload_end_dt or participant_leave_dt
+    else:
+        truth_end_dt = None
+
+    print(
+        f"TRUTH_END_SELECTED status={status or '-'} payload_end={fmt_dt(payload_end_time)} "
+        f"participant_leave={fmt_dt(participant_leave_time)} selected={fmt_dt(truth_end_dt) if truth_end_dt else 'None'}"
+    )
+
+    effective_end = truth_end_dt if truth_end_dt else now_dt
     if effective_end < start_dt:
         effective_end = start_dt
     seconds = max(int((effective_end - start_dt).total_seconds()), 0)
@@ -2503,7 +2515,6 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
                 f"finalized_at={fmt_dt(updated.get('finalized_at') if updated else now_local())}"
             )
         conn.commit()
-    clear_live_runtime_state(meeting_uuid)
     if run_post_tasks:
         try:
             evaluate_smart_alerts_for_meeting(meeting_uuid)
@@ -2527,6 +2538,16 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
         emit_live_snapshot("meeting_finalized", meeting_uuid)
     except Exception as exc:
         print(f"⚠️ realtime finalize emit skipped: {exc}")
+
+    finalized_marker = parse_dt((updated or {}).get("finalized_at"))
+    updated_status = str((updated or {}).get("status") or "").strip().lower()
+    if updated_status == "ended" and finalized_marker:
+        clear_live_runtime_state(meeting_uuid)
+    else:
+        print(
+            f"RUNTIME_STOP deferred meeting_uuid={meeting_uuid} "
+            f"status={updated_status or '-'} finalized_at={fmt_dt(finalized_marker)}"
+        )
     return updated
 
 
@@ -6926,8 +6947,8 @@ def build_live_snapshot_payload(include_feed=True):
     start_dt = parse_dt(meeting.get("start_time")) or server_now
     payload_end_dt = parse_dt(meeting.get("end_time"))
     participant_leave_dt = get_meeting_rows_last_activity(participants)
-    truth_duration_seconds, truth_end_dt = calculate_truth_duration(start_dt, payload_end_dt, participant_leave_dt, server_now)
     meeting_status = str(meeting.get("status") or "").strip().lower()
+    truth_duration_seconds, truth_end_dt = calculate_truth_duration(start_dt, payload_end_dt, participant_leave_dt, server_now, meeting_status)
     should_force_not_live = bool((truth_end_dt and server_now >= truth_end_dt) or (meeting_status and meeting_status != "live"))
     effective_now = truth_end_dt if truth_end_dt and truth_end_dt < server_now else server_now
 
