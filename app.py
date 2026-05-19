@@ -5971,7 +5971,7 @@ button[type="submit"]{margin-top:20px!important;}
     window.ZA_LIVE_STATE = window.ZA_LIVE_STATE || {
         live:false, meeting_id:null, started_at:null, ended_at:null, server_now:null, last_snapshot_ts:0
     };
-    window.__ZA_TRUTH_ENGINE__ = window.__ZA_TRUTH_ENGINE__ || { owner: null, timers: {} };
+    window.ZA_LIVE_RUNTIME = window.ZA_LIVE_RUNTIME || { owner: null, timers: {}, busy: {} };
     function updateGlobalLiveNavState(data){
         const liveNav = document.getElementById('globalLiveNavLink');
         if(!liveNav) return;
@@ -5996,19 +5996,20 @@ button[type="submit"]{margin-top:20px!important;}
             last_snapshot_ts: Date.now()
         };
         updateGlobalLiveNavState(summary);
+        try{ localStorage.setItem('za_live_has_live', summary.has_live ? '1' : '0'); }catch(_e){}
         window.dispatchEvent(new CustomEvent('za:live-state-updated', {detail: window.ZA_LIVE_STATE}));
     }
     window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data || {}); };
     window.addEventListener('za:live-snapshot', function(e){ applyLiveStateFromSummary(e.detail || {}); });
 
     function startGlobalLiveSidebarUpdater(){
-        const engine = window.__ZA_TRUTH_ENGINE__;
-        if(engine.owner && engine.owner !== 'global_sidebar'){
-            console.log('DUPLICATE_ENGINE_REMOVED owner='+engine.owner+' rejected=global_sidebar');
+        const runtime = window.ZA_LIVE_RUNTIME;
+        if(runtime.owner && runtime.owner !== 'global_sidebar'){
+            console.log('DUPLICATE_RUNTIME_REMOVED owner='+runtime.owner+' rejected=global_sidebar');
             return;
         }
-        engine.owner = 'global_sidebar';
-        console.log('TRUTH_ENGINE_OWNER global_sidebar');
+        runtime.owner = 'global_sidebar';
+        console.log('ZA_LIVE_RUNTIME_OWNER global_sidebar');
         let busy=false;
         const tick = async function(reason){
             if(busy) return;
@@ -6022,9 +6023,12 @@ button[type="submit"]{margin-top:20px!important;}
             }catch(_e){}
             finally{ busy=false; }
         };
+        const cachedLive = localStorage.getItem('za_live_has_live');
+        if(cachedLive === '1'){ updateGlobalLiveNavState({has_live:true}); }
+        if(window.ZA_LIVE_STATE && window.ZA_LIVE_STATE.live){ updateGlobalLiveNavState({has_live:true}); }
         tick('boot');
-        if(engine.timers.sidebar){ clearInterval(engine.timers.sidebar); console.log('DUPLICATE_ENGINE_REMOVED timer=sidebar'); }
-        engine.timers.sidebar = setInterval(function(){ tick('interval'); }, 5000);
+        if(runtime.timers.sidebar){ clearInterval(runtime.timers.sidebar); console.log('DUPLICATE_RUNTIME_REMOVED timer=sidebar'); }
+        runtime.timers.sidebar = setInterval(function(){ tick('interval'); }, 1000);
         document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') tick('tab_visible'); });
         window.addEventListener('pageshow', function(){ tick('pageshow'); });
     }
@@ -6850,7 +6854,7 @@ def build_live_snapshot_payload(include_feed=True):
     feed_items = []
 
     for p in participants:
-        is_active_now = p.get("current_join") is not None
+        is_active_now = (not should_force_not_live) and (p.get("current_join") is not None)
         is_known = bool(p.get("is_member"))
         is_host = bool(p.get("is_host"))
         live_total = calculate_live_duration(p, effective_now)
@@ -7165,14 +7169,14 @@ button[type="submit"]{margin-top:20px!important;}
 
         <script>
         (function(){
-            window.__ZA_TRUTH_ENGINE__ = window.__ZA_TRUTH_ENGINE__ || { owner: null, timers: {} };
-            const truthEngine = window.__ZA_TRUTH_ENGINE__;
-            if(truthEngine.owner && truthEngine.owner !== 'live_page'){
-                console.log('DUPLICATE_ENGINE_REMOVED owner='+truthEngine.owner+' rejected=live_page');
+            window.ZA_LIVE_RUNTIME = window.ZA_LIVE_RUNTIME || { owner: null, timers: {}, busy: {} };
+            const liveRuntime = window.ZA_LIVE_RUNTIME;
+            if(liveRuntime.owner && liveRuntime.owner !== 'live_page'){
+                console.log('DUPLICATE_RUNTIME_REMOVED owner='+liveRuntime.owner+' rejected=live_page');
                 return;
             }
-            truthEngine.owner = 'live_page';
-            console.log('TRUTH_ENGINE_OWNER live_page');
+            liveRuntime.owner = 'live_page';
+            console.log('ZA_LIVE_RUNTIME_OWNER live_page');
 
             let lastPayload = {{ data|tojson }};
             let lastServerNowMs = 0;
@@ -7218,9 +7222,7 @@ button[type="submit"]{margin-top:20px!important;}
                     row.dataset.backendDurationSeconds=String(backendSec);
                     row.dataset.durationBaseMs=String(nowMs);
                     row.dataset.isActive=((data&&data.has_live&&p.is_active)?'1':'0');
-                    const leaveSec=parseHms(p.last_leave||'');
-                    const joinSec=parseHms(p.first_join||'');
-                    row.dataset.maxDurationSeconds=String(leaveSec>joinSec?Math.max(backendSec,leaveSec-joinSec):0);
+                    row.dataset.maxDurationSeconds='0';
                     row.dataset.displayedDurationSeconds=String(Math.max(prevShown, backendSec));
                 });
                 const head=document.getElementById('lfDuration');
@@ -7230,9 +7232,7 @@ button[type="submit"]{margin-top:20px!important;}
                     head.dataset.backendDurationSeconds=String(backendMeetingSec);
                     head.dataset.durationBaseMs=String(nowMs);
                     head.dataset.isActive=(data&&data.has_live)?'1':'0';
-                    const startedSec=parseHms((data&&data.meeting&&data.meeting.start_time)||'');
-                    const endedSec=parseHms((data&&data.meeting&&data.meeting.end_time)||'');
-                    head.dataset.maxDurationSeconds=String(endedSec>startedSec?Math.max(backendMeetingSec,endedSec-startedSec):0);
+                    head.dataset.maxDurationSeconds='0';
                     head.dataset.displayedDurationSeconds=String(Math.max(prevMeeting, backendMeetingSec));
                 }
             }
@@ -7332,7 +7332,8 @@ button[type="submit"]{margin-top:20px!important;}
                 setText('lfTopic', data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting');
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
-                setText('lfDuration','Duration '+(summary.meeting_duration_display||'00:00:00'));
+                const canonicalMeetingDuration=(summary.meeting_duration_display||formatHms(summary.meeting_duration_seconds||0));
+                setText('lfDuration','Duration '+canonicalMeetingDuration);
                 animateLiveNumber('lfActive',summary.active_now||0);
                 animateLiveNumber('lfKnown',summary.known_count||0);
                 animateLiveNumber('lfUnknown',summary.unknown_count||0);
@@ -7391,7 +7392,7 @@ button[type="submit"]{margin-top:20px!important;}
                 durationTimer=setInterval(tickDurations,1000);
             }
             window[engineKey]=pollTimer;
-            truthEngine.timers.live = pollTimer;
+            liveRuntime.timers.live = pollTimer;
             document.addEventListener('visibilitychange', function(){
                 if(document.visibilityState==='visible') pollLiveSnapshot('tab_visible');
             });
