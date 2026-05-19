@@ -1945,7 +1945,14 @@ def is_meeting_too_old_for_live(meeting, now_dt=None):
 
 
 def clear_live_runtime_state(meeting_uuid=None):
-    """Clear all in-process live caches so finalized meetings cannot reappear."""
+    """Clear in-process live caches for a specific meeting UUID only."""
+    if not meeting_uuid:
+        print("RUNTIME_STOP skipped: missing meeting_uuid")
+        return
+    current_uuid = (LIVE_SNAPSHOT_MEMORY.get("meeting_uuid") or "").strip()
+    if current_uuid and current_uuid != str(meeting_uuid).strip():
+        print(f"RUNTIME_STOP skipped: active_meeting_uuid={current_uuid} target_meeting_uuid={meeting_uuid}")
+        return
     LIVE_SNAPSHOT_MEMORY["payload"] = None
     LIVE_SNAPSHOT_MEMORY["updated_at"] = 0
     LIVE_SNAPSHOT_MEMORY["meeting_uuid"] = None
@@ -1958,7 +1965,66 @@ def clear_live_runtime_state(meeting_uuid=None):
             _cache_clear_prefix(prefix)
         except Exception:
             pass
-    print(f"RUNTIME_STOP meeting_uuid={meeting_uuid or 'all'}")
+    print(f"RUNTIME_STOP meeting_uuid={meeting_uuid}")
+
+
+def resolve_active_meeting_for_event(meeting_uuid=None, meeting_id=None):
+    """Resolve the active meeting row for participant events without returning ended rows."""
+    resolved = None
+    meeting_uuid = str(meeting_uuid or "").strip()
+    meeting_id = str(meeting_id or "").strip()
+    with db() as conn:
+        with conn.cursor() as cur:
+            if meeting_uuid:
+                cur.execute(
+                    "SELECT * FROM meetings WHERE meeting_uuid=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1",
+                    (meeting_uuid,),
+                )
+                resolved = cur.fetchone()
+            if not resolved and meeting_id:
+                cur.execute(
+                    "SELECT * FROM meetings WHERE meeting_id=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1",
+                    (meeting_id,),
+                )
+                resolved = cur.fetchone()
+            if not resolved:
+                cur.execute(
+                    """
+                    SELECT * FROM meetings
+                    WHERE status='live'
+                    ORDER BY COALESCE(start_time, created_at) DESC, id DESC
+                    LIMIT 1
+                    """,
+                )
+                resolved = cur.fetchone()
+            if not resolved:
+                cur.execute(
+                    """
+                    SELECT * FROM meetings
+                    WHERE status='host_left_pending'
+                    ORDER BY COALESCE(start_time, created_at) DESC, id DESC
+                    LIMIT 1
+                    """,
+                )
+                resolved = cur.fetchone()
+            if not resolved:
+                cur.execute(
+                    """
+                    SELECT * FROM meetings
+                    WHERE status NOT IN ('ended','finalized')
+                      AND COALESCE(end_time, finalized_at) IS NULL
+                    ORDER BY COALESCE(start_time, created_at) DESC, id DESC
+                    LIMIT 1
+                    """,
+                )
+                resolved = cur.fetchone()
+    print(
+        "ACTIVE_MEETING_RESOLVED "
+        f"request_uuid={meeting_uuid or '-'} request_id={meeting_id or '-'} "
+        f"resolved_uuid={(resolved or {}).get('meeting_uuid') if resolved else 'None'} "
+        f"status={(resolved or {}).get('status') if resolved else 'None'}"
+    )
+    return resolved
 
 
 def get_meeting_rows_last_activity(attendance_rows):
@@ -6829,7 +6895,9 @@ def build_live_snapshot_payload(include_feed=True):
     info = read_live_snapshot()
     server_now = now_local()
     if not info:
-        clear_live_runtime_state()
+        cached_uuid = (LIVE_SNAPSHOT_MEMORY.get("meeting_uuid") or "").strip()
+        if cached_uuid:
+            clear_live_runtime_state(cached_uuid)
         payload = {
             "ok": True,
             "has_live": False,
@@ -11355,14 +11423,7 @@ def zoom_webhook():
         if "participant_joined" in event or "participant_left" in event:
             meeting_uuid = str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip()
             meeting_id = str(obj.get("id") or obj.get("meeting_id") or "").strip()
-            meeting = None
-            with db() as conn:
-                with conn.cursor() as cur:
-                    if meeting_uuid:
-                        cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1", (meeting_uuid,))
-                    elif meeting_id:
-                        cur.execute("SELECT * FROM meetings WHERE meeting_id=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1", (meeting_id,))
-                    meeting = cur.fetchone()
+            meeting = resolve_active_meeting_for_event(meeting_uuid=meeting_uuid, meeting_id=meeting_id)
             print("✅ PARTICIPANT EVENT LIVE MEETING:", meeting)
 
             if not meeting:
@@ -11426,6 +11487,7 @@ def zoom_webhook():
                     event_type,
                     is_host_override=is_host_override,
                 )
+                emit_live_snapshot("participant_joined", meeting_uuid)
             if is_host_end_leave:
                 with db() as conn:
                     with conn.cursor() as cur:
@@ -11463,13 +11525,7 @@ def zoom_webhook():
         if event in ("meeting.ended", "meeting.end"):
             meeting_uuid = str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip()
             meeting_id = str(obj.get("id") or obj.get("meeting_id") or "").strip()
-            with db() as conn:
-                with conn.cursor() as cur:
-                    if meeting_uuid:
-                        cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
-                    else:
-                        cur.execute("SELECT * FROM meetings WHERE meeting_id=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1", (meeting_id,))
-                    meeting = cur.fetchone()
+            meeting = resolve_active_meeting_for_event(meeting_uuid=meeting_uuid, meeting_id=meeting_id)
             print("✅ MEETING ENDED RESOLVED:", meeting)
 
             if not meeting:
