@@ -1793,7 +1793,9 @@ def ensure_meeting(payload_object):
                             topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
                             host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
                             start_time=COALESCE(%s, start_time),
-                            status=CASE WHEN status IS NULL OR status='' THEN 'live' ELSE status END
+                            status='live',
+                            host_present=TRUE,
+                            finalized_at=NULL
                         WHERE id=%s
                         RETURNING *
                         """,
@@ -1806,8 +1808,8 @@ def ensure_meeting(payload_object):
                 # Do NOT reuse an old recurring meeting_id row when UUID is new.
                 cur.execute(
                     """
-                    INSERT INTO meetings(meeting_uuid, meeting_id, topic, host_name, start_time, status)
-                    VALUES (%s, %s, %s, %s, %s, 'live')
+                    INSERT INTO meetings(meeting_uuid, meeting_id, topic, host_name, start_time, status, host_present)
+                    VALUES (%s, %s, %s, %s, %s, 'live', TRUE)
                     RETURNING *
                     """,
                     (meeting_uuid, meeting_id, topic, host_name, start_time),
@@ -1828,7 +1830,10 @@ def ensure_meeting(payload_object):
                     UPDATE meetings
                     SET topic=CASE WHEN %s <> '' THEN %s ELSE topic END,
                         host_name=CASE WHEN %s <> '' THEN %s ELSE host_name END,
-                        start_time=COALESCE(%s, start_time)
+                        start_time=COALESCE(%s, start_time),
+                        status='live',
+                        host_present=TRUE,
+                        finalized_at=NULL
                     WHERE id=%s
                     RETURNING *
                     """,
@@ -1840,8 +1845,8 @@ def ensure_meeting(payload_object):
 
             cur.execute(
                 """
-                INSERT INTO meetings(meeting_uuid, meeting_id, topic, host_name, start_time, status)
-                VALUES (%s, %s, %s, %s, %s, 'live') RETURNING *
+                INSERT INTO meetings(meeting_uuid, meeting_id, topic, host_name, start_time, status, host_present)
+                VALUES (%s, %s, %s, %s, %s, 'live', TRUE) RETURNING *
                 """,
                 (meeting_id, meeting_id, topic, host_name, start_time),
             )
@@ -5955,8 +5960,9 @@ button[type="submit"]{margin-top:20px!important;}
     window.addEventListener('za:live-snapshot', function(e){ updateGlobalLiveNavState(e.detail || {}); });
 
     function startGlobalLiveSidebarUpdater(){
-        if(window.__ZA_GLOBAL_LIVE_SUMMARY_UPDATER__) return;
-        window.__ZA_GLOBAL_LIVE_SUMMARY_UPDATER__ = true;
+        window.__ZA_LIVE_ENGINE_V3__ = window.__ZA_LIVE_ENGINE_V3__ || {};
+        if(window.__ZA_LIVE_ENGINE_V3__.globalUpdaterActive) return;
+        window.__ZA_LIVE_ENGINE_V3__.globalUpdaterActive = true;
         let busy=false;
         const tick = async function(reason){
             if(busy) return;
@@ -6909,14 +6915,7 @@ _ZA_LIVE_SUMMARY_CACHE = {'ts': 0, 'payload': None}
 @app.route("/api/live-summary")
 @login_required
 def api_live_summary():
-    """Live dashboard polling endpoint. Always returns fresh live data for /live."""
-    try:
-        _ref = request.headers.get("Referer") or ""
-        if "/live" not in _ref and request.args.get("force") != "1":
-            return jsonify({"ok": True, "blocked": True, "summary": {}})
-    except Exception:
-        pass
-
+    """Global backend-truth live state endpoint for all pages."""
     payload = build_live_snapshot_payload(include_feed=True)
 
     response = jsonify({
@@ -7089,8 +7088,9 @@ button[type="submit"]{margin-top:20px!important;}
 
         <script>
         (function(){
-            if(window.__ZA_LIVE_STABILIZED_ENGINE_V1__) return;
-            window.__ZA_LIVE_STABILIZED_ENGINE_V1__ = true;
+            window.__ZA_LIVE_ENGINE_V3__ = window.__ZA_LIVE_ENGINE_V3__ || {};
+            if(window.__ZA_LIVE_ENGINE_V3__.livePageActive) return;
+            window.__ZA_LIVE_ENGINE_V3__.livePageActive = true;
 
             let lastPayload = {{ data|tojson }};
             let lastServerNowMs = 0;
@@ -7251,7 +7251,11 @@ button[type="submit"]{margin-top:20px!important;}
                 setDisplay('lfTableWrap',rows.length?'block':'none');
                 updateParticipantRows(rows, summary);
                 syncDurationBases(data);
-                tickDurations();
+                if(data.has_live){
+                    tickDurations();
+                }else{
+                    if(durationTimer){ clearInterval(durationTimer); durationTimer=null; }
+                }
                 renderFeed(data.feed||[]);
                 renderMissing(data.not_joined||[]);
                 const conn=document.getElementById('lfConn');
@@ -7273,6 +7277,9 @@ button[type="submit"]{margin-top:20px!important;}
                         lastServerNowMs = serverNowMs;
                     }
                     render(data);
+                    if(data && data.has_live && !durationTimer){
+                        durationTimer=setInterval(tickDurations,1000);
+                    }
                 }catch(e){
                     const conn=document.getElementById('lfConn');
                     if(conn){ conn.className='live-fix-conn bad'; conn.textContent='● Safe polling retrying'; }
@@ -7287,7 +7294,9 @@ button[type="submit"]{margin-top:20px!important;}
             setTimeout(function(){ pollLiveSnapshot('initial'); },350);
             pollTimer=setInterval(function(){ pollLiveSnapshot('timer'); },1000);
             if(durationTimer) clearInterval(durationTimer);
-            durationTimer=setInterval(tickDurations,1000);
+            if((lastPayload&&lastPayload.has_live)===true){
+                durationTimer=setInterval(tickDurations,1000);
+            }
             window[engineKey]=pollTimer;
             document.addEventListener('visibilitychange', function(){
                 if(document.visibilityState==='visible') pollLiveSnapshot('tab_visible');
@@ -11223,12 +11232,21 @@ def zoom_webhook():
             return jsonify({"ok": True})
 
         if "participant_joined" in event or "participant_left" in event:
-            meeting = ensure_meeting(obj)
-            print("✅ PARTICIPANT EVENT MEETING:", meeting)
+            meeting_uuid = str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip()
+            meeting_id = str(obj.get("id") or obj.get("meeting_id") or "").strip()
+            meeting = None
+            with db() as conn:
+                with conn.cursor() as cur:
+                    if meeting_uuid:
+                        cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s AND status='live' ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                    elif meeting_id:
+                        cur.execute("SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY id DESC LIMIT 1", (meeting_id,))
+                    meeting = cur.fetchone()
+            print("✅ PARTICIPANT EVENT LIVE MEETING:", meeting)
 
             if not meeting:
-                print("❌ meeting not resolved")
-                return jsonify({"ok": False, "reason": "meeting not resolved"}), 200
+                print("ℹ️ participant event ignored: no live meeting found")
+                return jsonify({"ok": True, "ignored": "no live meeting"}), 200
 
             meeting_uuid = meeting["meeting_uuid"]
             event_type = "join" if "participant_joined" in event else "leave"
