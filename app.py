@@ -1548,6 +1548,8 @@ def init_db():
                     late_count INTEGER NOT NULL DEFAULT 0,
                     absent_count INTEGER NOT NULL DEFAULT 0,
                     host_present BOOLEAN NOT NULL DEFAULT FALSE,
+                    host_left_pending BOOLEAN NOT NULL DEFAULT FALSE,
+                    meeting_closed BOOLEAN NOT NULL DEFAULT FALSE,
                     notes TEXT
                 )
                 """
@@ -1664,6 +1666,8 @@ def init_db():
             ensure_column(conn, "meetings", "late_count", "INTEGER NOT NULL DEFAULT 0")
             ensure_column(conn, "meetings", "absent_count", "INTEGER NOT NULL DEFAULT 0")
             ensure_column(conn, "meetings", "host_present", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "meetings", "host_left_pending", "BOOLEAN NOT NULL DEFAULT FALSE")
+            ensure_column(conn, "meetings", "meeting_closed", "BOOLEAN NOT NULL DEFAULT FALSE")
             ensure_column(conn, "meetings", "notes", "TEXT")
 
         if table_exists(conn, "attendance"):
@@ -1811,6 +1815,8 @@ def ensure_meeting(payload_object):
                             start_time=COALESCE(%s, start_time),
                             status='live',
                             host_present=TRUE,
+                            host_left_pending=FALSE,
+                            meeting_closed=FALSE,
                             end_time=NULL,
                             finalized_at=NULL
                         WHERE id=%s
@@ -1852,6 +1858,8 @@ def ensure_meeting(payload_object):
                         start_time=COALESCE(%s, start_time),
                         status='live',
                         host_present=TRUE,
+                        host_left_pending=FALSE,
+                        meeting_closed=FALSE,
                         end_time=NULL,
                         finalized_at=NULL
                     WHERE id=%s
@@ -1950,6 +1958,7 @@ def clear_live_runtime_state(meeting_uuid=None):
             _cache_clear_prefix(prefix)
         except Exception:
             pass
+    print(f"RUNTIME_STOP meeting_uuid={meeting_uuid or 'all'}")
 
 
 def get_meeting_rows_last_activity(attendance_rows):
@@ -2394,6 +2403,8 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
                 SET end_time=%s,
                     status='ended',
                     finalized_at=NOW(),
+                    host_left_pending=FALSE,
+                    meeting_closed=TRUE,
                     unique_participants=%s,
                     member_participants=%s,
                     unknown_participants=%s,
@@ -2412,11 +2423,19 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
                     present_count,
                     late_count,
                     absent_count,
-                    host_present,
+                    False,
                     meeting_uuid,
                 ),
             )
             updated = cur.fetchone()
+            print(
+                f"STATE_TRANSITION meeting_uuid={meeting_uuid} from=HOST_LEFT_PENDING|LIVE to=ENDED "
+                f"reason=meeting.ended end_time={fmt_dt(end_time)}"
+            )
+            print(
+                f"MEETING_FINALIZED meeting_uuid={meeting_uuid} status=ended meeting_closed=true "
+                f"finalized_at={fmt_dt(updated.get('finalized_at') if updated else now_local())}"
+            )
         conn.commit()
     clear_live_runtime_state(meeting_uuid)
     if run_post_tasks:
@@ -11323,6 +11342,12 @@ def zoom_webhook():
 
         if event == "meeting.started":
             meeting = ensure_meeting(obj)
+            if meeting:
+                print(f"STATE_TRANSITION meeting_uuid={meeting['meeting_uuid']} from=STARTING to=LIVE reason=meeting.started")
+                print(
+                    f"MEETING_LIFECYCLE meeting_uuid={meeting['meeting_uuid']} status=live "
+                    f"host_present=true host_left_pending=false meeting_closed=false"
+                )
             print("✅ MEETING STARTED RESOLVED:", meeting)
             print("📝 WEBHOOK LOG zoom_started:", meeting["meeting_uuid"] if meeting else "unknown")
             return jsonify({"ok": True})
@@ -11334,9 +11359,9 @@ def zoom_webhook():
             with db() as conn:
                 with conn.cursor() as cur:
                     if meeting_uuid:
-                        cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s AND status='live' ORDER BY id DESC LIMIT 1", (meeting_uuid,))
+                        cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1", (meeting_uuid,))
                     elif meeting_id:
-                        cur.execute("SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY id DESC LIMIT 1", (meeting_id,))
+                        cur.execute("SELECT * FROM meetings WHERE meeting_id=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1", (meeting_id,))
                     meeting = cur.fetchone()
             print("✅ PARTICIPANT EVENT LIVE MEETING:", meeting)
 
@@ -11390,18 +11415,48 @@ def zoom_webhook():
                 bool(obj.get("host_email")) and str(obj.get("host_email")).strip().lower() == str(participant_email or "").strip().lower()
             )
 
-            update_participant(
-                meeting_uuid,
-                participant_name,
-                participant_email,
-                event_time,
-                event_type,
-                is_host_override=is_host_override,
-            )
             leave_reason = str(participant.get("leave_reason") or obj.get("leave_reason") or "").strip().lower()
-            if event_type == "leave" and "host ended the meeting" in leave_reason:
-                finalize_meeting(meeting_uuid, event_time, run_post_tasks=False)
-                clear_live_runtime_state(meeting_uuid)
+            is_host_end_leave = event_type == "leave" and "host ended the meeting" in leave_reason
+            if not is_host_end_leave:
+                update_participant(
+                    meeting_uuid,
+                    participant_name,
+                    participant_email,
+                    event_time,
+                    event_type,
+                    is_host_override=is_host_override,
+                )
+            if is_host_end_leave:
+                with db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE meetings
+                            SET status='host_left_pending',
+                                host_left_pending=TRUE,
+                                meeting_closed=FALSE,
+                                host_present=FALSE,
+                                end_time=NULL,
+                                finalized_at=NULL
+                            WHERE meeting_uuid=%s
+                            RETURNING *
+                            """,
+                            (meeting_uuid,),
+                        )
+                        pending_row = cur.fetchone()
+                    conn.commit()
+                print(
+                    f"STATE_TRANSITION meeting_uuid={meeting_uuid} from=LIVE to=HOST_LEFT_PENDING "
+                    f"reason=participant_left host ended meeting"
+                )
+                print(
+                    f"HOST_LEFT_PENDING meeting_uuid={meeting_uuid} participant={participant_name} "
+                    f"leave_reason={leave_reason}"
+                )
+                print(
+                    f"MEETING_LIFECYCLE meeting_uuid={meeting_uuid} status={pending_row.get('status') if pending_row else 'host_left_pending'} "
+                    f"waiting_for=meeting.ended"
+                )
             print("📝 WEBHOOK LOG zoom_participant_event:", f"{event} :: {meeting_uuid} :: {participant_name}")
             return jsonify({"ok": True})
 
@@ -11413,7 +11468,7 @@ def zoom_webhook():
                     if meeting_uuid:
                         cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
                     else:
-                        cur.execute("SELECT * FROM meetings WHERE meeting_id=%s AND status='live' ORDER BY id DESC LIMIT 1", (meeting_id,))
+                        cur.execute("SELECT * FROM meetings WHERE meeting_id=%s AND status IN ('live','host_left_pending') ORDER BY id DESC LIMIT 1", (meeting_id,))
                     meeting = cur.fetchone()
             print("✅ MEETING ENDED RESOLVED:", meeting)
 
