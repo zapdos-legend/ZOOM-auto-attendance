@@ -7121,6 +7121,41 @@ def _live_seconds_since(value):
     return max(int((now_local() - dt).total_seconds()), 0)
 
 
+def is_meeting_currently_active(meeting=None, participants=None, active_now_count=0, host_present=False, participant_live_source_seen=False):
+    """Single active-truth helper for every live surface and runtime gate."""
+    meeting = meeting or {}
+    participants = participants or []
+    meeting_status = str(meeting.get("status") or "").strip().lower()
+    host_pending = bool(meeting.get("host_left_pending")) or meeting_status == "host_left_pending"
+    runtime_participant_exists = any(bool(p.get("current_join")) for p in participants)
+    status_live = meeting_status == "live"
+    result = bool(
+        active_now_count > 0
+        or participant_live_source_seen
+        or runtime_participant_exists
+        or bool(host_present)
+        or host_pending
+        or status_live
+    )
+    source_flags = []
+    if active_now_count > 0:
+        source_flags.append("active_participant_session")
+    if participant_live_source_seen:
+        source_flags.append("participant_duration_source_live")
+    if runtime_participant_exists:
+        source_flags.append("runtime_participant_exists")
+    if host_present:
+        source_flags.append("host_active")
+    if host_pending:
+        source_flags.append("host_left_pending")
+    if status_live:
+        source_flags.append("meeting_status_live")
+    source = ",".join(source_flags) if source_flags else "none"
+    print(f"ACTIVE_TRUTH_SOURCE meeting_uuid={meeting.get('meeting_uuid') or '-'} source={source}")
+    print(f"ACTIVE_TRUTH_RESULT meeting_uuid={meeting.get('meeting_uuid') or '-'} active={'true' if result else 'false'}")
+    return result, source
+
+
 def build_live_snapshot_payload(include_feed=True):
     """Lightweight live dashboard payload for AJAX polling. Does not change attendance logic."""
     # Polling reads backend truth only. Stale live rows are finalized/hidden before
@@ -7165,8 +7200,9 @@ def build_live_snapshot_payload(include_feed=True):
     meeting_for_truth["status"] = meeting_status or meeting_for_truth.get("status")
     meeting_for_truth["end_time"] = payload_end_dt or meeting_for_truth.get("end_time")
     truth_duration_seconds, truth_end_dt = calculate_meeting_live_duration(meeting_for_truth, server_now)
-    should_force_not_live = bool((truth_end_dt and server_now >= truth_end_dt) or (meeting_status and meeting_status != "live"))
-    effective_now = truth_end_dt if truth_end_dt and truth_end_dt < server_now else server_now
+    is_meeting_ended = meeting_status == "ended"
+    should_force_not_live = bool(truth_end_dt and server_now >= truth_end_dt and is_meeting_ended)
+    effective_now = truth_end_dt if (is_meeting_ended and truth_end_dt and truth_end_dt < server_now) else server_now
 
     active_now = 0
     known_active = 0
@@ -7176,15 +7212,18 @@ def build_live_snapshot_payload(include_feed=True):
     host_present = False
     participant_payload = []
     feed_items = []
+    participant_live_source_seen = False
 
     for p in participants:
-        is_active_now = (not should_force_not_live) and (p.get("current_join") is not None)
+        live_total, participant_truth_source = calculate_participant_truth_duration(p, end_time=effective_now)
+        is_active_now = (p.get("current_join") is not None)
         is_known = bool(p.get("is_member"))
         is_host = bool(p.get("is_host"))
-        live_total = calculate_live_duration(p, effective_now)
+        if participant_truth_source == "live":
+            participant_live_source_seen = True
         live_status = "LIVE" if (is_active_now and not should_force_not_live) else "LEFT"
         category = "HOST" if is_host else ("MEMBER" if is_known else "UNKNOWN")
-        if is_active_now and not should_force_not_live:
+        if is_active_now:
             active_now += 1
             if is_known:
                 known_active += 1
@@ -7243,16 +7282,19 @@ def build_live_snapshot_payload(include_feed=True):
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
     max_duration_seconds = truth_duration_seconds
-    is_live = (not should_force_not_live) and (
-        active_now > 0
-        or bool(host_present)
-        or str(meeting.get("status") or "").strip().lower() in ("live", "host_left_pending")
+    is_live, active_truth_source = is_meeting_currently_active(
+        meeting=meeting,
+        participants=participants,
+        active_now_count=active_now,
+        host_present=host_present,
+        participant_live_source_seen=participant_live_source_seen,
     )
     payload = {
         "ok": True,
         "has_live": is_live,
         "is_live": is_live,
         "status": "ended" if should_force_not_live else "live",
+        "active_truth_source": active_truth_source,
         "server_now": server_now.isoformat(),
         "payload_start_time": start_dt.isoformat(),
         "payload_end_time": truth_end_dt.isoformat() if truth_end_dt else None,
