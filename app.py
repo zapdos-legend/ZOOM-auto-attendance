@@ -1509,17 +1509,7 @@ def finalize_stale_live_meetings():
                 # otherwise a no-participant live row can stay active forever and resurrect later.
                 if stale_by_age or (started_at and started_at <= threshold_time):
                     try:
-                        cur.execute(
-                            """
-                            UPDATE meetings
-                            SET end_time=COALESCE(end_time, %s),
-                                status='ended',
-                                finalized_at=COALESCE(finalized_at, NOW())
-                            WHERE meeting_uuid=%s AND status='live'
-                            """,
-                            (started_at or now_dt, meeting_uuid),
-                        )
-                        clear_live_runtime_state(meeting_uuid)
+                        finalize_meeting(meeting_uuid, started_at or now_dt, run_post_tasks=False)
                     except Exception as e:
                         print(f"⚠️ stale empty meeting cleanup skipped for {meeting_uuid}: {e}")
         conn.commit()
@@ -1960,7 +1950,7 @@ def calculate_participant_truth_duration(row, end_time=None):
         seconds = completed_duration
         source = "finalized"
     visible_span_seconds = get_row_visible_span_seconds(row, end_time)
-    if visible_span_seconds is not None and seconds > visible_span_seconds:
+    if source != "live" and visible_span_seconds is not None and seconds > visible_span_seconds:
         seconds = visible_span_seconds
     first_join_dt = parse_dt(row.get("first_join"))
     last_leave_dt = parse_dt(row.get("last_leave"))
@@ -1970,6 +1960,8 @@ def calculate_participant_truth_duration(row, end_time=None):
             seconds = backfill_seconds
             source = "backfilled"
             print(f"DURATION_BACKFILLED participant={participant_name} seconds={seconds}")
+    if source == "live":
+        print(f"ASSERT_DURATION_TRUTH_PASS participant={participant_name} live_seconds={max(seconds, 0)}")
     print(f"PARTICIPANT_DURATION_TRUTH participant={participant_name} source={source} seconds={max(seconds, 0)}")
     print(f"REPORT_PARTICIPANT_DURATION participant={participant_name} source={source} seconds={max(seconds, 0)}")
     return max(seconds, 0), source
@@ -2713,6 +2705,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
     if updated_status == "ended" and finalized_marker:
         print(f"RUNTIME_STOP_ALLOWED meeting_uuid={meeting_uuid} status={updated_status} finalized_at={fmt_dt(finalized_marker)}")
         clear_live_runtime_state(meeting_uuid, (updated or {}).get("meeting_id"))
+        print(f"ASSERT_RUNTIME_CLEAR_PASS meeting_uuid={meeting_uuid} finalized_at={fmt_dt(finalized_marker)}")
     else:
         print(
             f"RUNTIME_STOP deferred meeting_uuid={meeting_uuid} "
