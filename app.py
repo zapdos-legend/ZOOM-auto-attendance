@@ -1911,20 +1911,33 @@ def get_row_visible_span_seconds(row, end_time=None):
 
 
 def get_row_effective_total_seconds(row, end_time=None):
-    total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
+    return calculate_participant_truth_duration(row, end_time=end_time)[0]
+
+
+def calculate_participant_truth_duration(row, end_time=None):
+    """Single participant duration truth helper used by report/profile/analytics/live surfaces."""
+    row = row or {}
+    end_dt = parse_dt(end_time) or now_local()
+    completed_duration = cast_setting_value(
+        row.get("completed_duration_seconds")
+        if row.get("completed_duration_seconds") is not None
+        else row.get("total_seconds") or 0,
+        int,
+    )
+    completed_duration = max(completed_duration, 0)
     current_join_dt = parse_dt(row.get("current_join"))
-    end_dt = parse_dt(end_time)
-    if current_join_dt:
-        if end_dt and current_join_dt > end_dt:
-            current_join_dt = end_dt
-        if end_dt and current_join_dt:
-            total_seconds += max(int((end_dt - current_join_dt).total_seconds()), 0)
-
+    if current_join_dt and current_join_dt <= end_dt:
+        seconds = completed_duration + max(int((end_dt - current_join_dt).total_seconds()), 0)
+        source = "live"
+    else:
+        seconds = completed_duration
+        source = "finalized"
     visible_span_seconds = get_row_visible_span_seconds(row, end_time)
-    if visible_span_seconds is not None and total_seconds > visible_span_seconds:
-        total_seconds = visible_span_seconds
-
-    return max(total_seconds, 0)
+    if visible_span_seconds is not None and seconds > visible_span_seconds:
+        seconds = visible_span_seconds
+    participant_name = row.get("participant_name") or "-"
+    print(f"REPORT_PARTICIPANT_DURATION participant={participant_name} source={source} seconds={max(seconds, 0)}")
+    return max(seconds, 0), source
 
 
 def calculate_live_duration(row, end_time=None):
@@ -1936,14 +1949,7 @@ def calculate_live_duration(row, end_time=None):
     """
     try:
         row = row or {}
-        completed_duration = max(cast_setting_value(row.get("total_seconds") or 0, int), 0)
-        current_join_dt = parse_dt(row.get("current_join"))
-        end_dt = parse_dt(end_time) or now_local()
-        if current_join_dt:
-            if current_join_dt > end_dt:
-                return completed_duration
-            return completed_duration + max(int((end_dt - current_join_dt).total_seconds()), 0)
-        return completed_duration
+        return calculate_participant_truth_duration(row, end_time=end_time)[0]
     except Exception:
         return 0
 
@@ -11565,13 +11571,21 @@ def zoom_webhook():
         print("📌 PARTICIPANT:", participant)
 
         if event == "meeting.started":
+            preexisting = resolve_active_meeting_for_event(
+                meeting_uuid=str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip(),
+                meeting_id=str(obj.get("id") or obj.get("meeting_id") or "").strip(),
+                event_time=parse_dt(obj.get("start_time")) or now_local(),
+            )
             meeting = ensure_meeting(obj)
             if meeting:
+                if preexisting:
+                    print(f"MERGED_WITH_STARTED_EVENT meeting_uuid={meeting['meeting_uuid']}")
                 print(f"STATE_TRANSITION meeting_uuid={meeting['meeting_uuid']} from=STARTING to=LIVE reason=meeting.started")
                 print(
                     f"MEETING_LIFECYCLE meeting_uuid={meeting['meeting_uuid']} status=live "
                     f"host_present=true host_left_pending=false meeting_closed=false"
                 )
+                print("LIVE_STATE_IMMEDIATE status=live")
             print("✅ MEETING STARTED RESOLVED:", meeting)
             print("📝 WEBHOOK LOG zoom_started:", meeting["meeting_uuid"] if meeting else "unknown")
             return jsonify({"ok": True})
@@ -11593,8 +11607,21 @@ def zoom_webhook():
             print("✅ PARTICIPANT EVENT LIVE MEETING:", meeting)
 
             if not meeting:
-                print("ℹ️ participant event ignored: no live meeting found")
-                return jsonify({"ok": True, "ignored": "no live meeting"}), 200
+                meeting = ensure_meeting(
+                    {
+                        "uuid": meeting_uuid or None,
+                        "meeting_uuid": meeting_uuid or None,
+                        "id": meeting_id or None,
+                        "meeting_id": meeting_id or None,
+                        "topic": obj.get("topic") or "Zoom Meeting",
+                        "start_time": fmt_dt(event_time),
+                    }
+                )
+                if meeting:
+                    print(f"EARLY_MEETING_BOOTSTRAP meeting_uuid={meeting.get('meeting_uuid')} source=participant_join")
+                else:
+                    print("ℹ️ participant event ignored: no live meeting found")
+                    return jsonify({"ok": True, "ignored": "no live meeting"}), 200
 
             meeting_uuid = meeting["meeting_uuid"]
 
@@ -11645,6 +11672,7 @@ def zoom_webhook():
                     is_host_override=is_host_override,
                 )
                 emit_live_snapshot("participant_joined", meeting_uuid)
+                print("LIVE_STATE_IMMEDIATE status=live")
             if is_host_end_leave:
                 with db() as conn:
                     with conn.cursor() as cur:
