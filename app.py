@@ -7126,15 +7126,46 @@ def is_meeting_currently_active(meeting=None, participants=None, active_now_coun
     meeting = meeting or {}
     participants = participants or []
     meeting_status = str(meeting.get("status") or "").strip().lower()
-    host_pending = bool(meeting.get("host_left_pending")) or meeting_status == "host_left_pending"
-    runtime_participant_exists = any(bool(p.get("current_join")) for p in participants)
     status_live = meeting_status == "live"
+    active_runtime_window = 60
+    meeting_uuid = str(meeting.get("meeting_uuid") or "").strip()
+    runtime_participant_support_seen = False
+
+    for p in participants:
+        participant_key = p.get("participant_key") or p.get("participant_name") or p.get("id") or "-"
+        current_join_dt = parse_dt(p.get("current_join"))
+        participant_meeting_uuid = str(p.get("meeting_uuid") or "").strip()
+        last_seen_candidate = parse_dt(p.get("last_leave")) or current_join_dt or parse_dt(p.get("first_join"))
+        last_seen_age = 0
+        if last_seen_candidate:
+            last_seen_age = max(int((now_local() - last_seen_candidate).total_seconds()), 0)
+
+        print(
+            f"ACTIVE_RUNTIME_AGE participant={participant_key} "
+            f"meeting_uuid={participant_meeting_uuid or '-'} age_seconds={last_seen_age}"
+        )
+
+        accepts_runtime = bool(
+            current_join_dt
+            and meeting_uuid
+            and participant_meeting_uuid == meeting_uuid
+            and last_seen_age <= active_runtime_window
+        )
+        if accepts_runtime:
+            runtime_participant_support_seen = True
+            print(
+                f"ACTIVE_RUNTIME_ACCEPT participant={participant_key} "
+                f"meeting_uuid={participant_meeting_uuid or '-'}"
+            )
+        else:
+            print(
+                f"ACTIVE_RUNTIME_REJECT participant={participant_key} "
+                f"meeting_uuid={participant_meeting_uuid or '-'}"
+            )
+
     result = bool(
         active_now_count > 0
         or participant_live_source_seen
-        or runtime_participant_exists
-        or bool(host_present)
-        or host_pending
         or status_live
     )
     source_flags = []
@@ -7142,14 +7173,10 @@ def is_meeting_currently_active(meeting=None, participants=None, active_now_coun
         source_flags.append("active_participant_session")
     if participant_live_source_seen:
         source_flags.append("participant_duration_source_live")
-    if runtime_participant_exists:
-        source_flags.append("runtime_participant_exists")
-    if host_present:
-        source_flags.append("host_active")
-    if host_pending:
-        source_flags.append("host_left_pending")
     if status_live:
         source_flags.append("meeting_status_live")
+    if runtime_participant_support_seen:
+        source_flags.append("runtime_participant_support_only")
     source = ",".join(source_flags) if source_flags else "none"
     print(f"ACTIVE_TRUTH_SOURCE meeting_uuid={meeting.get('meeting_uuid') or '-'} source={source}")
     print(f"ACTIVE_TRUTH_RESULT meeting_uuid={meeting.get('meeting_uuid') or '-'} active={'true' if result else 'false'}")
