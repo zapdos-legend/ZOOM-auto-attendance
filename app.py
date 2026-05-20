@@ -617,6 +617,7 @@ DEFAULT_SETTINGS = {
 }
 
 DB_INITIALIZED = False
+DB_MIGRATION_COMPLETED = False
 LAST_STALE_CHECK_TS = 0
 SETTINGS_CACHE = {}
 LIVE_SNAPSHOT_MEMORY = {"payload": None, "updated_at": 0, "meeting_uuid": None}
@@ -1173,6 +1174,27 @@ def ensure_index(conn, index_name: str, create_sql: str):
             cur.execute(create_sql)
 
 
+def run_startup_db_migrations():
+    global DB_MIGRATION_COMPLETED
+    if DB_MIGRATION_COMPLETED:
+        return
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                ALTER TABLE attendance
+                ADD COLUMN IF NOT EXISTS completed_duration_seconds INTEGER DEFAULT 0;
+                """
+            )
+        conn.commit()
+    DB_MIGRATION_COMPLETED = True
+    print("DB_MIGRATION_COMPLETED completed_duration_seconds=true")
+
+
+def ensure_startup_database_ready():
+    run_startup_db_migrations()
+
+
 def fix_database_compatibility():
     with db() as conn:
         with conn.cursor() as cur:
@@ -1700,6 +1722,7 @@ def init_db():
             ensure_column(conn, "attendance", "final_status", "TEXT")
             ensure_column(conn, "attendance", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
             ensure_column(conn, "attendance", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            ensure_column(conn, "attendance", "completed_duration_seconds", "INTEGER DEFAULT 0")
 
         if table_exists(conn, "activity_log"):
             ensure_column(conn, "activity_log", "username", "TEXT")
@@ -6491,6 +6514,7 @@ def startup_once():
         try:
             init_db()
             fix_database_compatibility()
+            ensure_startup_database_ready()
             DB_INITIALIZED = True
         except Exception as e:
             print(f"⚠️ startup init skipped: {e}")
@@ -11570,6 +11594,7 @@ def health():
 @app.route("/zoom/webhook", methods=["POST"])
 def zoom_webhook():
     try:
+        ensure_startup_database_ready()
         payload = request.get_json(force=True, silent=True) or {}
         print("🔥 FULL ZOOM DATA:", payload)
 
