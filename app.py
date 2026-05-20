@@ -621,6 +621,7 @@ DB_MIGRATION_COMPLETED = False
 LAST_STALE_CHECK_TS = 0
 SETTINGS_CACHE = {}
 LIVE_SNAPSHOT_MEMORY = {"payload": None, "updated_at": 0, "meeting_uuid": None}
+RUNTIME_ALIAS_MAP = {}
 
 try:
     LIVE_MEETING_STALE_SECONDS = int(os.getenv("LIVE_MEETING_STALE_SECONDS", "21600") or "21600")
@@ -1948,17 +1949,19 @@ def calculate_participant_truth_duration(row, end_time=None):
         int,
     )
     completed_duration = max(completed_duration, 0)
+    participant_name = row.get("participant_name") or "-"
     current_join_dt = parse_dt(row.get("current_join"))
     if current_join_dt and current_join_dt <= end_dt:
         seconds = completed_duration + max(int((end_dt - current_join_dt).total_seconds()), 0)
         source = "live"
+        if seconds > 0:
+            print(f"DURATION_LIVE_ACTIVE participant={participant_name} seconds={seconds}")
     else:
         seconds = completed_duration
         source = "finalized"
     visible_span_seconds = get_row_visible_span_seconds(row, end_time)
     if visible_span_seconds is not None and seconds > visible_span_seconds:
         seconds = visible_span_seconds
-    participant_name = row.get("participant_name") or "-"
     first_join_dt = parse_dt(row.get("first_join"))
     last_leave_dt = parse_dt(row.get("last_leave"))
     if seconds == 0 and first_join_dt and last_leave_dt and last_leave_dt > first_join_dt:
@@ -2026,18 +2029,15 @@ def is_meeting_too_old_for_live(meeting, now_dt=None):
     return (now_dt - started_dt).total_seconds() > LIVE_MEETING_STALE_SECONDS
 
 
-def clear_live_runtime_state(meeting_uuid=None):
-    """Clear in-process live caches for a specific meeting UUID only."""
-    if not meeting_uuid:
-        print("RUNTIME_STOP skipped: missing meeting_uuid")
-        return
-    current_uuid = (LIVE_SNAPSHOT_MEMORY.get("meeting_uuid") or "").strip()
-    if current_uuid and current_uuid != str(meeting_uuid).strip():
-        print(f"RUNTIME_STOP skipped: active_meeting_uuid={current_uuid} target_meeting_uuid={meeting_uuid}")
-        return
+def clear_live_runtime_state(meeting_uuid=None, meeting_id=None):
+    """Clear in-process live caches for finalized runtime meeting identity."""
     LIVE_SNAPSHOT_MEMORY["payload"] = None
     LIVE_SNAPSHOT_MEMORY["updated_at"] = 0
     LIVE_SNAPSHOT_MEMORY["meeting_uuid"] = None
+    if meeting_id:
+        RUNTIME_ALIAS_MAP[str(meeting_id).strip()] = str(meeting_id).strip()
+    if meeting_uuid and meeting_id:
+        RUNTIME_ALIAS_MAP[str(meeting_uuid).strip()] = str(meeting_id).strip()
     try:
         globals().get("_ZA_LIVE_SUMMARY_CACHE", {}).update({"ts": 0, "payload": None})
     except Exception:
@@ -2047,7 +2047,35 @@ def clear_live_runtime_state(meeting_uuid=None):
             _cache_clear_prefix(prefix)
         except Exception:
             pass
-    print(f"RUNTIME_STOP meeting_uuid={meeting_uuid}")
+    print(f"RUNTIME_CLEARED meeting_id={meeting_id or '-'}")
+
+
+def resolve_canonical_meeting_key(meeting_uuid=None, meeting_id=None):
+    meeting_uuid = str(meeting_uuid or "").strip()
+    meeting_id = str(meeting_id or "").strip()
+    if meeting_id:
+        RUNTIME_ALIAS_MAP[meeting_id] = meeting_id
+    if meeting_uuid and meeting_id:
+        RUNTIME_ALIAS_MAP[meeting_uuid] = meeting_id
+    canonical_key = meeting_id or RUNTIME_ALIAS_MAP.get(meeting_uuid) or meeting_uuid
+    if meeting_uuid and canonical_key:
+        RUNTIME_ALIAS_MAP[meeting_uuid] = canonical_key
+    return canonical_key
+
+
+def normalize_runtime_meeting(row, incoming_uuid=None, incoming_meeting_id=None):
+    if not row:
+        return row
+    existing_uuid = str(row.get("meeting_uuid") or "").strip()
+    existing_id = str(row.get("meeting_id") or "").strip()
+    incoming_uuid = str(incoming_uuid or "").strip()
+    incoming_meeting_id = str(incoming_meeting_id or "").strip()
+    canonical_key = resolve_canonical_meeting_key(incoming_uuid or existing_uuid, incoming_meeting_id or existing_id)
+    if incoming_uuid and existing_uuid and incoming_uuid != existing_uuid and canonical_key and canonical_key == (incoming_meeting_id or existing_id):
+        print(f"RUNTIME_NORMALIZED meeting_id={canonical_key} old_uuid={existing_uuid} new_uuid={incoming_uuid}")
+    if incoming_uuid and not existing_uuid:
+        row["meeting_uuid"] = incoming_uuid
+    return row
 
 
 def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=None):
@@ -2079,17 +2107,24 @@ def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=
 
     with db() as conn:
         with conn.cursor() as cur:
-            if meeting_uuid:
+            canonical_key = resolve_canonical_meeting_key(meeting_uuid=meeting_uuid, meeting_id=meeting_id)
+            if canonical_key and meeting_id:
+                cur.execute("SELECT * FROM meetings WHERE meeting_id=%s ORDER BY COALESCE(start_time, created_at) DESC, id DESC LIMIT 1", (canonical_key,))
+                exact = cur.fetchone()
+                if _valid_candidate(exact):
+                    resolved = normalize_runtime_meeting(exact, incoming_uuid=meeting_uuid, incoming_meeting_id=meeting_id)
+                    source = "meeting_id_canonical"
+            if not resolved and meeting_uuid:
                 cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s ORDER BY id DESC LIMIT 1", (meeting_uuid,))
                 exact = cur.fetchone()
                 if _valid_candidate(exact):
-                    resolved = exact
+                    resolved = normalize_runtime_meeting(exact, incoming_uuid=meeting_uuid, incoming_meeting_id=meeting_id)
                     source = "uuid"
                 else:
-                    obj = {"uuid": meeting_uuid, "id": meeting_id or None, "start_time": fmt_dt(event_dt)}
+                    obj = {"uuid": meeting_uuid if meeting_id else None, "id": meeting_id or None, "start_time": fmt_dt(event_dt)}
                     ensured = ensure_meeting(obj)
                     if _valid_candidate(ensured):
-                        resolved = ensured
+                        resolved = normalize_runtime_meeting(ensured, incoming_uuid=meeting_uuid, incoming_meeting_id=meeting_id)
                         source = "created"
             if not resolved and meeting_id:
                 cur.execute(
@@ -2107,7 +2142,7 @@ def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=
                 )
                 candidate = cur.fetchone()
                 if _valid_candidate(candidate):
-                    resolved = candidate
+                    resolved = normalize_runtime_meeting(candidate, incoming_uuid=meeting_uuid, incoming_meeting_id=meeting_id)
                     source = "meeting_id_safe"
 
     print(
@@ -2677,7 +2712,7 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
     updated_status = str((updated or {}).get("status") or "").strip().lower()
     if updated_status == "ended" and finalized_marker:
         print(f"RUNTIME_STOP_ALLOWED meeting_uuid={meeting_uuid} status={updated_status} finalized_at={fmt_dt(finalized_marker)}")
-        clear_live_runtime_state(meeting_uuid)
+        clear_live_runtime_state(meeting_uuid, (updated or {}).get("meeting_id"))
     else:
         print(
             f"RUNTIME_STOP deferred meeting_uuid={meeting_uuid} "
@@ -7215,7 +7250,11 @@ def build_live_snapshot_payload(include_feed=True):
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
     max_duration_seconds = truth_duration_seconds
-    is_live = (not should_force_not_live) and active_now > 0
+    is_live = (not should_force_not_live) and (
+        active_now > 0
+        or bool(host_present)
+        or str(meeting.get("status") or "").strip().lower() in ("live", "host_left_pending")
+    )
     payload = {
         "ok": True,
         "has_live": is_live,
@@ -7479,6 +7518,7 @@ button[type="submit"]{margin-top:20px!important;}
             let pollBusy = false;
             let pollTimer = null;
             let durationTimer = null;
+            let idlePollStreak = 0;
 
             function esc(v){return String(v ?? '').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];});}
             function cls(type){return type==='HOST'?'info':(type==='MEMBER'?'ok':'warn');}
@@ -7625,6 +7665,12 @@ button[type="submit"]{margin-top:20px!important;}
 
             function render(data){
                 if(!data) return; lastPayload=data;
+                if(data.has_live){
+                    idlePollStreak = 0;
+                    window.__zaLiveState = Object.assign({}, window.__zaLiveState || {}, {live:true, server_now:(data.server_now||null), last_snapshot_ts:Date.now()});
+                    window.__zaLiveState.live = true;
+                    window.ZA_LIVE_STATE = window.__zaLiveState;
+                }
                 const summary=data.summary||{};
                 setText('lfBadge', data.has_live?'LIVE MEETING RUNNING':'NO LIVE MEETING');
                 const badge=document.getElementById('lfBadgeWrap'); if(badge) badge.classList.toggle('is-live', !!data.has_live);
@@ -7637,7 +7683,8 @@ button[type="submit"]{margin-top:20px!important;}
                     if(icon) icon.textContent = data.has_live ? '🟢' : '🔴';
                     liveNav.title = data.has_live ? 'Live meeting is running' : 'No live meeting running';
                 }
-                setText('lfTopic', data.has_live?(data.meeting.topic||'Untitled Meeting'):'Waiting for Zoom meeting');
+                const confirmedIdle = idlePollStreak >= 3 && !data.has_live;
+                setText('lfTopic', (data.has_live || !confirmedIdle)?((data.meeting&&data.meeting.topic)||'Untitled Meeting'):'Waiting for Zoom meeting');
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
                 const canonicalMeetingDuration=(summary.meeting_duration_display||formatHms(summary.meeting_duration_seconds||0));
@@ -7655,7 +7702,10 @@ button[type="submit"]{margin-top:20px!important;}
                 if(data.has_live){
                     tickDurations();
                 }else{
-                    window.ZA_LIVE_STATE = {live:false, meeting_id:null, started_at:null, ended_at:(data.server_now||new Date().toISOString()), server_now:(data.server_now||null), last_snapshot_ts:Date.now()};
+                    if(confirmedIdle){
+                        console.log('LIVE_STATE_CONFIRMED_IDLE');
+                        window.ZA_LIVE_STATE = {live:false, meeting_id:null, started_at:null, ended_at:(data.server_now||new Date().toISOString()), server_now:(data.server_now||null), last_snapshot_ts:Date.now()};
+                    }
                     if(durationTimer){ clearInterval(durationTimer); durationTimer=null; console.log('INTERPOLATION_STOPPED'); }
                 }
                 renderFeed(data.feed||[]);
@@ -7671,6 +7721,7 @@ button[type="submit"]{margin-top:20px!important;}
                     const res=await fetch('/api/live-snapshot?t='+Date.now()+'&source='+encodeURIComponent(reason||'live_page'), {cache:'no-store', credentials:'same-origin'});
                     if(!res.ok) throw new Error('live-snapshot failed');
                     const data=await res.json();
+                    idlePollStreak = data && data.has_live ? 0 : (idlePollStreak + 1);
                     const serverNowMs = Date.parse((data && data.server_now) || '') || 0;
                     if(serverNowMs && lastServerNowMs && serverNowMs < lastServerNowMs){
                         return;
