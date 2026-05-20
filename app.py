@@ -1936,6 +1936,15 @@ def calculate_participant_truth_duration(row, end_time=None):
     if visible_span_seconds is not None and seconds > visible_span_seconds:
         seconds = visible_span_seconds
     participant_name = row.get("participant_name") or "-"
+    first_join_dt = parse_dt(row.get("first_join"))
+    last_leave_dt = parse_dt(row.get("last_leave"))
+    if seconds == 0 and first_join_dt and last_leave_dt and last_leave_dt > first_join_dt:
+        backfill_seconds = max(int((last_leave_dt - first_join_dt).total_seconds()), 0)
+        if backfill_seconds > 0:
+            seconds = backfill_seconds
+            source = "backfilled"
+            print(f"DURATION_BACKFILLED participant={participant_name} seconds={seconds}")
+    print(f"PARTICIPANT_DURATION_TRUTH participant={participant_name} source={source} seconds={max(seconds, 0)}")
     print(f"REPORT_PARTICIPANT_DURATION participant={participant_name} source={source} seconds={max(seconds, 0)}")
     return max(seconds, 0), source
 
@@ -2018,7 +2027,7 @@ def clear_live_runtime_state(meeting_uuid=None):
     print(f"RUNTIME_STOP meeting_uuid={meeting_uuid}")
 
 
-def resolve_active_meeting_for_event(meeting_uuid=None, meeting_id=None, event_time=None):
+def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=None):
     """Resolve active meeting row for webhook events without falling back to historical rows."""
     resolved = None
     source = "none"
@@ -2079,7 +2088,7 @@ def resolve_active_meeting_for_event(meeting_uuid=None, meeting_id=None, event_t
                     source = "meeting_id_safe"
 
     print(
-        "ACTIVE_MEETING_RESOLVED "
+        "RUNTIME_RESOLVE "
         f"source={source} request_uuid={meeting_uuid or '-'} request_id={meeting_id or '-'} "
         f"resolved_uuid={(resolved or {}).get('meeting_uuid') if resolved else 'None'} "
         f"status={(resolved or {}).get('status') if resolved else 'None'}"
@@ -2154,6 +2163,29 @@ def close_duplicate_participant_sessions(cur, meeting_uuid, participant_key_valu
     except Exception as exc:
         print(f"⚠️ duplicate participant session cleanup skipped: {exc}")
 
+
+
+
+def finalize_participant_duration_session(row, leave_time):
+    row = row or {}
+    leave_dt = parse_dt(leave_time) or now_local()
+    completed = cast_setting_value(
+        row.get("completed_duration_seconds")
+        if row.get("completed_duration_seconds") is not None
+        else row.get("total_seconds") or 0,
+        int,
+    )
+    completed = max(completed, 0)
+    current_join_dt = parse_dt(row.get("current_join"))
+    delta = 0
+    if current_join_dt and leave_dt >= current_join_dt:
+        delta = max(int((leave_dt - current_join_dt).total_seconds()), 0)
+    total = completed + delta
+    print(
+        "SESSION_ACCUMULATED "
+        f"participant={row.get('participant_name') or '-'} completed={completed} delta={delta} total={total}"
+    )
+    return total
 
 def update_participant(meeting_uuid, participant_name, participant_email, event_time, event_type, is_host_override=False):
     name_for_host = (participant_name or "").strip().lower()
@@ -2281,6 +2313,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                             member_id=%s,
                             is_host=%s,
                             meeting_pk=%s,
+                            completed_duration_seconds=COALESCE(completed_duration_seconds, total_seconds, 0),
                             status='JOINED',
                             updated_at=NOW()
                         WHERE id=%s
@@ -2310,6 +2343,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                             is_member=%s,
                             member_id=%s,
                             is_host=%s,
+                            completed_duration_seconds=COALESCE(completed_duration_seconds, total_seconds, 0),
                             status='JOINED',
                             updated_at=NOW()
                         WHERE id=%s
@@ -2327,14 +2361,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                         ),
                     )
             else:
-                total_seconds = cast_setting_value(row.get("total_seconds") or 0, int)
-                current_join_dt = parse_dt(row.get("current_join"))
-                if current_join_dt:
-                    if event_time < current_join_dt:
-                        delta = 0
-                    else:
-                        delta = int((event_time - current_join_dt).total_seconds())
-                    total_seconds += max(delta, 0)
+                total_seconds = finalize_participant_duration_session(row, event_time)
 
                 visible_span_seconds = get_row_visible_span_seconds(
                     {
@@ -2356,6 +2383,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                             last_leave=%s,
                             current_join=NULL,
                             total_seconds=%s,
+                            completed_duration_seconds=%s,
                             is_member=%s,
                             member_id=%s,
                             is_host=%s,
@@ -2368,6 +2396,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                             participant_name,
                             participant_email,
                             event_time,
+                            total_seconds,
                             total_seconds,
                             is_member_db_value,
                             member["id"] if member else None,
@@ -2385,6 +2414,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                             last_leave=%s,
                             current_join=NULL,
                             total_seconds=%s,
+                            completed_duration_seconds=%s,
                             is_member=%s,
                             member_id=%s,
                             is_host=%s,
@@ -2396,6 +2426,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                             participant_name,
                             participant_email,
                             event_time,
+                            total_seconds,
                             total_seconds,
                             is_member_db_value,
                             member["id"] if member else None,
@@ -2535,13 +2566,14 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
                     """
                     UPDATE attendance
                     SET total_seconds=%s,
+                            completed_duration_seconds=%s,
                         last_leave=COALESCE(last_leave, %s),
                         current_join=NULL,
                         final_status=%s,
                         updated_at=NOW()
                     WHERE id=%s
                     """,
-                    (total, end_time, final_status, row["id"]),
+                    (total, total, end_time, final_status, row["id"]),
                 )
                 join_dt = parse_dt(row.get("first_join")) or end_time
                 leave_dt = end_time
@@ -11571,7 +11603,7 @@ def zoom_webhook():
         print("📌 PARTICIPANT:", participant)
 
         if event == "meeting.started":
-            preexisting = resolve_active_meeting_for_event(
+            preexisting = resolve_runtime_live_meeting(
                 meeting_uuid=str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip(),
                 meeting_id=str(obj.get("id") or obj.get("meeting_id") or "").strip(),
                 event_time=parse_dt(obj.get("start_time")) or now_local(),
@@ -11579,13 +11611,14 @@ def zoom_webhook():
             meeting = ensure_meeting(obj)
             if meeting:
                 if preexisting:
+                    print(f"BOOTSTRAP_MERGE meeting_uuid={meeting['meeting_uuid']}")
                     print(f"MERGED_WITH_STARTED_EVENT meeting_uuid={meeting['meeting_uuid']}")
                 print(f"STATE_TRANSITION meeting_uuid={meeting['meeting_uuid']} from=STARTING to=LIVE reason=meeting.started")
                 print(
                     f"MEETING_LIFECYCLE meeting_uuid={meeting['meeting_uuid']} status=live "
                     f"host_present=true host_left_pending=false meeting_closed=false"
                 )
-                print("LIVE_STATE_IMMEDIATE status=live")
+                print("LIVE_STATE_IMMEDIATE status=live reason=runtime_truth")
             print("✅ MEETING STARTED RESOLVED:", meeting)
             print("📝 WEBHOOK LOG zoom_started:", meeting["meeting_uuid"] if meeting else "unknown")
             return jsonify({"ok": True})
@@ -11603,7 +11636,7 @@ def zoom_webhook():
                 event_raw = datetime.fromtimestamp(payload.get("event_ts") / 1000, tz=ZoneInfo(TIMEZONE_NAME)).isoformat()
             event_time = parse_dt(event_raw) or now_local()
 
-            meeting = resolve_active_meeting_for_event(meeting_uuid=meeting_uuid, meeting_id=meeting_id, event_time=event_time)
+            meeting = resolve_runtime_live_meeting(meeting_uuid=meeting_uuid, meeting_id=meeting_id, event_time=event_time)
             print("✅ PARTICIPANT EVENT LIVE MEETING:", meeting)
 
             if not meeting:
@@ -11618,7 +11651,7 @@ def zoom_webhook():
                     }
                 )
                 if meeting:
-                    print(f"EARLY_MEETING_BOOTSTRAP meeting_uuid={meeting.get('meeting_uuid')} source=participant_join")
+                    print(f"BOOTSTRAP_CREATED meeting_uuid={meeting.get('meeting_uuid')} source=participant_join")
                 else:
                     print("ℹ️ participant event ignored: no live meeting found")
                     return jsonify({"ok": True, "ignored": "no live meeting"}), 200
@@ -11672,7 +11705,7 @@ def zoom_webhook():
                     is_host_override=is_host_override,
                 )
                 emit_live_snapshot("participant_joined", meeting_uuid)
-                print("LIVE_STATE_IMMEDIATE status=live")
+                print("LIVE_STATE_IMMEDIATE status=live reason=runtime_truth")
             if is_host_end_leave:
                 with db() as conn:
                     with conn.cursor() as cur:
@@ -11710,7 +11743,7 @@ def zoom_webhook():
         if event in ("meeting.ended", "meeting.end"):
             meeting_uuid = str(obj.get("uuid") or obj.get("meeting_uuid") or "").strip()
             meeting_id = str(obj.get("id") or obj.get("meeting_id") or "").strip()
-            meeting = resolve_active_meeting_for_event(meeting_uuid=meeting_uuid, meeting_id=meeting_id, event_time=parse_dt(obj.get("end_time")) or now_local())
+            meeting = resolve_runtime_live_meeting(meeting_uuid=meeting_uuid, meeting_id=meeting_id, event_time=parse_dt(obj.get("end_time")) or now_local())
             print("✅ MEETING ENDED RESOLVED:", meeting)
 
             if not meeting:
