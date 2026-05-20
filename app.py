@@ -1494,12 +1494,20 @@ def finalize_stale_live_meetings():
 
                 if rows:
                     anybody_live = any(r.get("current_join") is not None for r in rows)
-                    if anybody_live and not stale_by_age:
+                    runtime_window = 60
+                    fresh_runtime_seen = any(
+                        r.get("current_join") is not None and ((_row_runtime_age_seconds(r, now_dt) or (runtime_window + 1)) <= runtime_window)
+                        for r in rows
+                    )
+                    if anybody_live and fresh_runtime_seen and not stale_by_age:
                         continue
 
                     finalize_at = last_activity or started_at or now_dt
-                    if stale_by_age or (finalize_at and finalize_at <= threshold_time):
+                    if stale_by_age or (finalize_at and finalize_at <= threshold_time) or (anybody_live and not fresh_runtime_seen):
                         try:
+                            if anybody_live and not fresh_runtime_seen:
+                                print(f"MEETING_OWNER_SURVIVED meeting={meeting_uuid}")
+                                print(f"MEETING_OWNER_LEAK meeting={meeting_uuid} owner=active_participant_session")
                             finalize_meeting(meeting_uuid, finalize_at)
                         except Exception as e:
                             print(f"⚠️ finalize_meeting skipped for {meeting_uuid}: {e}")
@@ -1852,6 +1860,7 @@ def ensure_meeting(payload_object):
                         (meeting_id, topic, topic, host_name, host_name, start_time, row["id"]),
                     )
                     row = cur.fetchone()
+                    print(f"MEETING_OWNER_WRITE meeting={meeting_uuid} owner=meeting_status_live")
                     print(f"START_CLEANUP_DONE meeting_uuid={meeting_uuid}")
                     conn.commit()
                     return row
@@ -1866,6 +1875,7 @@ def ensure_meeting(payload_object):
                     (meeting_uuid, meeting_id, topic, host_name, start_time),
                 )
                 row = cur.fetchone()
+                print(f"MEETING_OWNER_WRITE meeting={meeting_uuid} owner=meeting_status_live")
                 print(f"START_CLEANUP_DONE meeting_uuid={meeting_uuid}")
                 conn.commit()
                 return row
@@ -1895,6 +1905,7 @@ def ensure_meeting(payload_object):
                     (topic, topic, host_name, host_name, start_time, row["id"]),
                 )
                 row = cur.fetchone()
+                print(f"MEETING_OWNER_WRITE meeting={meeting_id} owner=meeting_status_live")
                 print(f"START_CLEANUP_DONE meeting_uuid={meeting_id}")
                 conn.commit()
                 return row
@@ -1907,6 +1918,7 @@ def ensure_meeting(payload_object):
                 (meeting_id, meeting_id, topic, host_name, start_time),
             )
             row = cur.fetchone()
+            print(f"MEETING_OWNER_WRITE meeting={meeting_id} owner=meeting_status_live")
             print(f"START_CLEANUP_DONE meeting_uuid={meeting_id}")
         conn.commit()
 
@@ -2144,6 +2156,14 @@ def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=
         f"status={(resolved or {}).get('status') if resolved else 'None'}"
     )
     return resolved
+
+
+def _row_runtime_age_seconds(row, now_dt=None):
+    now_dt = parse_dt(now_dt) or now_local()
+    candidate = parse_dt((row or {}).get("last_leave")) or parse_dt((row or {}).get("current_join")) or parse_dt((row or {}).get("first_join"))
+    if not candidate:
+        return None
+    return max(int((now_dt - candidate).total_seconds()), 0)
 
 
 def get_meeting_rows_last_activity(attendance_rows):
@@ -2500,6 +2520,7 @@ def update_participant(meeting_uuid, participant_name, participant_email, event_
                     """,
                     (event_time, event_time, meeting_uuid),
                 )
+                print(f"MEETING_OWNER_WRITE meeting={meeting_uuid} owner=meeting_status_live")
         conn.commit()
 
     refresh_live_meeting_summary(meeting_uuid)
@@ -2703,6 +2724,8 @@ def finalize_meeting(meeting_uuid, ended_at=None, run_post_tasks=True):
     finalized_marker = parse_dt((updated or {}).get("finalized_at"))
     updated_status = str((updated or {}).get("status") or "").strip().lower()
     if updated_status == "ended" and finalized_marker:
+        print(f"MEETING_END_CLEANUP meeting={meeting_uuid}")
+        print(f"MEETING_OWNER_CLEAR meeting={meeting_uuid} owner=meeting_status_live")
         print(f"RUNTIME_STOP_ALLOWED meeting_uuid={meeting_uuid} status={updated_status} finalized_at={fmt_dt(finalized_marker)}")
         clear_live_runtime_state(meeting_uuid, (updated or {}).get("meeting_id"))
         print(f"ASSERT_RUNTIME_CLEAR_PASS meeting_uuid={meeting_uuid} finalized_at={fmt_dt(finalized_marker)}")
