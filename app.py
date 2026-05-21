@@ -7148,8 +7148,6 @@ def is_meeting_currently_active(meeting=None, participants=None, active_now_coun
     """Single active-truth helper for every live surface and runtime gate."""
     meeting = meeting or {}
     participants = participants or []
-    meeting_status = str(meeting.get("status") or "").strip().lower()
-    status_live = meeting_status == "live"
     active_runtime_window = 60
     meeting_uuid = str(meeting.get("meeting_uuid") or "").strip()
     runtime_participant_support_seen = False
@@ -7186,20 +7184,18 @@ def is_meeting_currently_active(meeting=None, participants=None, active_now_coun
                 f"meeting_uuid={participant_meeting_uuid or '-'}"
             )
 
-    result = bool(
-        active_now_count > 0
-        or participant_live_source_seen
-        or status_live
-    )
+    # Canonical ownership: active participant session/runtime only.
+    # Do not elevate stale status flags or duration labels into live ownership.
+    result = bool(active_now_count > 0 or runtime_participant_support_seen)
     source_flags = []
     if active_now_count > 0:
         source_flags.append("active_participant_session")
-    if participant_live_source_seen:
-        source_flags.append("participant_duration_source_live")
-    if status_live:
-        source_flags.append("meeting_status_live")
     if runtime_participant_support_seen:
-        source_flags.append("runtime_participant_support_only")
+        source_flags.append("runtime_participant_support")
+    if participant_live_source_seen:
+        source_flags.append("participant_duration_source_live_ignored")
+    if str(meeting.get("status") or "").strip().lower() == "live":
+        source_flags.append("meeting_status_live_ignored")
     source = ",".join(source_flags) if source_flags else "none"
     print(f"ACTIVE_TRUTH_SOURCE meeting_uuid={meeting.get('meeting_uuid') or '-'} source={source}")
     print(f"ACTIVE_TRUTH_RESULT meeting_uuid={meeting.get('meeting_uuid') or '-'} active={'true' if result else 'false'}")
