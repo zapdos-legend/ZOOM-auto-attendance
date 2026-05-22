@@ -2096,8 +2096,18 @@ def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=
         if not row:
             return False
         row_uuid = str(row.get("meeting_uuid") or "").strip()
+        row_status = str(row.get("status") or "").strip().lower()
+        row_finalized_at = parse_dt(row.get("finalized_at"))
+        row_closed = bool(row.get("meeting_closed"))
         row_start = parse_dt(row.get("start_time")) or parse_dt(row.get("created_at"))
         has_report = bool((row.get("csv_file") or "").strip() or (row.get("pdf_file") or "").strip())
+        if row_status == "ended" or row_finalized_at or row_closed:
+            print(
+                f"REJECT_OLD_MEETING reason=finalized_or_closed id={row.get('id')} "
+                f"meeting_date={row.get('meeting_date')} resolved_uuid={row_uuid or 'None'} "
+                f"status={row.get('status')} finalized_at={fmt_dt(row_finalized_at)} meeting_closed={row.get('meeting_closed')}"
+            )
+            return False
         if has_report:
             print(f"REJECT_OLD_MEETING reason=uuid_null_or_old_report id={row.get('id')} meeting_date={row.get('meeting_date')} resolved_uuid={row_uuid or 'None'} status={row.get('status')}")
             return False
