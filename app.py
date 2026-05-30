@@ -11736,7 +11736,6 @@ def health():
 @app.route("/zoom/webhook", methods=["POST"])
 def zoom_webhook():
     try:
-        ensure_startup_database_ready()
         payload = request.get_json(force=True, silent=True) or {}
         print("🔥 FULL ZOOM DATA:", payload)
 
@@ -11749,6 +11748,8 @@ def zoom_webhook():
             ).hexdigest() if ZOOM_SECRET_TOKEN else ""
             print("✅ URL VALIDATION:", {"plainToken": plain, "encryptedToken": encrypted})
             return jsonify({"plainToken": plain, "encryptedToken": encrypted})
+
+        ensure_startup_database_ready()
 
         if not verify_zoom_signature(request):
             print("❌ INVALID SIGNATURE")
