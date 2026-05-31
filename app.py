@@ -6461,7 +6461,7 @@ button[type="submit"]{margin-top:20px!important;}
         setupChartDefaults();
         polishLayoutSpacing();
         enhanceWowEffects();
-        updateGlobalLiveNavState(window.__zaLastSocketSnapshot || null);
+        if(window.__zaLastSocketSnapshot){ updateGlobalLiveNavState(window.__zaLastSocketSnapshot); }
         startGlobalLiveSidebarUpdater();
     });
 })();
@@ -7288,6 +7288,7 @@ def build_live_snapshot_payload(include_feed=True):
     participant_payload = []
     feed_items = []
     participant_live_source_seen = False
+    host_duration_truth_seconds = None
 
     for p in participants:
         live_total, participant_truth_source = calculate_participant_truth_duration(p, end_time=effective_now)
@@ -7296,6 +7297,8 @@ def build_live_snapshot_payload(include_feed=True):
         is_host = bool(p.get("is_host"))
         if participant_truth_source == "live":
             participant_live_source_seen = True
+        if is_host and int(p.get("rejoin_count") or 0) == 0:
+            host_duration_truth_seconds = max(int(host_duration_truth_seconds or 0), int(live_total or 0))
         live_status = "LIVE" if (is_active_now and not should_force_not_live) else "LEFT"
         category = "HOST" if is_host else ("MEMBER" if is_known else "UNKNOWN")
         if is_active_now:
@@ -7356,7 +7359,7 @@ def build_live_snapshot_payload(include_feed=True):
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
-    max_duration_seconds = truth_duration_seconds
+    max_duration_seconds = host_duration_truth_seconds if host_duration_truth_seconds is not None else truth_duration_seconds
     is_live, active_truth_source = is_meeting_currently_active(
         meeting=meeting,
         participants=participants,
