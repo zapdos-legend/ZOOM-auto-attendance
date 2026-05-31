@@ -1841,6 +1841,17 @@ def ensure_meeting(payload_object):
                 cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
                 row = cur.fetchone()
                 if row:
+                    row_status = str(row.get("status") or "").strip().lower()
+                    row_finalized_at = parse_dt(row.get("finalized_at"))
+                    row_closed_raw = row.get("meeting_closed")
+                    row_closed = bool(row_closed_raw) and str(row_closed_raw).strip().lower() not in ("0", "false", "f", "no", "none")
+                    if row_status == "ended" or row_finalized_at or row_closed:
+                        print(
+                            f"MEETING_REOPEN_BLOCKED meeting_uuid={meeting_uuid} "
+                            f"status={row.get('status')} finalized_at={fmt_dt(row_finalized_at)} "
+                            f"meeting_closed={row.get('meeting_closed')}"
+                        )
+                        return None
                     cur.execute(
                         """
                         UPDATE meetings
@@ -2134,7 +2145,7 @@ def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=
                 if _valid_candidate(exact):
                     resolved = normalize_runtime_meeting(exact, incoming_uuid=meeting_uuid, incoming_meeting_id=meeting_id)
                     source = "uuid"
-                else:
+                elif not exact:
                     obj = {"uuid": meeting_uuid if meeting_id else None, "id": meeting_id or None, "start_time": fmt_dt(event_dt)}
                     ensured = ensure_meeting(obj)
                     if _valid_candidate(ensured):
