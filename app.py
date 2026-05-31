@@ -6374,10 +6374,10 @@ button[type="submit"]{margin-top:20px!important;}
         const hydrateFromCache = function(){
             let hydrated = null;
             let cacheSource = '';
-            try{ if(runtime.lastLiveState && typeof runtime.lastLiveState.has_live !== 'undefined'){ hydrated = runtime.lastLiveState; } }catch(_e){}
+            try{ if(runtime.lastLiveState && runtime.lastLiveState.has_live === true){ hydrated = runtime.lastLiveState; } }catch(_e){}
             if(hydrated){ cacheSource='runtime'; console.log('SIDEBAR_CACHE_SOURCE runtime'); }
             if(!hydrated){
-                try{ const raw=sessionStorage.getItem('za_live_runtime_state'); if(raw) hydrated=JSON.parse(raw); }catch(_e){}
+                try{ const raw=sessionStorage.getItem('za_live_runtime_state'); const parsed=raw?JSON.parse(raw):null; if(parsed && parsed.has_live === true) hydrated=parsed; }catch(_e){}
                 if(hydrated){ cacheSource='session'; console.log('SIDEBAR_CACHE_SOURCE session'); }
             }
             if(!hydrated){
@@ -6560,7 +6560,7 @@ def quick_live_nav_active() -> bool:
 
 def page(title, body, active="home"):
     live_nav_active = quick_live_nav_active()
-    live_nav_icon = "🟢" if live_nav_active else "🔴"
+    live_nav_icon = "🟢" if live_nav_active else "⚪"
     live_nav_class = ""
     nav = [
         {"key": "home", "label": "🏠 Home", "href": url_for("home")},
@@ -7682,19 +7682,13 @@ button[type="submit"]{margin-top:20px!important;}
                 });
                 const head=document.getElementById('lfDuration');
                 if(head){
-                    const backendMeetingSec=parseHms((data&&data.summary&&data.summary.meeting_duration_display)||'00:00:00');
-                    const prevMeeting=parseInt(head.dataset.displayedDurationSeconds||'0',10);
-                    const prevBackend=Math.max(0,parseInt(head.dataset.backendDurationSeconds||'0',10));
-                    const prevBaseMs=parseInt(head.dataset.durationBaseMs||'0',10);
-                    const elapsedFromPrev=(prevBaseMs?Math.floor((nowMs-prevBaseMs)/1000):0);
-                    const projected=prevBackend+Math.max(elapsedFromPrev,0);
-                    if(backendMeetingSec < prevBackend || backendMeetingSec >= projected + 5 || !prevBaseMs){
-                        head.dataset.backendDurationSeconds=String(Math.max(backendMeetingSec, prevBackend));
-                        head.dataset.durationBaseMs=String(nowMs);
-                    }
+                    const backendMeetingSec=Math.max(0,parseInt((data&&data.summary&&data.summary.meeting_duration_seconds)||parseHms((data&&data.summary&&data.summary.meeting_duration_display)||'00:00:00'),10));
+                    head.dataset.backendDurationSeconds=String(backendMeetingSec);
+                    head.dataset.durationBaseMs=String(nowMs);
                     head.dataset.isActive=(data&&data.has_live)?'1':'0';
                     head.dataset.maxDurationSeconds='0';
-                    head.dataset.displayedDurationSeconds=String(Math.max(prevMeeting, backendMeetingSec));
+                    head.dataset.displayedDurationSeconds=String(backendMeetingSec);
+                    head.textContent='Duration '+formatHms(backendMeetingSec);
                 }
             }
             function tickDurations(){
