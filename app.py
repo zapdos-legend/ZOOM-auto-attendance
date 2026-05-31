@@ -7160,6 +7160,11 @@ def is_meeting_currently_active(meeting=None, participants=None, active_now_coun
     participants = participants or []
     active_runtime_window = 60
     meeting_uuid = str(meeting.get("meeting_uuid") or "").strip()
+    meeting_status = str(meeting.get("status") or "").strip().lower()
+    meeting_closed_raw = meeting.get("meeting_closed")
+    meeting_closed = bool(meeting_closed_raw) and str(meeting_closed_raw).strip().lower() not in ("0", "false", "f", "no", "none")
+    finalized_marker = parse_dt(meeting.get("finalized_at"))
+    lifecycle_blocks_active = bool(meeting_status in ("host_left_pending", "ended") or meeting_closed or finalized_marker)
     runtime_participant_support_seen = False
 
     for p in participants:
@@ -7195,16 +7200,19 @@ def is_meeting_currently_active(meeting=None, participants=None, active_now_coun
             )
 
     # Canonical ownership: active participant session/runtime only.
-    # Do not elevate stale status flags or duration labels into live ownership.
-    result = bool(active_now_count > 0 or runtime_participant_support_seen)
+    # Lifecycle-closed states veto stale participant runtime ownership.
+    raw_participant_active = bool(active_now_count > 0 or runtime_participant_support_seen)
+    result = bool(raw_participant_active and not lifecycle_blocks_active)
     source_flags = []
     if active_now_count > 0:
-        source_flags.append("active_participant_session")
+        source_flags.append("active_participant_session_vetoed" if lifecycle_blocks_active else "active_participant_session")
     if runtime_participant_support_seen:
-        source_flags.append("runtime_participant_support")
+        source_flags.append("runtime_participant_support_vetoed" if lifecycle_blocks_active else "runtime_participant_support")
+    if lifecycle_blocks_active:
+        source_flags.append("meeting_lifecycle_veto")
     if participant_live_source_seen:
         source_flags.append("participant_duration_source_live_ignored")
-    if str(meeting.get("status") or "").strip().lower() == "live":
+    if meeting_status == "live":
         source_flags.append("meeting_status_live_ignored")
     source = ",".join(source_flags) if source_flags else "none"
     print(f"ACTIVE_TRUTH_SOURCE meeting_uuid={meeting.get('meeting_uuid') or '-'} source={source}")
@@ -11877,6 +11885,38 @@ def zoom_webhook():
             if is_host_end_leave:
                 with db() as conn:
                     with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT * FROM attendance WHERE meeting_uuid=%s AND current_join IS NOT NULL",
+                            (meeting_uuid,),
+                        )
+                        active_rows = cur.fetchall()
+                        for active_row in active_rows:
+                            total_seconds = finalize_participant_duration_session(active_row, event_time)
+                            visible_span_seconds = get_row_visible_span_seconds(
+                                {
+                                    "first_join": active_row.get("first_join"),
+                                    "last_leave": event_time,
+                                    "current_join": None,
+                                },
+                                event_time,
+                            )
+                            if visible_span_seconds is not None and total_seconds > visible_span_seconds:
+                                total_seconds = visible_span_seconds
+                            cur.execute(
+                                """
+                                UPDATE attendance
+                                SET last_leave=%s,
+                                    current_join=NULL,
+                                    total_seconds=%s,
+                                    completed_duration_seconds=%s,
+                                    status='LEFT',
+                                    updated_at=NOW()
+                                WHERE id=%s
+                                """,
+                                (event_time, total_seconds, total_seconds, active_row["id"]),
+                            )
+                        if active_rows:
+                            print(f"MEETING_OWNER_CLEAR meeting={meeting_uuid} owner=active_participant_session reason=host_ended count={len(active_rows)}")
                         cur.execute(
                             """
                             UPDATE meetings
