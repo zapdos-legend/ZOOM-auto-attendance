@@ -1499,7 +1499,7 @@ def finalize_stale_live_meetings():
                         r.get("current_join") is not None and ((_row_runtime_age_seconds(r, now_dt) or (runtime_window + 1)) <= runtime_window)
                         for r in rows
                     )
-                    if anybody_live and fresh_runtime_seen and not stale_by_age:
+                    if anybody_live and not stale_by_age:
                         continue
 
                     finalize_at = last_activity or started_at or now_dt
