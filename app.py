@@ -6320,7 +6320,8 @@ button[type="submit"]{margin-top:20px!important;}
     function updateGlobalLiveNavState(data){
         const liveNav = document.getElementById('globalLiveNavLink');
         if(!liveNav) return;
-        const isLive = !!(data && data.has_live);
+        if(!data || !Object.prototype.hasOwnProperty.call(data, 'has_live')) return;
+        const isLive = !!data.has_live;
         liveNav.classList.toggle('live-status-live', isLive);
         liveNav.classList.toggle('live-status-idle', !isLive);
         const icon = liveNav.querySelector('.nav-icon');
@@ -6328,6 +6329,7 @@ button[type="submit"]{margin-top:20px!important;}
         liveNav.title = isLive ? 'Live meeting is running' : 'No live meeting running';
     }
     function applyLiveStateFromSummary(data){
+        if(!data || !Object.prototype.hasOwnProperty.call(data, 'has_live')) return;
         const summary = data || {};
         const meeting = summary.meeting || {};
         const serverNow = summary.server_now || null;
@@ -6347,8 +6349,8 @@ button[type="submit"]{margin-top:20px!important;}
         try{ window.ZA_LIVE_RUNTIME.lastLiveState = summary; sessionStorage.setItem('za_live_runtime_state', JSON.stringify(summary||{})); }catch(_e){}
         window.dispatchEvent(new CustomEvent('za:live-state-updated', {detail: window.__zaLiveState}));
     }
-    window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data || {}); };
-    window.addEventListener('za:live-snapshot', function(e){ applyLiveStateFromSummary(e.detail || {}); });
+    window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data); };
+    window.addEventListener('za:live-snapshot', function(e){ if(e.detail && Object.prototype.hasOwnProperty.call(e.detail, 'has_live')) applyLiveStateFromSummary(e.detail); });
 
     function startGlobalLiveSidebarUpdater(){
         const runtime = window.ZA_LIVE_RUNTIME;
@@ -7779,18 +7781,18 @@ button[type="submit"]{margin-top:20px!important;}
                     window.ZA_LIVE_STATE = window.__zaLiveState;
                 }
                 const summary=data.summary||{};
+                const confirmedIdle = idlePollStreak >= 3 && !data.has_live;
                 setText('lfBadge', data.has_live?'LIVE MEETING RUNNING':'NO LIVE MEETING');
                 const badge=document.getElementById('lfBadgeWrap'); if(badge) badge.classList.toggle('is-live', !!data.has_live);
                 setDisplay('lfMetaRow', data.has_live?'flex':'none');
                 const liveNav=[...document.querySelectorAll('.sidebar a')].find(a=>a.getAttribute('href')&&a.getAttribute('href').includes('/live'));
-                if(liveNav){
+                if(liveNav && (data.has_live || confirmedIdle)){
                     liveNav.classList.toggle('live-status-live',!!data.has_live);
-                    liveNav.classList.toggle('live-status-idle',!data.has_live);
+                    liveNav.classList.toggle('live-status-idle',confirmedIdle);
                     const icon=liveNav.querySelector('.nav-icon');
                     if(icon) icon.textContent = data.has_live ? '🟢' : '🔴';
                     liveNav.title = data.has_live ? 'Live meeting is running' : 'No live meeting running';
                 }
-                const confirmedIdle = idlePollStreak >= 3 && !data.has_live;
                 setText('lfTopic', (data.has_live || !confirmedIdle)?((data.meeting&&data.meeting.topic)||'Untitled Meeting'):'Waiting for Zoom meeting');
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
