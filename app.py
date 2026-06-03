@@ -7680,7 +7680,9 @@ button[type="submit"]{margin-top:20px!important;}
                     }
                     row.dataset.isActive=((data&&data.has_live&&p.is_active)?'1':'0');
                     row.dataset.maxDurationSeconds='0';
-                    row.dataset.displayedDurationSeconds=String(Math.max(prevShown, backendSec));
+                    if(!(data&&data.has_live)){
+                        row.dataset.displayedDurationSeconds=String(Math.max(prevShown, backendSec));
+                    }
                 });
                 const head=document.getElementById('lfDuration');
                 if(head){
@@ -7697,8 +7699,10 @@ button[type="submit"]{margin-top:20px!important;}
                     }
                     head.dataset.isActive=isLive?'1':'0';
                     head.dataset.maxDurationSeconds='0';
-                    head.dataset.displayedDurationSeconds=String(isLive?Math.max(prevShown, backendMeetingSec):backendMeetingSec);
-                    if(!isLive){ head.textContent='Duration '+formatHms(backendMeetingSec); }
+                    if(!isLive){
+                        head.dataset.displayedDurationSeconds=String(backendMeetingSec);
+                        head.textContent='Duration '+formatHms(backendMeetingSec);
+                    }
                 }
             }
             function tickDurations(){
