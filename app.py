@@ -7685,12 +7685,20 @@ button[type="submit"]{margin-top:20px!important;}
                 const head=document.getElementById('lfDuration');
                 if(head){
                     const backendMeetingSec=Math.max(0,parseInt((data&&data.summary&&data.summary.meeting_duration_seconds)||parseHms((data&&data.summary&&data.summary.meeting_duration_display)||'00:00:00'),10));
-                    head.dataset.backendDurationSeconds=String(backendMeetingSec);
-                    head.dataset.durationBaseMs=String(nowMs);
-                    head.dataset.isActive=(data&&data.has_live)?'1':'0';
+                    const isLive=!!(data&&data.has_live);
+                    const prevShown=Math.max(parseInt(head.dataset.displayedDurationSeconds||'0',10), parseHms((head.textContent||'').replace(/^Duration\\s+/i,'')));
+                    const prevBackend=Math.max(0,parseInt(head.dataset.backendDurationSeconds||'0',10));
+                    const prevBaseMs=parseInt(head.dataset.durationBaseMs||'0',10);
+                    const elapsedFromPrev=(prevBaseMs?Math.floor((nowMs-prevBaseMs)/1000):0);
+                    const projected=prevBackend+Math.max(elapsedFromPrev,0);
+                    if(!isLive || backendMeetingSec < prevBackend || backendMeetingSec >= projected + 5 || !prevBaseMs){
+                        head.dataset.backendDurationSeconds=String(Math.max(backendMeetingSec, prevBackend));
+                        head.dataset.durationBaseMs=String(nowMs);
+                    }
+                    head.dataset.isActive=isLive?'1':'0';
                     head.dataset.maxDurationSeconds='0';
-                    head.dataset.displayedDurationSeconds=String(backendMeetingSec);
-                    head.textContent='Duration '+formatHms(backendMeetingSec);
+                    head.dataset.displayedDurationSeconds=String(isLive?Math.max(prevShown, backendMeetingSec):backendMeetingSec);
+                    if(!isLive){ head.textContent='Duration '+formatHms(backendMeetingSec); }
                 }
             }
             function tickDurations(){
@@ -7752,8 +7760,13 @@ button[type="submit"]{margin-top:20px!important;}
                     setCell(row,'type','<span class="badge '+cls(p.type)+'">'+esc(p.type)+'</span>',p.type);
                     setCell(row,'first_join',esc(p.first_join),p.first_join);
                     setCell(row,'last_leave',esc(p.last_leave),p.last_leave);
-                    row.dataset.durationSeconds=String(parseInt(p.duration_seconds||0,10));
-                    setCell(row,'duration','<span class="live-fix-duration">'+esc(p.duration_display||'00:00:00')+'</span>',p.duration_display||'00:00:00');
+                    const backendDurationSeconds=parseInt(p.duration_seconds||0,10);
+                    row.dataset.durationSeconds=String(backendDurationSeconds);
+                    if(!p.is_active){
+                        setCell(row,'duration','<span class="live-fix-duration">'+esc(p.duration_display||'00:00:00')+'</span>',p.duration_display||'00:00:00');
+                    }else if(!row.querySelector('[data-col="duration"]')){
+                        setCell(row,'duration','<span class="live-fix-duration">'+esc(p.duration_display||'00:00:00')+'</span>',p.duration_display||'00:00:00');
+                    }
                     setCell(row,'rejoins',esc(p.rejoins),p.rejoins);
                     setCell(row,'status','<span class="badge '+(p.status==='LIVE'?'ok':'gray')+'">'+esc(p.status)+'</span>',p.status);
                 });
@@ -7797,7 +7810,10 @@ button[type="submit"]{margin-top:20px!important;}
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
                 const canonicalMeetingDuration=(summary.meeting_duration_display||formatHms(summary.meeting_duration_seconds||0));
-                setText('lfDuration','Duration '+canonicalMeetingDuration);
+                const headDurationEl=document.getElementById('lfDuration');
+                if(headDurationEl && !data.has_live){
+                    setText('lfDuration','Duration '+canonicalMeetingDuration);
+                }
                 animateLiveNumber('lfActive',summary.active_now||0);
                 animateLiveNumber('lfKnown',summary.known_count||0);
                 animateLiveNumber('lfUnknown',summary.unknown_count||0);
