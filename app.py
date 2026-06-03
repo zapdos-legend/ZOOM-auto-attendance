@@ -1499,7 +1499,7 @@ def finalize_stale_live_meetings():
                         r.get("current_join") is not None and ((_row_runtime_age_seconds(r, now_dt) or (runtime_window + 1)) <= runtime_window)
                         for r in rows
                     )
-                    if anybody_live and fresh_runtime_seen and not stale_by_age:
+                    if anybody_live and not stale_by_age:
                         continue
 
                     finalize_at = last_activity or started_at or now_dt
@@ -1841,6 +1841,17 @@ def ensure_meeting(payload_object):
                 cur.execute("SELECT * FROM meetings WHERE meeting_uuid=%s", (meeting_uuid,))
                 row = cur.fetchone()
                 if row:
+                    row_status = str(row.get("status") or "").strip().lower()
+                    row_finalized_at = parse_dt(row.get("finalized_at"))
+                    row_closed_raw = row.get("meeting_closed")
+                    row_closed = bool(row_closed_raw) and str(row_closed_raw).strip().lower() not in ("0", "false", "f", "no", "none")
+                    if row_status == "ended" or row_finalized_at or row_closed:
+                        print(
+                            f"MEETING_REOPEN_BLOCKED meeting_uuid={meeting_uuid} "
+                            f"status={row.get('status')} finalized_at={fmt_dt(row_finalized_at)} "
+                            f"meeting_closed={row.get('meeting_closed')}"
+                        )
+                        return None
                     cur.execute(
                         """
                         UPDATE meetings
@@ -2096,8 +2107,18 @@ def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=
         if not row:
             return False
         row_uuid = str(row.get("meeting_uuid") or "").strip()
+        row_status = str(row.get("status") or "").strip().lower()
+        row_finalized_at = parse_dt(row.get("finalized_at"))
+        row_closed = bool(row.get("meeting_closed"))
         row_start = parse_dt(row.get("start_time")) or parse_dt(row.get("created_at"))
         has_report = bool((row.get("csv_file") or "").strip() or (row.get("pdf_file") or "").strip())
+        if row_status == "ended" or row_finalized_at or row_closed:
+            print(
+                f"REJECT_OLD_MEETING reason=finalized_or_closed id={row.get('id')} "
+                f"meeting_date={row.get('meeting_date')} resolved_uuid={row_uuid or 'None'} "
+                f"status={row.get('status')} finalized_at={fmt_dt(row_finalized_at)} meeting_closed={row.get('meeting_closed')}"
+            )
+            return False
         if has_report:
             print(f"REJECT_OLD_MEETING reason=uuid_null_or_old_report id={row.get('id')} meeting_date={row.get('meeting_date')} resolved_uuid={row_uuid or 'None'} status={row.get('status')}")
             return False
@@ -2124,7 +2145,7 @@ def resolve_runtime_live_meeting(meeting_uuid=None, meeting_id=None, event_time=
                 if _valid_candidate(exact):
                     resolved = normalize_runtime_meeting(exact, incoming_uuid=meeting_uuid, incoming_meeting_id=meeting_id)
                     source = "uuid"
-                else:
+                elif not exact:
                     obj = {"uuid": meeting_uuid if meeting_id else None, "id": meeting_id or None, "start_time": fmt_dt(event_dt)}
                     ensured = ensure_meeting(obj)
                     if _valid_candidate(ensured):
@@ -6299,7 +6320,8 @@ button[type="submit"]{margin-top:20px!important;}
     function updateGlobalLiveNavState(data){
         const liveNav = document.getElementById('globalLiveNavLink');
         if(!liveNav) return;
-        const isLive = !!(data && data.has_live);
+        if(!data || !Object.prototype.hasOwnProperty.call(data, 'has_live')) return;
+        const isLive = !!data.has_live;
         liveNav.classList.toggle('live-status-live', isLive);
         liveNav.classList.toggle('live-status-idle', !isLive);
         const icon = liveNav.querySelector('.nav-icon');
@@ -6307,6 +6329,7 @@ button[type="submit"]{margin-top:20px!important;}
         liveNav.title = isLive ? 'Live meeting is running' : 'No live meeting running';
     }
     function applyLiveStateFromSummary(data){
+        if(!data || !Object.prototype.hasOwnProperty.call(data, 'has_live')) return;
         const summary = data || {};
         const meeting = summary.meeting || {};
         const serverNow = summary.server_now || null;
@@ -6326,8 +6349,8 @@ button[type="submit"]{margin-top:20px!important;}
         try{ window.ZA_LIVE_RUNTIME.lastLiveState = summary; sessionStorage.setItem('za_live_runtime_state', JSON.stringify(summary||{})); }catch(_e){}
         window.dispatchEvent(new CustomEvent('za:live-state-updated', {detail: window.__zaLiveState}));
     }
-    window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data || {}); };
-    window.addEventListener('za:live-snapshot', function(e){ applyLiveStateFromSummary(e.detail || {}); });
+    window.zaApplyLiveSummary = function(data){ applyLiveStateFromSummary(data); };
+    window.addEventListener('za:live-snapshot', function(e){ if(e.detail && Object.prototype.hasOwnProperty.call(e.detail, 'has_live')) applyLiveStateFromSummary(e.detail); });
 
     function startGlobalLiveSidebarUpdater(){
         const runtime = window.ZA_LIVE_RUNTIME;
@@ -6353,10 +6376,10 @@ button[type="submit"]{margin-top:20px!important;}
         const hydrateFromCache = function(){
             let hydrated = null;
             let cacheSource = '';
-            try{ if(runtime.lastLiveState && typeof runtime.lastLiveState.has_live !== 'undefined'){ hydrated = runtime.lastLiveState; } }catch(_e){}
+            try{ if(runtime.lastLiveState && runtime.lastLiveState.has_live === true){ hydrated = runtime.lastLiveState; } }catch(_e){}
             if(hydrated){ cacheSource='runtime'; console.log('SIDEBAR_CACHE_SOURCE runtime'); }
             if(!hydrated){
-                try{ const raw=sessionStorage.getItem('za_live_runtime_state'); if(raw) hydrated=JSON.parse(raw); }catch(_e){}
+                try{ const raw=sessionStorage.getItem('za_live_runtime_state'); const parsed=raw?JSON.parse(raw):null; if(parsed && parsed.has_live === true) hydrated=parsed; }catch(_e){}
                 if(hydrated){ cacheSource='session'; console.log('SIDEBAR_CACHE_SOURCE session'); }
             }
             if(!hydrated){
@@ -6440,7 +6463,7 @@ button[type="submit"]{margin-top:20px!important;}
         setupChartDefaults();
         polishLayoutSpacing();
         enhanceWowEffects();
-        updateGlobalLiveNavState(window.__zaLastSocketSnapshot || null);
+        if(window.__zaLastSocketSnapshot){ updateGlobalLiveNavState(window.__zaLastSocketSnapshot); }
         startGlobalLiveSidebarUpdater();
     });
 })();
@@ -6539,7 +6562,7 @@ def quick_live_nav_active() -> bool:
 
 def page(title, body, active="home"):
     live_nav_active = quick_live_nav_active()
-    live_nav_icon = "🟢" if live_nav_active else "🔴"
+    live_nav_icon = "🟢" if live_nav_active else "⚪"
     live_nav_class = ""
     nav = [
         {"key": "home", "label": "🏠 Home", "href": url_for("home")},
@@ -7150,6 +7173,11 @@ def is_meeting_currently_active(meeting=None, participants=None, active_now_coun
     participants = participants or []
     active_runtime_window = 60
     meeting_uuid = str(meeting.get("meeting_uuid") or "").strip()
+    meeting_status = str(meeting.get("status") or "").strip().lower()
+    meeting_closed_raw = meeting.get("meeting_closed")
+    meeting_closed = bool(meeting_closed_raw) and str(meeting_closed_raw).strip().lower() not in ("0", "false", "f", "no", "none")
+    finalized_marker = parse_dt(meeting.get("finalized_at"))
+    lifecycle_blocks_active = bool(meeting_status in ("host_left_pending", "ended") or meeting_closed or finalized_marker)
     runtime_participant_support_seen = False
 
     for p in participants:
@@ -7185,16 +7213,19 @@ def is_meeting_currently_active(meeting=None, participants=None, active_now_coun
             )
 
     # Canonical ownership: active participant session/runtime only.
-    # Do not elevate stale status flags or duration labels into live ownership.
-    result = bool(active_now_count > 0 or runtime_participant_support_seen)
+    # Lifecycle-closed states veto stale participant runtime ownership.
+    raw_participant_active = bool(active_now_count > 0 or runtime_participant_support_seen)
+    result = bool(raw_participant_active and not lifecycle_blocks_active)
     source_flags = []
     if active_now_count > 0:
-        source_flags.append("active_participant_session")
+        source_flags.append("active_participant_session_vetoed" if lifecycle_blocks_active else "active_participant_session")
     if runtime_participant_support_seen:
-        source_flags.append("runtime_participant_support")
+        source_flags.append("runtime_participant_support_vetoed" if lifecycle_blocks_active else "runtime_participant_support")
+    if lifecycle_blocks_active:
+        source_flags.append("meeting_lifecycle_veto")
     if participant_live_source_seen:
         source_flags.append("participant_duration_source_live_ignored")
-    if str(meeting.get("status") or "").strip().lower() == "live":
+    if meeting_status == "live":
         source_flags.append("meeting_status_live_ignored")
     source = ",".join(source_flags) if source_flags else "none"
     print(f"ACTIVE_TRUTH_SOURCE meeting_uuid={meeting.get('meeting_uuid') or '-'} source={source}")
@@ -7259,6 +7290,7 @@ def build_live_snapshot_payload(include_feed=True):
     participant_payload = []
     feed_items = []
     participant_live_source_seen = False
+    host_duration_truth_seconds = None
 
     for p in participants:
         live_total, participant_truth_source = calculate_participant_truth_duration(p, end_time=effective_now)
@@ -7267,6 +7299,8 @@ def build_live_snapshot_payload(include_feed=True):
         is_host = bool(p.get("is_host"))
         if participant_truth_source == "live":
             participant_live_source_seen = True
+        if is_host and int(p.get("rejoin_count") or 0) == 0:
+            host_duration_truth_seconds = max(int(host_duration_truth_seconds or 0), int(live_total or 0))
         live_status = "LIVE" if (is_active_now and not should_force_not_live) else "LEFT"
         category = "HOST" if is_host else ("MEMBER" if is_known else "UNKNOWN")
         if is_active_now:
@@ -7327,7 +7361,7 @@ def build_live_snapshot_payload(include_feed=True):
     feed_items = sorted(feed_items, key=lambda x: x.get("sort", 0), reverse=True)[:30]
     risk = "Healthy" if host_present and unknown_active <= max(1, known_active // 2) else ("Warning" if active_now > 0 else "Critical")
 
-    max_duration_seconds = truth_duration_seconds
+    max_duration_seconds = host_duration_truth_seconds if host_duration_truth_seconds is not None else truth_duration_seconds
     is_live, active_truth_source = is_meeting_currently_active(
         meeting=meeting,
         participants=participants,
@@ -7635,34 +7669,43 @@ button[type="submit"]{margin-top:20px!important;}
                     const row=document.querySelector('#lfRows tr[data-row-id="'+id+'"]');
                     if(!row) return;
                     const backendSec=Math.max(0,parseInt(p.duration_seconds||0,10));
-                    const prevShown=Math.max(parseInt(row.dataset.displayedDurationSeconds||'0',10), parseHms(p.duration_display));
+                    const active=((data&&data.has_live&&p.is_active)?'1':'0');
+                    const prevDisplayedRaw=parseInt(row.dataset.displayedDurationSeconds||'',10);
+                    const prevDisplayed=Number.isFinite(prevDisplayedRaw)?Math.max(prevDisplayedRaw,0):backendSec;
                     const prevBackend=Math.max(0,parseInt(row.dataset.backendDurationSeconds||'0',10));
                     const prevBaseMs=parseInt(row.dataset.durationBaseMs||'0',10);
                     const elapsedFromPrev=(prevBaseMs?Math.floor((nowMs-prevBaseMs)/1000):0);
                     const projected=prevBackend+Math.max(elapsedFromPrev,0);
-                    if(backendSec < prevBackend || backendSec >= projected + 5 || !prevBaseMs){
-                        row.dataset.backendDurationSeconds=String(Math.max(backendSec, prevBackend));
+                    let nextDisplayed=prevDisplayed;
+                    if(active!=='1' || !prevBaseMs || backendSec < prevDisplayed || backendSec >= projected + 5){
+                        row.dataset.backendDurationSeconds=String(backendSec);
                         row.dataset.durationBaseMs=String(nowMs);
+                        nextDisplayed=backendSec;
                     }
-                    row.dataset.isActive=((data&&data.has_live&&p.is_active)?'1':'0');
+                    row.dataset.isActive=active;
                     row.dataset.maxDurationSeconds='0';
-                    row.dataset.displayedDurationSeconds=String(Math.max(prevShown, backendSec));
+                    row.dataset.displayedDurationSeconds=String(nextDisplayed);
                 });
                 const head=document.getElementById('lfDuration');
                 if(head){
-                    const backendMeetingSec=parseHms((data&&data.summary&&data.summary.meeting_duration_display)||'00:00:00');
-                    const prevMeeting=parseInt(head.dataset.displayedDurationSeconds||'0',10);
+                    const backendMeetingSec=Math.max(0,parseInt((data&&data.summary&&data.summary.meeting_duration_seconds)||parseHms((data&&data.summary&&data.summary.meeting_duration_display)||'00:00:00'),10));
+                    const active=(data&&data.has_live)?'1':'0';
+                    const prevDisplayedRaw=parseInt(head.dataset.displayedDurationSeconds||'',10);
+                    const prevDisplayed=Number.isFinite(prevDisplayedRaw)?Math.max(prevDisplayedRaw,0):backendMeetingSec;
                     const prevBackend=Math.max(0,parseInt(head.dataset.backendDurationSeconds||'0',10));
                     const prevBaseMs=parseInt(head.dataset.durationBaseMs||'0',10);
                     const elapsedFromPrev=(prevBaseMs?Math.floor((nowMs-prevBaseMs)/1000):0);
                     const projected=prevBackend+Math.max(elapsedFromPrev,0);
-                    if(backendMeetingSec < prevBackend || backendMeetingSec >= projected + 5 || !prevBaseMs){
-                        head.dataset.backendDurationSeconds=String(Math.max(backendMeetingSec, prevBackend));
+                    let nextDisplayed=prevDisplayed;
+                    if(active!=='1' || !prevBaseMs || backendMeetingSec < prevDisplayed || backendMeetingSec >= projected + 5){
+                        head.dataset.backendDurationSeconds=String(backendMeetingSec);
                         head.dataset.durationBaseMs=String(nowMs);
+                        nextDisplayed=backendMeetingSec;
                     }
-                    head.dataset.isActive=(data&&data.has_live)?'1':'0';
+                    head.dataset.isActive=active;
                     head.dataset.maxDurationSeconds='0';
-                    head.dataset.displayedDurationSeconds=String(Math.max(prevMeeting, backendMeetingSec));
+                    head.dataset.displayedDurationSeconds=String(nextDisplayed);
+                    if(active!=='1') head.textContent='Duration '+formatHms(nextDisplayed);
                 }
             }
             function tickDurations(){
@@ -7753,23 +7796,24 @@ button[type="submit"]{margin-top:20px!important;}
                     window.ZA_LIVE_STATE = window.__zaLiveState;
                 }
                 const summary=data.summary||{};
+                const confirmedIdle = idlePollStreak >= 3 && !data.has_live;
                 setText('lfBadge', data.has_live?'LIVE MEETING RUNNING':'NO LIVE MEETING');
                 const badge=document.getElementById('lfBadgeWrap'); if(badge) badge.classList.toggle('is-live', !!data.has_live);
                 setDisplay('lfMetaRow', data.has_live?'flex':'none');
                 const liveNav=[...document.querySelectorAll('.sidebar a')].find(a=>a.getAttribute('href')&&a.getAttribute('href').includes('/live'));
-                if(liveNav){
+                if(liveNav && (data.has_live || confirmedIdle)){
                     liveNav.classList.toggle('live-status-live',!!data.has_live);
-                    liveNav.classList.toggle('live-status-idle',!data.has_live);
+                    liveNav.classList.toggle('live-status-idle',confirmedIdle);
                     const icon=liveNav.querySelector('.nav-icon');
                     if(icon) icon.textContent = data.has_live ? '🟢' : '🔴';
                     liveNav.title = data.has_live ? 'Live meeting is running' : 'No live meeting running';
                 }
-                const confirmedIdle = idlePollStreak >= 3 && !data.has_live;
                 setText('lfTopic', (data.has_live || !confirmedIdle)?((data.meeting&&data.meeting.topic)||'Untitled Meeting'):'Waiting for Zoom meeting');
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
                 const canonicalMeetingDuration=(summary.meeting_duration_display||formatHms(summary.meeting_duration_seconds||0));
-                setText('lfDuration','Duration '+canonicalMeetingDuration);
+                const durationHead=document.getElementById('lfDuration');
+                if(!data.has_live || !(durationHead&&durationHead.dataset&&durationHead.dataset.durationBaseMs)) setText('lfDuration','Duration '+canonicalMeetingDuration);
                 animateLiveNumber('lfActive',summary.active_now||0);
                 animateLiveNumber('lfKnown',summary.known_count||0);
                 animateLiveNumber('lfUnknown',summary.unknown_count||0);
@@ -11726,7 +11770,6 @@ def health():
 @app.route("/zoom/webhook", methods=["POST"])
 def zoom_webhook():
     try:
-        ensure_startup_database_ready()
         payload = request.get_json(force=True, silent=True) or {}
         print("🔥 FULL ZOOM DATA:", payload)
 
@@ -11739,6 +11782,8 @@ def zoom_webhook():
             ).hexdigest() if ZOOM_SECRET_TOKEN else ""
             print("✅ URL VALIDATION:", {"plainToken": plain, "encryptedToken": encrypted})
             return jsonify({"plainToken": plain, "encryptedToken": encrypted})
+
+        ensure_startup_database_ready()
 
         if not verify_zoom_signature(request):
             print("❌ INVALID SIGNATURE")
@@ -11866,6 +11911,38 @@ def zoom_webhook():
             if is_host_end_leave:
                 with db() as conn:
                     with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT * FROM attendance WHERE meeting_uuid=%s AND current_join IS NOT NULL",
+                            (meeting_uuid,),
+                        )
+                        active_rows = cur.fetchall()
+                        for active_row in active_rows:
+                            total_seconds = finalize_participant_duration_session(active_row, event_time)
+                            visible_span_seconds = get_row_visible_span_seconds(
+                                {
+                                    "first_join": active_row.get("first_join"),
+                                    "last_leave": event_time,
+                                    "current_join": None,
+                                },
+                                event_time,
+                            )
+                            if visible_span_seconds is not None and total_seconds > visible_span_seconds:
+                                total_seconds = visible_span_seconds
+                            cur.execute(
+                                """
+                                UPDATE attendance
+                                SET last_leave=%s,
+                                    current_join=NULL,
+                                    total_seconds=%s,
+                                    completed_duration_seconds=%s,
+                                    status='LEFT',
+                                    updated_at=NOW()
+                                WHERE id=%s
+                                """,
+                                (event_time, total_seconds, total_seconds, active_row["id"]),
+                            )
+                        if active_rows:
+                            print(f"MEETING_OWNER_CLEAR meeting={meeting_uuid} owner=active_participant_session reason=host_ended count={len(active_rows)}")
                         cur.execute(
                             """
                             UPDATE meetings
