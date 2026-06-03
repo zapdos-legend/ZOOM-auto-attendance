@@ -7669,53 +7669,81 @@ button[type="submit"]{margin-top:20px!important;}
                     const row=document.querySelector('#lfRows tr[data-row-id="'+id+'"]');
                     if(!row) return;
                     const backendSec=Math.max(0,parseInt(p.duration_seconds||0,10));
-                    const prevShown=Math.max(parseInt(row.dataset.displayedDurationSeconds||'0',10), parseHms(p.duration_display));
-                    const prevBackend=Math.max(0,parseInt(row.dataset.backendDurationSeconds||'0',10));
-                    const prevBaseMs=parseInt(row.dataset.durationBaseMs||'0',10);
-                    const elapsedFromPrev=(prevBaseMs?Math.floor((nowMs-prevBaseMs)/1000):0);
-                    const projected=prevBackend+Math.max(elapsedFromPrev,0);
-                    if(backendSec < prevBackend || backendSec >= projected + 5 || !prevBaseMs){
-                        row.dataset.backendDurationSeconds=String(Math.max(backendSec, prevBackend));
-                        row.dataset.durationBaseMs=String(nowMs);
-                    }
-                    row.dataset.isActive=((data&&data.has_live&&p.is_active)?'1':'0');
+                    const isActive=!!(data&&data.has_live&&p.is_active);
+                    row.dataset.backendDurationSeconds=String(backendSec);
+                    row.dataset.backendObservedAtMs=String(nowMs);
+                    row.dataset.durationBaseMs=String(nowMs);
+                    row.dataset.isActive=isActive?'1':'0';
                     row.dataset.maxDurationSeconds='0';
-                    row.dataset.displayedDurationSeconds=String(Math.max(prevShown, backendSec));
+                    if(!isActive){
+                        row.dataset.displayedDurationSeconds=String(backendSec);
+                        row.dataset.lastDisplayTickMs=String(nowMs);
+                        setCell(row,'duration','<span class="live-fix-duration">'+formatHms(backendSec)+'</span>',formatHms(backendSec));
+                        row.dataset.durationSeconds=String(backendSec);
+                    }
                 });
                 const head=document.getElementById('lfDuration');
                 if(head){
                     const backendMeetingSec=Math.max(0,parseInt((data&&data.summary&&data.summary.meeting_duration_seconds)||parseHms((data&&data.summary&&data.summary.meeting_duration_display)||'00:00:00'),10));
+                    const isLive=!!(data&&data.has_live);
                     head.dataset.backendDurationSeconds=String(backendMeetingSec);
+                    head.dataset.backendObservedAtMs=String(nowMs);
                     head.dataset.durationBaseMs=String(nowMs);
-                    head.dataset.isActive=(data&&data.has_live)?'1':'0';
+                    head.dataset.isActive=isLive?'1':'0';
                     head.dataset.maxDurationSeconds='0';
-                    head.dataset.displayedDurationSeconds=String(backendMeetingSec);
-                    head.textContent='Duration '+formatHms(backendMeetingSec);
+                    if(!isLive){
+                        head.dataset.displayedDurationSeconds=String(backendMeetingSec);
+                        head.dataset.lastDisplayTickMs=String(nowMs);
+                        head.textContent='Duration '+formatHms(backendMeetingSec);
+                    }
                 }
             }
             function tickDurations(){
                 const nowMs=Date.now();
                 document.querySelectorAll('#lfRows tr[data-row-id]').forEach(function(row){
-                    const baseSec=parseInt(row.dataset.backendDurationSeconds||'0',10);
-                    const baseMs=parseInt(row.dataset.durationBaseMs||'0',10);
+                    const backendSec=Math.max(0,parseInt(row.dataset.backendDurationSeconds||row.dataset.durationSeconds||'0',10));
                     const active=row.dataset.isActive==='1';
-                    const elapsed=active&&baseMs?Math.floor((nowMs-baseMs)/1000):0;
-                    const maxCap=parseInt(row.dataset.maxDurationSeconds||'0',10);
-                    let next=Math.max(baseSec+Math.max(elapsed,0), parseInt(row.dataset.displayedDurationSeconds||'0',10));
-                    if(maxCap>0) next=Math.min(next,maxCap);
+                    const cell=row.querySelector('[data-col="duration"] .live-fix-duration, .live-fix-duration');
+                    const cellSec=parseHms(cell?cell.textContent:'');
+                    const hasDisplayed=Object.prototype.hasOwnProperty.call(row.dataset,'displayedDurationSeconds');
+                    let displayed=hasDisplayed?Math.max(0,parseInt(row.dataset.displayedDurationSeconds||'0',10)):Math.max(cellSec, backendSec);
+                    let next=displayed;
+                    if(active){
+                        const lastTickMs=parseInt(row.dataset.lastDisplayTickMs||'0',10);
+                        if(!lastTickMs){
+                            row.dataset.lastDisplayTickMs=String(nowMs);
+                        }else if(nowMs-lastTickMs>=1000){
+                            next=displayed+1;
+                            row.dataset.lastDisplayTickMs=String(nowMs);
+                        }
+                    }else{
+                        next=backendSec;
+                        row.dataset.lastDisplayTickMs=String(nowMs);
+                    }
                     row.dataset.displayedDurationSeconds=String(next);
                     setCell(row,'duration','<span class="live-fix-duration">'+formatHms(next)+'</span>',formatHms(next));
                     row.dataset.durationSeconds=String(next);
                 });
                 const head=document.getElementById('lfDuration');
                 if(head){
-                    const baseSec=parseInt(head.dataset.backendDurationSeconds||'0',10);
-                    const baseMs=parseInt(head.dataset.durationBaseMs||'0',10);
+                    const backendSec=Math.max(0,parseInt(head.dataset.backendDurationSeconds||'0',10));
                     const active=head.dataset.isActive==='1';
-                    const elapsed=active&&baseMs?Math.floor((nowMs-baseMs)/1000):0;
-                    const maxCap=parseInt(head.dataset.maxDurationSeconds||'0',10);
-                    let next=Math.max(baseSec+Math.max(elapsed,0), parseInt(head.dataset.displayedDurationSeconds||'0',10));
-                    if(maxCap>0) next=Math.min(next,maxCap);
+                    const textSec=parseHms((head.textContent||'').replace(/^Duration\\s+/i,''));
+                    const hasDisplayed=Object.prototype.hasOwnProperty.call(head.dataset,'displayedDurationSeconds');
+                    let displayed=hasDisplayed?Math.max(0,parseInt(head.dataset.displayedDurationSeconds||'0',10)):Math.max(textSec, backendSec);
+                    let next=displayed;
+                    if(active){
+                        const lastTickMs=parseInt(head.dataset.lastDisplayTickMs||'0',10);
+                        if(!lastTickMs){
+                            head.dataset.lastDisplayTickMs=String(nowMs);
+                        }else if(nowMs-lastTickMs>=1000){
+                            next=displayed+1;
+                            head.dataset.lastDisplayTickMs=String(nowMs);
+                        }
+                    }else{
+                        next=backendSec;
+                        head.dataset.lastDisplayTickMs=String(nowMs);
+                    }
                     head.dataset.displayedDurationSeconds=String(next);
                     head.textContent='Duration '+formatHms(next);
                 }
@@ -7752,8 +7780,13 @@ button[type="submit"]{margin-top:20px!important;}
                     setCell(row,'type','<span class="badge '+cls(p.type)+'">'+esc(p.type)+'</span>',p.type);
                     setCell(row,'first_join',esc(p.first_join),p.first_join);
                     setCell(row,'last_leave',esc(p.last_leave),p.last_leave);
-                    row.dataset.durationSeconds=String(parseInt(p.duration_seconds||0,10));
-                    setCell(row,'duration','<span class="live-fix-duration">'+esc(p.duration_display||'00:00:00')+'</span>',p.duration_display||'00:00:00');
+                    const backendDurationSeconds=parseInt(p.duration_seconds||0,10);
+                    row.dataset.durationSeconds=String(backendDurationSeconds);
+                    if(!p.is_active){
+                        setCell(row,'duration','<span class="live-fix-duration">'+esc(p.duration_display||'00:00:00')+'</span>',p.duration_display||'00:00:00');
+                    }else if(!row.querySelector('[data-col="duration"]')){
+                        setCell(row,'duration','<span class="live-fix-duration">'+esc(p.duration_display||'00:00:00')+'</span>',p.duration_display||'00:00:00');
+                    }
                     setCell(row,'rejoins',esc(p.rejoins),p.rejoins);
                     setCell(row,'status','<span class="badge '+(p.status==='LIVE'?'ok':'gray')+'">'+esc(p.status)+'</span>',p.status);
                 });
@@ -7797,7 +7830,10 @@ button[type="submit"]{margin-top:20px!important;}
                 setText('lfMeetingId','Meeting ID '+(data.has_live?(data.meeting.id||'-'):'-'));
                 setText('lfStarted','Started '+(data.has_live?(data.meeting.start_time||'-'):'-'));
                 const canonicalMeetingDuration=(summary.meeting_duration_display||formatHms(summary.meeting_duration_seconds||0));
-                setText('lfDuration','Duration '+canonicalMeetingDuration);
+                const headDurationEl=document.getElementById('lfDuration');
+                if(headDurationEl && !data.has_live){
+                    setText('lfDuration','Duration '+canonicalMeetingDuration);
+                }
                 animateLiveNumber('lfActive',summary.active_now||0);
                 animateLiveNumber('lfKnown',summary.known_count||0);
                 animateLiveNumber('lfUnknown',summary.unknown_count||0);
