@@ -3828,16 +3828,215 @@ def phase41_risk_level(attendance_pct, missed_meetings, trend_label, score):
     return {"label": "Low Risk", "css": "low", "emoji": "🟢", "rank": 1}
 
 
-def build_member_intelligence_engine(limit=None):
-    """Build Phase 4.1 member intelligence from members, attendance, and meetings only.
+def _phase41_month_label(year, month):
+    month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    try:
+        return f"{month_names[int(month) - 1]} {int(year)}"
+    except Exception:
+        return "Lifetime"
 
-    This is intentionally read-only. It reuses attendance truth helpers and performs
-    one batched pass over existing meeting and attendance rows for production-safe UI use.
-    """
-    cache_key = _cache_make_key("member_intelligence_phase41_v1", {"limit": limit})
+
+def _phase41_period_options():
+    """Period selector choices. Monthly choices come from existing meetings only."""
+    options = [
+        {"value": "lifetime", "label": "Lifetime"},
+        {"value": "current_month", "label": "Current Month"},
+    ]
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT
+                       EXTRACT(YEAR FROM CAST(start_time AS TEXT)::timestamp)::int AS year_value,
+                       EXTRACT(MONTH FROM CAST(start_time AS TEXT)::timestamp)::int AS month_value
+                FROM meetings
+                WHERE start_time IS NOT NULL
+                ORDER BY year_value DESC, month_value DESC
+                """
+            )
+            seen = {"lifetime", "current_month"}
+            for row in cur.fetchall() or []:
+                year = int(row.get("year_value") or 0)
+                month = int(row.get("month_value") or 0)
+                if not year or not month:
+                    continue
+                value = f"{year}-{month:02d}"
+                if value in seen:
+                    continue
+                options.append({"value": value, "label": _phase41_month_label(year, month)})
+                seen.add(value)
+    return options
+
+
+def _phase41_resolve_period(period):
+    today = today_local()
+    value = str(period or "lifetime").strip().lower()
+    if value == "current_month":
+        return {
+            "mode": "month",
+            "value": "current_month",
+            "year": today.year,
+            "month": today.month,
+            "label": f"Current Month ({_phase41_month_label(today.year, today.month)})",
+        }
+    match = re.match(r"^(\d{4})-(\d{1,2})$", value)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        if 1 <= month <= 12:
+            return {"mode": "month", "value": f"{year}-{month:02d}", "year": year, "month": month, "label": _phase41_month_label(year, month)}
+    return {"mode": "lifetime", "value": "lifetime", "year": None, "month": None, "label": "Lifetime"}
+
+
+def _phase41_register_score_points(cells):
+    points = []
+    for mark in cells or []:
+        mark = str(mark or "").upper().strip()
+        if mark == "P":
+            points.append(100.0)
+        elif mark == "L":
+            points.append(50.0)
+        elif mark in ("A", "U"):
+            points.append(0.0)
+    return points
+
+
+def _phase41_monthly_trend_from_percentages(percentages):
+    values = [float(v) for v in (percentages or []) if v is not None]
+    if len(values) < 2:
+        return {"label": "Stable", "emoji": "➖", "short": "STABLE", "delta": 0.0}
+    if len(values) >= 3:
+        recent = values[-2:]
+        previous = values[:-2]
+        previous_avg = sum(previous) / max(len(previous), 1)
+        recent_avg = sum(recent) / max(len(recent), 1)
+    else:
+        previous_avg = values[0]
+        recent_avg = values[-1]
+    delta = round(recent_avg - previous_avg, 2)
+    if delta >= 5:
+        return {"label": "Improving", "emoji": "📈", "short": "IMPROVING", "delta": delta}
+    if delta <= -5:
+        return {"label": "Declining", "emoji": "📉", "short": "DECLINING", "delta": delta}
+    return {"label": "Stable", "emoji": "➖", "short": "STABLE", "delta": delta}
+
+
+def _phase41_month_sequence(period_meta, period_options):
+    months = []
+    for opt in reversed(period_options or []):
+        match = re.match(r"^(\d{4})-(\d{2})$", str(opt.get("value") or ""))
+        if match:
+            months.append((int(match.group(1)), int(match.group(2))))
+    if period_meta.get("mode") == "month":
+        selected = (int(period_meta.get("year") or 0), int(period_meta.get("month") or 0))
+        months = [m for m in months if m <= selected]
+        if selected not in months:
+            months.append(selected)
+            months.sort()
+    return months
+
+
+def _phase41_monthly_trends(period_meta, period_options):
+    trends_by_member = defaultdict(list)
+    for year, month in _phase41_month_sequence(period_meta, period_options):
+        month_data = attendance_register_payload(year, month, all_rows=True)
+        for row in month_data.get("rows") or []:
+            trends_by_member[int(row.get("id"))].append(float(row.get("attendance_pct") or 0))
+    return {mid: _phase41_monthly_trend_from_percentages(values) for mid, values in trends_by_member.items()}
+
+
+def _phase41_build_monthly_member_intelligence(period_meta, limit=None, period_options=None):
+    """Monthly mode intentionally reuses Attendance Register as the truth source."""
+    register_data = attendance_register_payload(period_meta.get("year"), period_meta.get("month"), all_rows=True)
+    monthly_trends = _phase41_monthly_trends(period_meta, period_options or [])
+    total_meetings = int((register_data.get("summary") or {}).get("meeting_days") or 0)
+    intelligence_rows = []
+    for row in register_data.get("rows") or []:
+        totals = row.get("totals") or {}
+        score_points = _phase41_register_score_points(row.get("cells") or [])
+        attendance_pct = float(row.get("attendance_pct") or 0)
+        duration_pct = attendance_pct
+        consistency_pct = min(calculate_member_consistency_score(score_points), attendance_pct) if score_points else 0.0
+        score = calculate_phase41_member_score(attendance_pct, duration_pct, consistency_pct)
+        status = member_intelligence_status(score)
+        trend = monthly_trends.get(int(row.get("id")), {"label": "Stable", "emoji": "➖", "short": "STABLE", "delta": 0.0})
+        missed_meetings = int(totals.get("A") or 0)
+        risk = phase41_risk_level(attendance_pct, missed_meetings, trend.get("label"), score)
+        attended = int(totals.get("P") or 0) + int(totals.get("L") or 0)
+        intelligence_rows.append({
+            "id": int(row.get("id")),
+            "name": row.get("name") or f"Member {row.get('id')}",
+            "email": row.get("email") or "",
+            "attendance_pct": round(attendance_pct, 2),
+            "average_duration": 0.0,
+            "duration_pct": round(duration_pct, 2),
+            "consistency_pct": round(consistency_pct, 2),
+            "score": round(score, 2),
+            "status": status,
+            "trend": trend,
+            "risk": risk,
+            "meetings_attended": attended,
+            "missed_meetings": missed_meetings,
+            "total_meetings": total_meetings,
+            "last_seen": "-",
+            "last_seen_sort": "",
+        })
+    intelligence_rows.sort(key=lambda r: (-float(r.get("score") or 0), str(r.get("name") or "").lower()))
+    if limit:
+        intelligence_rows = intelligence_rows[:int(limit)]
+    return _phase41_finalize_payload(intelligence_rows, total_meetings, period_meta, "Monthly mode reuses Attendance Register rows, meeting-date denominator, stored final_status mapping, missing-as-absent cells, and attendance percentage.")
+
+
+def _phase41_finalize_payload(intelligence_rows, total_meetings, period_meta, truth_basis):
+    status_counts = {"Excellent": 0, "Good": 0, "Warning": 0, "Critical": 0}
+    for row in intelligence_rows:
+        status_counts[row["status"]["label"]] = status_counts.get(row["status"]["label"], 0) + 1
+    top_performers = intelligence_rows[:10]
+    at_risk_members = sorted(
+        [
+            r for r in intelligence_rows
+            if r["score"] < 70 or r["trend"].get("label") == "Declining" or r["attendance_pct"] < 75
+        ],
+        key=lambda r: (-int(r["risk"].get("rank") or 0), float(r.get("score") or 0), str(r.get("name") or "").lower()),
+    )[:10]
+    return {
+        "members": intelligence_rows,
+        "summary": {
+            "excellent": status_counts.get("Excellent", 0),
+            "good": status_counts.get("Good", 0),
+            "warning": status_counts.get("Warning", 0),
+            "critical": status_counts.get("Critical", 0),
+            "top_performer": top_performers[0] if top_performers else None,
+            "at_risk_count": len(at_risk_members),
+            "total_members": len(intelligence_rows),
+            "total_meetings": total_meetings,
+            "period_label": period_meta.get("label") or "Lifetime",
+        },
+        "top_performers": top_performers,
+        "at_risk_members": at_risk_members,
+        "period": period_meta,
+        "architecture": {
+            "tables": ["members", "attendance", "meetings"],
+            "score_formula": "Attendance 50% + Duration 30% + Consistency 20%",
+            "trend_rule": "Month-to-month attendance percentages compared over time",
+            "truth_basis": truth_basis,
+        },
+    }
+
+
+def build_member_intelligence_engine(period=None, limit=None):
+    """Build Phase 4.1 member intelligence for lifetime or register-aligned monthly periods."""
+    period_meta = _phase41_resolve_period(period)
+    cache_key = _cache_make_key("member_intelligence_phase41_v2", {"period": period_meta.get("value"), "limit": limit})
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
+
+    period_options = _phase41_period_options()
+    if period_meta.get("mode") == "month":
+        payload = _phase41_build_monthly_member_intelligence(period_meta, limit=limit, period_options=period_options)
+        payload["period_options"] = period_options
+        return _cache_set(cache_key, payload)
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -3857,6 +4056,8 @@ def build_member_intelligence_engine(limit=None):
                 SELECT id, meeting_uuid, topic, meeting_id, start_time, end_time, status
                 FROM meetings
                 WHERE start_time IS NOT NULL
+                  AND CAST(start_time AS TEXT)::timestamp <= NOW()
+                  AND COALESCE(LOWER(status), '') <> 'live'
                 ORDER BY start_time ASC NULLS LAST, id ASC
                 """
             )
@@ -3890,6 +4091,7 @@ def build_member_intelligence_engine(limit=None):
     except Exception:
         truth_late_threshold = float(DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30"))
 
+    monthly_trends = _phase41_monthly_trends(period_meta, period_options)
     best_attendance = {}
     max_seconds_by_uuid = {}
     for row in attendance_rows:
@@ -3961,7 +4163,7 @@ def build_member_intelligence_engine(limit=None):
         attendance_pct = float(summary.get("attendance_percent") or 0)
         score = calculate_phase41_member_score(attendance_pct, duration_pct, consistency_pct)
         status = member_intelligence_status(score)
-        trend = derive_trend_label(score_points)
+        trend = monthly_trends.get(int(mid), {"label": "Stable", "emoji": "➖", "short": "STABLE", "delta": 0.0})
         missed_meetings = int(summary.get("absent") or 0)
         risk = phase41_risk_level(attendance_pct, missed_meetings, trend.get("label"), score)
         last_seen_values = [parse_dt(r.get("last_seen_value")) for r in truth_rows if r.get("last_seen_value")]
@@ -3990,38 +4192,8 @@ def build_member_intelligence_engine(limit=None):
     intelligence_rows.sort(key=lambda r: (-float(r.get("score") or 0), str(r.get("name") or "").lower()))
     if limit:
         intelligence_rows = intelligence_rows[:int(limit)]
-
-    status_counts = {"Excellent": 0, "Good": 0, "Warning": 0, "Critical": 0}
-    for row in intelligence_rows:
-        status_counts[row["status"]["label"]] = status_counts.get(row["status"]["label"], 0) + 1
-    top_performers = intelligence_rows[:10]
-    at_risk_members = sorted(
-        [
-            r for r in intelligence_rows
-            if r["score"] < 70 or r["trend"].get("label") == "Declining" or r["attendance_pct"] < 75
-        ],
-        key=lambda r: (-int(r["risk"].get("rank") or 0), float(r.get("score") or 0), str(r.get("name") or "").lower()),
-    )[:10]
-    payload = {
-        "members": intelligence_rows,
-        "summary": {
-            "excellent": status_counts.get("Excellent", 0),
-            "good": status_counts.get("Good", 0),
-            "warning": status_counts.get("Warning", 0),
-            "critical": status_counts.get("Critical", 0),
-            "top_performer": top_performers[0] if top_performers else None,
-            "at_risk_count": len(at_risk_members),
-            "total_members": len(intelligence_rows),
-            "total_meetings": total_meetings,
-        },
-        "top_performers": top_performers,
-        "at_risk_members": at_risk_members,
-        "architecture": {
-            "tables": ["members", "attendance", "meetings"],
-            "score_formula": "Attendance 50% + Duration 30% + Consistency 20%",
-            "trend_rule": "Recent meeting score average compared with older meeting score average",
-        },
-    }
+    payload = _phase41_finalize_payload(intelligence_rows, total_meetings, period_meta, "Lifetime mode uses all completed meetings; trend still compares month-to-month Attendance Register percentages.")
+    payload["period_options"] = period_options
     return _cache_set(cache_key, payload)
 # ===== END PHASE 4.1 MEMBER INTELLIGENCE ENGINE =====
 # ===== END ATTENDANCE TRUTH ENGINE V1 =====
@@ -13546,22 +13718,35 @@ def calculate_trend_from_statuses(statuses):
 @app.route("/member-intelligence")
 @login_required
 def member_intelligence():
-    data = build_member_intelligence_engine()
+    selected_period = request.args.get("period", "lifetime")
+    data = build_member_intelligence_engine(selected_period)
     summary = data.get("summary") or {}
     members = data.get("members") or []
     top_performers = data.get("top_performers") or []
     at_risk_members = data.get("at_risk_members") or []
+    period = data.get("period") or {}
+    period_options = data.get("period_options") or []
+    architecture = data.get("architecture") or {}
     body = render_template_string(
         """
         <style>
-        .mi-hero-note{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.mi-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);border-radius:999px;padding:8px 12px;font-size:12px;font-weight:900}.mi-summary-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;margin:16px 0}.mi-card{border-radius:22px;border:1px solid var(--surface-ring);background:var(--card-soft);box-shadow:var(--shadow-soft);padding:16px}.mi-card small{display:block;color:var(--muted);font-size:11px;font-weight:950;text-transform:uppercase;letter-spacing:.08em}.mi-card strong{display:block;font-size:26px;line-height:1;margin-top:9px;letter-spacing:-.04em}.mi-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px}.mi-table{width:100%;border-collapse:separate;border-spacing:0}.mi-table th,.mi-table td{padding:12px 13px;border-bottom:1px solid rgba(148,163,184,.14);text-align:left;white-space:nowrap}.mi-table th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;background:rgba(15,23,42,.45);position:sticky;top:0;z-index:2}.mi-score{font-weight:950;font-size:18px}.mi-badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:7px 10px;font-size:12px;font-weight:950;border:1px solid rgba(148,163,184,.18)}.mi-status-excellent,.mi-risk-low{background:rgba(34,197,94,.14);color:#86efac}.mi-status-good{background:rgba(59,130,246,.14);color:#93c5fd}.mi-status-warning,.mi-risk-medium{background:rgba(245,158,11,.15);color:#fde68a}.mi-status-critical,.mi-risk-high{background:rgba(239,68,68,.15);color:#fecaca}.mi-trend-improving{color:#86efac}.mi-trend-stable{color:#cbd5e1}.mi-trend-declining{color:#fca5a5}.mi-side-list{display:grid;gap:10px}.mi-person{display:flex;justify-content:space-between;gap:12px;align-items:center;border-radius:16px;border:1px solid rgba(148,163,184,.14);background:rgba(255,255,255,.04);padding:11px 12px}.mi-person b{display:block;font-size:13px}.mi-person span{display:block;color:var(--muted);font-size:12px;margin-top:3px}.mi-search{width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.24);background:rgba(2,6,23,.34);color:var(--text);padding:12px 14px;margin-bottom:12px;font-weight:800}.mi-architecture{font-size:12px;line-height:1.7;color:var(--muted)}@media(max-width:1280px){.mi-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.mi-layout{grid-template-columns:1fr}}@media(max-width:760px){.mi-summary-grid{grid-template-columns:1fr}.mi-table th,.mi-table td{padding:10px 9px}}
+        .mi-hero-note{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.mi-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);border-radius:999px;padding:8px 12px;font-size:12px;font-weight:900}.mi-summary-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;margin:16px 0}.mi-card{border-radius:22px;border:1px solid var(--surface-ring);background:var(--card-soft);box-shadow:var(--shadow-soft);padding:16px}.mi-card small{display:block;color:var(--muted);font-size:11px;font-weight:950;text-transform:uppercase;letter-spacing:.08em}.mi-card strong{display:block;font-size:26px;line-height:1;margin-top:9px;letter-spacing:-.04em}.mi-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px}.mi-table{width:100%;border-collapse:separate;border-spacing:0}.mi-table th,.mi-table td{padding:12px 13px;border-bottom:1px solid rgba(148,163,184,.14);text-align:left;white-space:nowrap}.mi-table th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;background:rgba(15,23,42,.45);position:sticky;top:0;z-index:2}.mi-score{font-weight:950;font-size:18px}.mi-badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:7px 10px;font-size:12px;font-weight:950;border:1px solid rgba(148,163,184,.18)}.mi-status-excellent,.mi-risk-low{background:rgba(34,197,94,.14);color:#86efac}.mi-status-good{background:rgba(59,130,246,.14);color:#93c5fd}.mi-status-warning,.mi-risk-medium{background:rgba(245,158,11,.15);color:#fde68a}.mi-status-critical,.mi-risk-high{background:rgba(239,68,68,.15);color:#fecaca}.mi-trend-improving{color:#86efac}.mi-trend-stable{color:#cbd5e1}.mi-trend-declining{color:#fca5a5}.mi-side-list{display:grid;gap:10px}.mi-person{display:flex;justify-content:space-between;gap:12px;align-items:center;border-radius:16px;border:1px solid rgba(148,163,184,.14);background:rgba(255,255,255,.04);padding:11px 12px}.mi-person b{display:block;font-size:13px}.mi-person span{display:block;color:var(--muted);font-size:12px;margin-top:3px}.mi-search,.mi-period-select{width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.24);background:rgba(2,6,23,.34);color:var(--text);padding:12px 14px;margin-bottom:12px;font-weight:800}.mi-period-form{display:grid;grid-template-columns:minmax(180px,260px) auto;gap:10px;align-items:center;margin:14px 0}.mi-period-select{margin-bottom:0}.mi-period-button{border:0;border-radius:14px;padding:12px 16px;background:linear-gradient(135deg,#38bdf8,#6366f1);color:white;font-weight:950;cursor:pointer}.mi-period-note{color:var(--muted);font-size:12px;margin-top:8px}.mi-architecture{font-size:12px;line-height:1.7;color:var(--muted)}@media(max-width:1280px){.mi-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.mi-layout{grid-template-columns:1fr}}@media(max-width:760px){.mi-summary-grid{grid-template-columns:1fr}.mi-table th,.mi-table td{padding:10px 9px}}
         </style>
         <div class="hero">
             <div class="hero-grid">
                 <div>
                     <div class="badge" style="margin-bottom:12px">Phase 4.1 • Member Intelligence Engine</div>
                     <h1 class="hero-title">Member performance intelligence</h1>
-                    <div class="hero-copy">Scores every active member from existing attendance, duration, and meeting records without changing schemas, attendance classification, reporting, or Zoom webhook handling.</div>
+                    <div class="hero-copy">Scores every active member for the selected period without changing schemas, attendance classification, reporting, or Zoom webhook handling.</div>
+                    <form class="mi-period-form" method="get" action="{{ url_for('member_intelligence') }}">
+                        <select class="mi-period-select" name="period" aria-label="Member Intelligence period">
+                            {% for option in period_options %}
+                            <option value="{{ option.value }}" {% if option.value == period.value %}selected{% endif %}>{{ option.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <button class="mi-period-button" type="submit">Apply Period</button>
+                    </form>
+                    <div class="mi-period-note">Selected period: <strong>{{ period.label }}</strong>. {{ architecture.truth_basis }}</div>
                     <div class="mi-hero-note">
                         <span class="mi-pill">📊 Attendance 50%</span>
                         <span class="mi-pill">⏱ Duration 30%</span>
@@ -13570,6 +13755,7 @@ def member_intelligence():
                 </div>
                 <div class="hero-stats">
                     <div class="hero-chip"><div class="small">Members</div><div class="big">{{ summary.total_members }}</div></div>
+                    <div class="hero-chip"><div class="small">Period</div><div class="big" style="font-size:18px">{{ summary.period_label }}</div></div>
                     <div class="hero-chip"><div class="small">Meetings Analyzed</div><div class="big">{{ summary.total_meetings }}</div></div>
                     <div class="hero-chip"><div class="small">Top Performer</div><div class="big">{{ summary.top_performer.name if summary.top_performer else '-' }}</div></div>
                 </div>
@@ -13590,7 +13776,7 @@ def member_intelligence():
                 <div class="section-title">
                     <div>
                         <h3>Member Intelligence</h3>
-                        <p>Read-only calculations from existing member, meeting, and attendance data.</p>
+                        <p>Read-only calculations for {{ period.label }}. Monthly mode is aligned with Attendance Register.</p>
                     </div>
                 </div>
                 <input id="memberIntelligenceSearch" class="mi-search" placeholder="Search members..." autocomplete="off">
@@ -13651,8 +13837,10 @@ def member_intelligence():
                     <h3>Architecture Plan</h3>
                     <ul>
                         <li>Uses only <strong>members</strong>, <strong>attendance</strong>, and <strong>meetings</strong>.</li>
-                        <li>Reuses the attendance truth helpers for status, duration percentage, and trend points.</li>
+                        <li><strong>Lifetime</strong> uses completed meetings; <strong>Monthly</strong> reuses Attendance Register reality.</li>
+                        <li>Monthly mode reuses register denominator, stored status source, absence handling, and percentage calculation.</li>
                         <li>Score = Attendance 50% + Duration 30% + Consistency 20%.</li>
+                        <li>Trend compares month-to-month attendance percentages.</li>
                         <li>No schema migrations, webhook changes, finalization changes, report changes, or authentication changes.</li>
                     </ul>
                 </div>
@@ -13674,6 +13862,9 @@ def member_intelligence():
         members=members,
         top_performers=top_performers,
         at_risk_members=at_risk_members,
+        period=period,
+        period_options=period_options,
+        architecture=architecture,
     )
     return page("Member Intelligence", body, active="member_intelligence")
 
@@ -13681,7 +13872,7 @@ def member_intelligence():
 @app.route("/api/member-intelligence")
 @login_required
 def api_member_intelligence():
-    return jsonify({"ok": True, **build_member_intelligence_engine()})
+    return jsonify({"ok": True, **build_member_intelligence_engine(request.args.get("period", "lifetime"))})
 
 
 @app.route("/api/member-risk-summary")
