@@ -3945,13 +3945,68 @@ def _phase41_monthly_trends(period_meta, period_options):
     return {mid: _phase41_monthly_trend_from_percentages(values) for mid, values in trends_by_member.items()}
 
 
+def _phase41_monthly_member_metadata(year, month):
+    """Return monthly duration/last-seen metadata from attended attendance rows only."""
+    try:
+        year = int(year)
+        month = int(month)
+    except Exception:
+        return {}
+    start_day = date(year, month, 1)
+    end_day = date(year, month, _month_days(year, month))
+    attended_statuses = {"PRESENT", "LATE", "HOST"}
+    metadata = defaultdict(lambda: {"total_seconds": 0, "attended_rows": 0, "last_seen": None})
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT a.member_id,
+                       COALESCE(a.total_seconds, 0) AS total_seconds,
+                       a.final_status, a.status,
+                       a.last_leave, a.current_join, a.first_join,
+                       m.start_time AS meeting_start_time
+                FROM attendance a
+                JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+                WHERE m.start_time IS NOT NULL
+                  AND CAST(m.start_time AS TEXT)::date BETWEEN %s AND %s
+                  AND a.member_id IS NOT NULL
+                """,
+                (start_day, end_day),
+            )
+            attendance_rows = list(cur.fetchall() or [])
+
+    for attendance_row in attendance_rows:
+        status = str(attendance_row.get("final_status") or attendance_row.get("status") or "").upper().strip()
+        if status not in attended_statuses:
+            continue
+        member_id = attendance_row.get("member_id")
+        if member_id is None:
+            continue
+        member_metadata = metadata[int(member_id)]
+        member_metadata["total_seconds"] += int(attendance_row.get("total_seconds") or 0)
+        member_metadata["attended_rows"] += 1
+        last_seen_candidate = (
+            parse_dt(attendance_row.get("last_leave"))
+            or parse_dt(attendance_row.get("current_join"))
+            or parse_dt(attendance_row.get("first_join"))
+            or parse_dt(attendance_row.get("meeting_start_time"))
+        )
+        if last_seen_candidate and (member_metadata["last_seen"] is None or last_seen_candidate > member_metadata["last_seen"]):
+            member_metadata["last_seen"] = last_seen_candidate
+
+    return dict(metadata)
+
+
 def _phase41_build_monthly_member_intelligence(period_meta, limit=None, period_options=None):
     """Monthly mode intentionally reuses Attendance Register as the truth source."""
     register_data = attendance_register_payload(period_meta.get("year"), period_meta.get("month"), all_rows=True)
+    monthly_metadata = _phase41_monthly_member_metadata(period_meta.get("year"), period_meta.get("month"))
     monthly_trends = _phase41_monthly_trends(period_meta, period_options or [])
     total_meetings = int((register_data.get("summary") or {}).get("meeting_days") or 0)
     intelligence_rows = []
     for row in register_data.get("rows") or []:
+        member_id = int(row.get("id"))
         totals = row.get("totals") or {}
         score_points = _phase41_register_score_points(row.get("cells") or [])
         attendance_pct = float(row.get("attendance_pct") or 0)
@@ -3959,16 +4014,20 @@ def _phase41_build_monthly_member_intelligence(period_meta, limit=None, period_o
         consistency_pct = min(calculate_member_consistency_score(score_points), attendance_pct) if score_points else 0.0
         score = calculate_phase41_member_score(attendance_pct, duration_pct, consistency_pct)
         status = member_intelligence_status(score)
-        trend = monthly_trends.get(int(row.get("id")), {"label": "Stable", "emoji": "➖", "short": "STABLE", "delta": 0.0})
+        trend = monthly_trends.get(member_id, {"label": "Stable", "emoji": "➖", "short": "STABLE", "delta": 0.0})
         missed_meetings = int(totals.get("A") or 0)
         risk = phase41_risk_level(attendance_pct, missed_meetings, trend.get("label"), score)
         attended = int(totals.get("P") or 0) + int(totals.get("L") or 0)
+        metadata = monthly_metadata.get(member_id) or {}
+        attended_rows = int(metadata.get("attended_rows") or 0)
+        avg_duration = round((int(metadata.get("total_seconds") or 0) / float(attended_rows)) / 60.0, 2) if attended_rows else 0.0
+        last_seen = metadata.get("last_seen")
         intelligence_rows.append({
-            "id": int(row.get("id")),
+            "id": member_id,
             "name": row.get("name") or f"Member {row.get('id')}",
             "email": row.get("email") or "",
             "attendance_pct": round(attendance_pct, 2),
-            "average_duration": 0.0,
+            "average_duration": avg_duration,
             "duration_pct": round(duration_pct, 2),
             "consistency_pct": round(consistency_pct, 2),
             "score": round(score, 2),
@@ -3978,13 +4037,13 @@ def _phase41_build_monthly_member_intelligence(period_meta, limit=None, period_o
             "meetings_attended": attended,
             "missed_meetings": missed_meetings,
             "total_meetings": total_meetings,
-            "last_seen": "-",
-            "last_seen_sort": "",
+            "last_seen": fmt_dt(last_seen) if last_seen else "-",
+            "last_seen_sort": last_seen.isoformat() if last_seen else "",
         })
     intelligence_rows.sort(key=lambda r: (-float(r.get("score") or 0), str(r.get("name") or "").lower()))
     if limit:
         intelligence_rows = intelligence_rows[:int(limit)]
-    return _phase41_finalize_payload(intelligence_rows, total_meetings, period_meta, "Monthly mode reuses Attendance Register rows, meeting-date denominator, stored final_status mapping, missing-as-absent cells, and attendance percentage.")
+    return _phase41_finalize_payload(intelligence_rows, total_meetings, period_meta, "Monthly mode reuses Attendance Register rows, meeting-date denominator, stored final_status mapping, missing-as-absent cells, and attendance percentage; only average duration and last-seen metadata are enriched from attended attendance rows.")
 
 
 def _phase41_finalize_payload(intelligence_rows, total_meetings, period_meta, truth_basis):
