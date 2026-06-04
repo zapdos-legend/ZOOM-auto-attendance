@@ -3786,6 +3786,244 @@ def build_member_truth_score_points(rows):
             score = max(0.0, score - min(12.0, (rejoins - 3) * 2.0))
         points.append(round(score, 2))
     return points
+
+
+# ===== PHASE 4.1 MEMBER INTELLIGENCE ENGINE (READ-ONLY) =====
+def member_intelligence_status(score):
+    score = clamp_score(score)
+    if score >= 90:
+        return {"label": "Excellent", "css": "excellent", "emoji": "🏆"}
+    if score >= 70:
+        return {"label": "Good", "css": "good", "emoji": "✅"}
+    if score >= 50:
+        return {"label": "Warning", "css": "warning", "emoji": "⚠️"}
+    return {"label": "Critical", "css": "critical", "emoji": "🚨"}
+
+
+def calculate_phase41_member_score(attendance_pct, duration_pct, consistency_pct):
+    """Phase 4.1 scoring formula: attendance 50%, duration 30%, consistency 20%."""
+    attendance_pct = clamp_score(attendance_pct)
+    duration_pct = clamp_score(duration_pct)
+    consistency_pct = clamp_score(consistency_pct)
+    return clamp_score((attendance_pct * 0.50) + (duration_pct * 0.30) + (consistency_pct * 0.20))
+
+
+def calculate_member_consistency_score(score_points):
+    points = [float(p) for p in (score_points or []) if p is not None]
+    if not points:
+        return 0.0
+    if len(points) == 1:
+        return clamp_score(points[0])
+    volatility = sum(abs(points[i] - points[i - 1]) for i in range(1, len(points))) / max(len(points) - 1, 1)
+    floor = sum(points) / len(points) * 0.35
+    return clamp_score(max(floor, 100.0 - volatility))
+
+
+def phase41_risk_level(attendance_pct, missed_meetings, trend_label, score):
+    trend_label = str(trend_label or "Stable")
+    if score < 50 or attendance_pct < 50 or (missed_meetings >= 3 and trend_label == "Declining"):
+        return {"label": "High Risk", "css": "high", "emoji": "🔴", "rank": 3}
+    if score < 70 or attendance_pct < 75 or missed_meetings >= 2 or trend_label == "Declining":
+        return {"label": "Medium Risk", "css": "medium", "emoji": "🟡", "rank": 2}
+    return {"label": "Low Risk", "css": "low", "emoji": "🟢", "rank": 1}
+
+
+def build_member_intelligence_engine(limit=None):
+    """Build Phase 4.1 member intelligence from members, attendance, and meetings only.
+
+    This is intentionally read-only. It reuses attendance truth helpers and performs
+    one batched pass over existing meeting and attendance rows for production-safe UI use.
+    """
+    cache_key = _cache_make_key("member_intelligence_phase41_v1", {"limit": limit})
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            name_expr = member_name_sql(conn)
+            cur.execute(
+                f"""
+                SELECT id, {name_expr} AS display_name, email, phone
+                FROM members
+                WHERE {ACTIVE_MEMBER_SQL}
+                ORDER BY COALESCE({name_expr}, ''), id
+                """
+            )
+            members = list(cur.fetchall() or [])
+
+            cur.execute(
+                """
+                SELECT id, meeting_uuid, topic, meeting_id, start_time, end_time, status
+                FROM meetings
+                WHERE start_time IS NOT NULL
+                ORDER BY start_time ASC NULLS LAST, id ASC
+                """
+            )
+            meetings = list(cur.fetchall() or [])
+
+            member_ids = [m.get("id") for m in members if m.get("id") is not None]
+            meeting_uuids = [m.get("meeting_uuid") for m in meetings if m.get("meeting_uuid")]
+            attendance_rows = []
+            if member_ids and meeting_uuids:
+                cur.execute(
+                    """
+                    SELECT id, member_id, meeting_uuid, participant_name, participant_email,
+                           first_join, last_leave, current_join,
+                           COALESCE(total_seconds,0) AS total_seconds,
+                           COALESCE(rejoin_count,0) AS rejoin_count,
+                           final_status, status
+                    FROM attendance
+                    WHERE member_id = ANY(%s) AND meeting_uuid = ANY(%s)
+                    ORDER BY COALESCE(last_leave, current_join, first_join, created_at) DESC NULLS LAST, id DESC
+                    """,
+                    (member_ids, meeting_uuids),
+                )
+                attendance_rows = list(cur.fetchall() or [])
+
+    try:
+        truth_present_threshold = float(get_setting("present_percentage", DEFAULT_SETTINGS.get("present_percentage", "75")))
+    except Exception:
+        truth_present_threshold = float(DEFAULT_SETTINGS.get("present_percentage", "75"))
+    try:
+        truth_late_threshold = float(get_setting("late_count_as_present_percentage", DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30")))
+    except Exception:
+        truth_late_threshold = float(DEFAULT_SETTINGS.get("late_count_as_present_percentage", "30"))
+
+    best_attendance = {}
+    max_seconds_by_uuid = {}
+    for row in attendance_rows:
+        uuid = row.get("meeting_uuid")
+        mid = row.get("member_id")
+        seconds = int(row.get("total_seconds") or 0)
+        if uuid:
+            max_seconds_by_uuid[uuid] = max(max_seconds_by_uuid.get(uuid, 0), seconds)
+        key = (mid, uuid)
+        existing = best_attendance.get(key)
+        if existing is None or seconds >= int(existing.get("total_seconds") or 0):
+            best_attendance[key] = row
+
+    intelligence_rows = []
+    total_meetings = len(meetings)
+    for member in members:
+        mid = member.get("id")
+        truth_rows = []
+        for meeting in meetings:
+            uuid = meeting.get("meeting_uuid")
+            attendance = best_attendance.get((mid, uuid))
+            total_seconds = int((attendance or {}).get("total_seconds") or 0)
+            meeting_seconds = _truth_seconds_between(meeting.get("start_time"), meeting.get("end_time"))
+            if meeting_seconds <= 0:
+                meeting_seconds = max(int(max_seconds_by_uuid.get(uuid) or 0), total_seconds, 1 if total_seconds > 0 else 0)
+
+            source_status = str((attendance or {}).get("final_status") or (attendance or {}).get("status") or "").upper().strip()
+            if meeting_seconds > 0:
+                start_dt = parse_dt(meeting.get("start_time")) or now_local()
+                end_dt = parse_dt(meeting.get("end_time")) or (start_dt + timedelta(seconds=meeting_seconds))
+                classify_row = {
+                    "total_seconds": total_seconds,
+                    "current_join": None,
+                    "first_join": start_dt,
+                    "last_leave": end_dt,
+                    "is_host": source_status == "HOST",
+                }
+                final_status, classified_seconds = classify_row_for_meeting(
+                    classify_row,
+                    start_dt,
+                    end_dt,
+                    truth_present_threshold,
+                    truth_late_threshold,
+                )
+                duration_pct = 100.0 if source_status == "HOST" else clamp_score((float(classified_seconds or 0) / float(meeting_seconds)) * 100.0)
+            elif source_status in ("PRESENT", "LATE", "ABSENT", "HOST"):
+                final_status = source_status
+                duration_pct = calculate_attendance_status_score(final_status, 0, status_weight=1.0, duration_weight=0.0)
+            elif total_seconds > 0:
+                final_status = "LATE"
+                duration_pct = 0.0
+            else:
+                final_status = "ABSENT"
+                duration_pct = 0.0
+
+            truth_rows.append({
+                "final_status": final_status,
+                "total_seconds": total_seconds,
+                "duration_pct": round(duration_pct, 2),
+                "rejoin_count": int((attendance or {}).get("rejoin_count") or 0),
+                "last_seen_value": (attendance or {}).get("last_leave") or (attendance or {}).get("current_join") or (attendance or {}).get("first_join"),
+            })
+
+        summary = summarize_attendance_truth_rows(truth_rows)
+        score_points = build_member_truth_score_points(truth_rows)
+        duration_values = [float(r.get("duration_pct") or 0) for r in truth_rows]
+        duration_pct = clamp_score(sum(duration_values) / len(duration_values)) if duration_values else 0.0
+        consistency_pct = calculate_member_consistency_score(score_points)
+        attendance_pct = float(summary.get("attendance_percent") or 0)
+        score = calculate_phase41_member_score(attendance_pct, duration_pct, consistency_pct)
+        status = member_intelligence_status(score)
+        trend = derive_trend_label(score_points)
+        missed_meetings = int(summary.get("absent") or 0)
+        risk = phase41_risk_level(attendance_pct, missed_meetings, trend.get("label"), score)
+        last_seen_values = [parse_dt(r.get("last_seen_value")) for r in truth_rows if r.get("last_seen_value")]
+        last_seen = max(last_seen_values) if last_seen_values else None
+        attended = int(summary.get("present") or 0) + int(summary.get("late") or 0)
+        avg_duration = round((int(summary.get("total_seconds") or 0) / 60.0) / max(attended, 1), 2) if attended else 0.0
+        intelligence_rows.append({
+            "id": mid,
+            "name": member.get("display_name") or member_display_name(member) or f"Member {mid}",
+            "email": member.get("email") or "",
+            "attendance_pct": round(attendance_pct, 2),
+            "average_duration": avg_duration,
+            "duration_pct": round(duration_pct, 2),
+            "consistency_pct": round(consistency_pct, 2),
+            "score": round(score, 2),
+            "status": status,
+            "trend": trend,
+            "risk": risk,
+            "meetings_attended": attended,
+            "missed_meetings": missed_meetings,
+            "total_meetings": total_meetings,
+            "last_seen": fmt_dt(last_seen) if last_seen else "-",
+            "last_seen_sort": last_seen.isoformat() if last_seen else "",
+        })
+
+    intelligence_rows.sort(key=lambda r: (-float(r.get("score") or 0), str(r.get("name") or "").lower()))
+    if limit:
+        intelligence_rows = intelligence_rows[:int(limit)]
+
+    status_counts = {"Excellent": 0, "Good": 0, "Warning": 0, "Critical": 0}
+    for row in intelligence_rows:
+        status_counts[row["status"]["label"]] = status_counts.get(row["status"]["label"], 0) + 1
+    top_performers = intelligence_rows[:10]
+    at_risk_members = sorted(
+        [
+            r for r in intelligence_rows
+            if r["score"] < 70 or r["trend"].get("label") == "Declining" or r["attendance_pct"] < 75
+        ],
+        key=lambda r: (-int(r["risk"].get("rank") or 0), float(r.get("score") or 0), str(r.get("name") or "").lower()),
+    )[:10]
+    payload = {
+        "members": intelligence_rows,
+        "summary": {
+            "excellent": status_counts.get("Excellent", 0),
+            "good": status_counts.get("Good", 0),
+            "warning": status_counts.get("Warning", 0),
+            "critical": status_counts.get("Critical", 0),
+            "top_performer": top_performers[0] if top_performers else None,
+            "at_risk_count": len(at_risk_members),
+            "total_members": len(intelligence_rows),
+            "total_meetings": total_meetings,
+        },
+        "top_performers": top_performers,
+        "at_risk_members": at_risk_members,
+        "architecture": {
+            "tables": ["members", "attendance", "meetings"],
+            "score_formula": "Attendance 50% + Duration 30% + Consistency 20%",
+            "trend_rule": "Recent meeting score average compared with older meeting score average",
+        },
+    }
+    return _cache_set(cache_key, payload)
+# ===== END PHASE 4.1 MEMBER INTELLIGENCE ENGINE =====
 # ===== END ATTENDANCE TRUTH ENGINE V1 =====
 
 
@@ -6570,6 +6808,7 @@ def page(title, body, active="home"):
         {"key": "members", "label": "👥 Members", "href": url_for("members")},
         {"key": "users", "label": "🔐 Users", "href": url_for("users")},
         {"key": "analytics", "label": "📊 Analytics", "href": url_for("analytics")},
+        {"key": "member_intelligence", "label": "🏆 Member Intelligence", "href": url_for("member_intelligence")},
         {"key": "ai_intelligence", "label": "🧠 AI Intelligence", "href": url_for("ai_intelligence")},
         {"key": "attendance_register", "label": "📒 Attendance Register", "href": url_for("attendance_register")},
         {"key": "notification_control", "label": "🔔 Notification Control", "href": url_for("notification_control")},
@@ -13303,6 +13542,147 @@ def calculate_trend_from_statuses(statuses):
     if first - second >= 20:
         return "Declining"
     return "Stable"
+
+@app.route("/member-intelligence")
+@login_required
+def member_intelligence():
+    data = build_member_intelligence_engine()
+    summary = data.get("summary") or {}
+    members = data.get("members") or []
+    top_performers = data.get("top_performers") or []
+    at_risk_members = data.get("at_risk_members") or []
+    body = render_template_string(
+        """
+        <style>
+        .mi-hero-note{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.mi-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);border-radius:999px;padding:8px 12px;font-size:12px;font-weight:900}.mi-summary-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;margin:16px 0}.mi-card{border-radius:22px;border:1px solid var(--surface-ring);background:var(--card-soft);box-shadow:var(--shadow-soft);padding:16px}.mi-card small{display:block;color:var(--muted);font-size:11px;font-weight:950;text-transform:uppercase;letter-spacing:.08em}.mi-card strong{display:block;font-size:26px;line-height:1;margin-top:9px;letter-spacing:-.04em}.mi-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px}.mi-table{width:100%;border-collapse:separate;border-spacing:0}.mi-table th,.mi-table td{padding:12px 13px;border-bottom:1px solid rgba(148,163,184,.14);text-align:left;white-space:nowrap}.mi-table th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;background:rgba(15,23,42,.45);position:sticky;top:0;z-index:2}.mi-score{font-weight:950;font-size:18px}.mi-badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:7px 10px;font-size:12px;font-weight:950;border:1px solid rgba(148,163,184,.18)}.mi-status-excellent,.mi-risk-low{background:rgba(34,197,94,.14);color:#86efac}.mi-status-good{background:rgba(59,130,246,.14);color:#93c5fd}.mi-status-warning,.mi-risk-medium{background:rgba(245,158,11,.15);color:#fde68a}.mi-status-critical,.mi-risk-high{background:rgba(239,68,68,.15);color:#fecaca}.mi-trend-improving{color:#86efac}.mi-trend-stable{color:#cbd5e1}.mi-trend-declining{color:#fca5a5}.mi-side-list{display:grid;gap:10px}.mi-person{display:flex;justify-content:space-between;gap:12px;align-items:center;border-radius:16px;border:1px solid rgba(148,163,184,.14);background:rgba(255,255,255,.04);padding:11px 12px}.mi-person b{display:block;font-size:13px}.mi-person span{display:block;color:var(--muted);font-size:12px;margin-top:3px}.mi-search{width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.24);background:rgba(2,6,23,.34);color:var(--text);padding:12px 14px;margin-bottom:12px;font-weight:800}.mi-architecture{font-size:12px;line-height:1.7;color:var(--muted)}@media(max-width:1280px){.mi-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.mi-layout{grid-template-columns:1fr}}@media(max-width:760px){.mi-summary-grid{grid-template-columns:1fr}.mi-table th,.mi-table td{padding:10px 9px}}
+        </style>
+        <div class="hero">
+            <div class="hero-grid">
+                <div>
+                    <div class="badge" style="margin-bottom:12px">Phase 4.1 • Member Intelligence Engine</div>
+                    <h1 class="hero-title">Member performance intelligence</h1>
+                    <div class="hero-copy">Scores every active member from existing attendance, duration, and meeting records without changing schemas, attendance classification, reporting, or Zoom webhook handling.</div>
+                    <div class="mi-hero-note">
+                        <span class="mi-pill">📊 Attendance 50%</span>
+                        <span class="mi-pill">⏱ Duration 30%</span>
+                        <span class="mi-pill">🔁 Consistency 20%</span>
+                    </div>
+                </div>
+                <div class="hero-stats">
+                    <div class="hero-chip"><div class="small">Members</div><div class="big">{{ summary.total_members }}</div></div>
+                    <div class="hero-chip"><div class="small">Meetings Analyzed</div><div class="big">{{ summary.total_meetings }}</div></div>
+                    <div class="hero-chip"><div class="small">Top Performer</div><div class="big">{{ summary.top_performer.name if summary.top_performer else '-' }}</div></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mi-summary-grid">
+            <div class="mi-card"><small>Excellent Members</small><strong>{{ summary.excellent }}</strong></div>
+            <div class="mi-card"><small>Good Members</small><strong>{{ summary.good }}</strong></div>
+            <div class="mi-card"><small>Warning Members</small><strong>{{ summary.warning }}</strong></div>
+            <div class="mi-card"><small>Critical Members</small><strong>{{ summary.critical }}</strong></div>
+            <div class="mi-card"><small>Top Performer</small><strong style="font-size:18px">{{ summary.top_performer.name if summary.top_performer else '-' }}</strong></div>
+            <div class="mi-card"><small>At-Risk Members</small><strong>{{ summary.at_risk_count }}</strong></div>
+        </div>
+
+        <div class="mi-layout">
+            <div class="card">
+                <div class="section-title">
+                    <div>
+                        <h3>Member Intelligence</h3>
+                        <p>Read-only calculations from existing member, meeting, and attendance data.</p>
+                    </div>
+                </div>
+                <input id="memberIntelligenceSearch" class="mi-search" placeholder="Search members..." autocomplete="off">
+                <div class="table-wrap" style="max-height:72vh;overflow:auto">
+                    <table class="mi-table" id="memberIntelligenceTable">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Attendance %</th>
+                                <th>Average Duration</th>
+                                <th>Score</th>
+                                <th>Status</th>
+                                <th>Trend</th>
+                                <th>Risk</th>
+                                <th>Meetings Attended</th>
+                                <th>Last Seen</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for member in members %}
+                            <tr data-member-row data-search="{{ member.name|lower }} {{ member.email|lower }}">
+                                <td><strong>{{ member.name }}</strong><div class="muted">{{ member.email or 'No email' }}</div></td>
+                                <td>{{ member.attendance_pct }}%</td>
+                                <td>{{ member.average_duration }} min</td>
+                                <td class="mi-score">{{ member.score }}</td>
+                                <td><span class="mi-badge mi-status-{{ member.status.css }}">{{ member.status.emoji }} {{ member.status.label }}</span></td>
+                                <td><span class="mi-badge mi-trend-{{ member.trend.label|lower }}">{{ member.trend.emoji }} {{ member.trend.label }}</span></td>
+                                <td><span class="mi-badge mi-risk-{{ member.risk.css }}">{{ member.risk.emoji }} {{ member.risk.label }}</span></td>
+                                <td>{{ member.meetings_attended }} / {{ member.total_meetings }}</td>
+                                <td>{{ member.last_seen }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="9" class="muted" style="text-align:center;padding:30px">No member intelligence available yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="premium-stack">
+                <div class="card">
+                    <h3>Top 10 performers</h3>
+                    <div class="mi-side-list">
+                        {% for member in top_performers %}
+                        <div class="mi-person"><div><b>{{ loop.index }}. {{ member.name }}</b><span>{{ member.attendance_pct }}% attendance • {{ member.trend.label }}</span></div><strong>{{ member.score }}</strong></div>
+                        {% else %}<div class="muted">No performers yet.</div>{% endfor %}
+                    </div>
+                </div>
+                <div class="card">
+                    <h3>At-risk members</h3>
+                    <div class="mi-side-list">
+                        {% for member in at_risk_members %}
+                        <div class="mi-person"><div><b>{{ member.name }}</b><span>{{ member.risk.label }} • {{ member.trend.label }} • {{ member.missed_meetings }} missed</span></div><strong>{{ member.score }}</strong></div>
+                        {% else %}<div class="muted">No at-risk members found.</div>{% endfor %}
+                    </div>
+                </div>
+                <div class="card mi-architecture">
+                    <h3>Architecture Plan</h3>
+                    <ul>
+                        <li>Uses only <strong>members</strong>, <strong>attendance</strong>, and <strong>meetings</strong>.</li>
+                        <li>Reuses the attendance truth helpers for status, duration percentage, and trend points.</li>
+                        <li>Score = Attendance 50% + Duration 30% + Consistency 20%.</li>
+                        <li>No schema migrations, webhook changes, finalization changes, report changes, or authentication changes.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <script>
+        document.addEventListener('DOMContentLoaded', function(){
+            const input = document.getElementById('memberIntelligenceSearch');
+            const rows = Array.from(document.querySelectorAll('[data-member-row]'));
+            if(!input) return;
+            input.addEventListener('input', function(){
+                const q = (input.value || '').trim().toLowerCase();
+                rows.forEach(function(row){ row.style.display = !q || (row.dataset.search || '').includes(q) ? '' : 'none'; });
+            });
+        });
+        </script>
+        """,
+        summary=summary,
+        members=members,
+        top_performers=top_performers,
+        at_risk_members=at_risk_members,
+    )
+    return page("Member Intelligence", body, active="member_intelligence")
+
+
+@app.route("/api/member-intelligence")
+@login_required
+def api_member_intelligence():
+    return jsonify({"ok": True, **build_member_intelligence_engine()})
+
 
 @app.route("/api/member-risk-summary")
 @login_required
