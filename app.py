@@ -11297,6 +11297,222 @@ def attendance_register_payload(year=None, month=None, search="", page=1, per_pa
     return _cache_set(key, _attendance_register_payload_uncached(year, month, search, page, per_page, all_rows))
 
 
+REGISTER_CELL_PRIORITY = {"P": 4, "L": 3, "A": 2, "U": 1, "": 0}
+REGISTER_MARK_LABELS = {"P": "PRESENT", "L": "LATE", "A": "ABSENT", "U": "UNKNOWN", "": "NO MEETING"}
+
+
+def register_status_mark(status):
+    status = str(status or "").upper().strip()
+    if status in ("PRESENT", "HOST"):
+        return "P"
+    if status == "LATE":
+        return "L"
+    if status == "ABSENT":
+        return "A"
+    return "U"
+
+
+def register_mark_label(mark):
+    return REGISTER_MARK_LABELS.get(str(mark or "").upper(), "UNKNOWN")
+
+
+def format_duration_hms(seconds):
+    try:
+        seconds = max(int(seconds or 0), 0)
+    except Exception:
+        seconds = 0
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    remaining = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{remaining:02d}"
+
+
+def parse_register_cell_date(value):
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    text = str(value or "").strip()
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def register_cell_details_payload(member_id, cell_date):
+    cell_day = parse_register_cell_date(cell_date)
+    if not cell_day:
+        raise ValueError("date must be YYYY-MM-DD")
+    try:
+        member_id = int(member_id)
+    except Exception as exc:
+        raise ValueError("member_id must be an integer") from exc
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            name_expr = member_name_sql(conn)
+            if column_exists(conn, "members", "full_name") and column_exists(conn, "members", "name"):
+                member_alias_name_expr = "COALESCE(NULLIF(mem.full_name, ''), NULLIF(mem.name, ''))"
+            elif column_exists(conn, "members", "full_name"):
+                member_alias_name_expr = "mem.full_name"
+            elif column_exists(conn, "members", "name"):
+                member_alias_name_expr = "mem.name"
+            else:
+                member_alias_name_expr = "NULL"
+            cur.execute(
+                f"""
+                SELECT id, {name_expr} AS display_name, email
+                FROM members
+                WHERE id = %s
+                """,
+                (member_id,),
+            )
+            member = cur.fetchone()
+            if not member:
+                raise LookupError("member not found")
+
+            cur.execute(
+                """
+                SELECT id, meeting_uuid, meeting_id, topic, start_time, end_time, status
+                FROM meetings
+                WHERE start_time IS NOT NULL
+                  AND CAST(start_time AS TEXT)::date = %s
+                ORDER BY start_time NULLS LAST, id
+                """,
+                (cell_day,),
+            )
+            meetings = cur.fetchall()
+
+            cur.execute(
+                f"""
+                SELECT
+                    a.id AS attendance_id,
+                    a.meeting_uuid,
+                    a.participant_name,
+                    a.participant_email,
+                    a.first_join,
+                    a.last_leave,
+                    a.total_seconds,
+                    a.is_member,
+                    a.member_id,
+                    a.final_status,
+                    a.status,
+                    m.id AS meeting_pk,
+                    m.meeting_id,
+                    m.topic,
+                    m.start_time,
+                    m.end_time,
+                    {member_alias_name_expr} AS member_name,
+                    mem.email AS member_email
+                FROM attendance a
+                JOIN meetings m ON m.meeting_uuid = a.meeting_uuid
+                LEFT JOIN members mem ON mem.id = a.member_id
+                WHERE a.member_id = %s
+                  AND m.start_time IS NOT NULL
+                  AND CAST(m.start_time AS TEXT)::date = %s
+                ORDER BY m.start_time NULLS LAST, a.first_join NULLS LAST, a.id
+                """,
+                (member_id, cell_day),
+            )
+            attendance_rows = cur.fetchall()
+
+    rows_by_uuid = defaultdict(list)
+    for row in attendance_rows:
+        rows_by_uuid[row.get("meeting_uuid")].append(row)
+
+    detail_rows = []
+    explanation = []
+    final_mark = ""
+
+    for meeting in meetings:
+        uuid = meeting.get("meeting_uuid")
+        contributing = rows_by_uuid.get(uuid) or []
+        if not contributing:
+            synthetic_status = "ABSENT"
+            mark = register_status_mark(synthetic_status)
+            final_mark = mark if REGISTER_CELL_PRIORITY[mark] > REGISTER_CELL_PRIORITY.get(final_mark, 0) else final_mark
+            explanation.append({
+                "meeting_id": meeting.get("meeting_id") or "-",
+                "meeting_uuid": uuid or "-",
+                "topic": meeting.get("topic") or "Untitled Meeting",
+                "status": synthetic_status,
+                "mark": mark,
+                "source": "missing_attendance_row",
+            })
+            detail_rows.append({
+                "meeting_date": cell_day.isoformat(),
+                "meeting_id": meeting.get("meeting_id") or "-",
+                "meeting_uuid": uuid or "-",
+                "topic": meeting.get("topic") or "Untitled Meeting",
+                "meeting_start_time": fmt_dt(meeting.get("start_time")),
+                "meeting_end_time": fmt_dt(meeting.get("end_time")),
+                "participant_name": "-",
+                "participant_email": "-",
+                "member_name": member.get("display_name") or f"Member {member_id}",
+                "member_id": member_id,
+                "final_status": synthetic_status,
+                "duration_seconds": 0,
+                "duration": format_duration_hms(0),
+                "join_time": "-",
+                "leave_time": "-",
+                "is_member": True,
+                "row_source": "missing_attendance_row",
+            })
+            continue
+
+        for row in contributing:
+            status = str(row.get("final_status") or row.get("status") or "").upper().strip()
+            mark = register_status_mark(status)
+            final_mark = mark if REGISTER_CELL_PRIORITY[mark] > REGISTER_CELL_PRIORITY.get(final_mark, 0) else final_mark
+            normalized_status = register_mark_label(mark)
+            explanation.append({
+                "meeting_id": row.get("meeting_id") or "-",
+                "meeting_uuid": row.get("meeting_uuid") or "-",
+                "topic": row.get("topic") or "Untitled Meeting",
+                "status": normalized_status,
+                "mark": mark,
+                "source": "attendance_row",
+            })
+            detail_rows.append({
+                "meeting_date": cell_day.isoformat(),
+                "meeting_id": row.get("meeting_id") or "-",
+                "meeting_uuid": row.get("meeting_uuid") or "-",
+                "topic": row.get("topic") or "Untitled Meeting",
+                "meeting_start_time": fmt_dt(row.get("start_time")),
+                "meeting_end_time": fmt_dt(row.get("end_time")),
+                "participant_name": row.get("participant_name") or "-",
+                "participant_email": row.get("participant_email") or "-",
+                "member_name": row.get("member_name") or member.get("display_name") or f"Member {member_id}",
+                "member_id": row.get("member_id") or member_id,
+                "final_status": normalized_status,
+                "duration_seconds": int(row.get("total_seconds") or 0),
+                "duration": format_duration_hms(row.get("total_seconds") or 0),
+                "join_time": fmt_dt(row.get("first_join")),
+                "leave_time": fmt_dt(row.get("last_leave")),
+                "is_member": bool(row.get("is_member")),
+                "row_source": "attendance_row",
+            })
+
+    return {
+        "ok": True,
+        "member": {
+            "id": member_id,
+            "name": member.get("display_name") or f"Member {member_id}",
+            "email": member.get("email") or "",
+        },
+        "date": cell_day.isoformat(),
+        "rows": detail_rows,
+        "final_register_result": {
+            "mark": final_mark,
+            "label": register_mark_label(final_mark),
+        },
+        "decision": {
+            "priority": ["P", "L", "A", "U"],
+            "priority_labels": ["PRESENT", "LATE", "ABSENT", "UNKNOWN"],
+            "explanation": explanation,
+            "reason": "Attendance Register uses priority P > L > A > U, so the highest-priority contributing status becomes the cell value.",
+        },
+    }
+
+
 @app.route("/attendance-register")
 @login_required
 def attendance_register():
@@ -11412,6 +11628,19 @@ button[type="submit"]{margin-top:20px!important;}
         .reg-pagination{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;color:#cbd5e1;font-weight:800}
         .reg-pagination a,.reg-pagination span{padding:7px 10px;border-radius:8px;background:#0f172a;border:1px solid rgba(96,165,250,.35);color:#dbeafe;text-decoration:none}
         .reg-pagination .disabled{opacity:.45}
+        .truth-cell{cursor:pointer;position:relative;transition:transform .15s ease,box-shadow .15s ease}
+        .truth-cell:hover{transform:translateY(-1px);outline:2px solid rgba(96,165,250,.75);outline-offset:1px}
+        .truth-cell::after{content:'↗';position:absolute;right:3px;top:1px;font-size:9px;opacity:.72}
+        .truth-modal-card{max-width:min(1180px,96vw);max-height:90vh;overflow:hidden;display:flex;flex-direction:column;padding:0}
+        .truth-modal-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:18px 20px;border-bottom:1px solid rgba(148,163,184,.22);background:linear-gradient(135deg,rgba(37,99,235,.24),rgba(124,58,237,.18))}
+        .truth-modal-title{margin:0;font-size:20px;font-weight:950;color:#f8fafc}.truth-modal-sub{margin-top:4px;color:#cbd5e1;font-size:13px}
+        .truth-modal-close{white-space:nowrap}.truth-modal-body{padding:16px 20px;overflow:auto;background:#0b1220;color:#e5e7eb}
+        .truth-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+        .truth-search{min-width:min(420px,100%);height:38px;border-radius:10px;border:1px solid rgba(96,165,250,.35);background:#07111f;color:#f8fafc;padding:8px 12px}
+        .truth-result-pill{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:8px 12px;background:#111827;border:1px solid rgba(148,163,184,.24);font-weight:950}.truth-result-pill .mark{font-size:18px;color:#86efac}
+        .truth-table-wrap{overflow:auto;border:1px solid rgba(148,163,184,.22);border-radius:14px;background:#07111f}.truth-table{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;font-size:12px}.truth-table th,.truth-table td{padding:9px 10px;border-bottom:1px solid rgba(148,163,184,.14);border-right:1px solid rgba(148,163,184,.12);vertical-align:top}.truth-table th{position:sticky;top:0;z-index:1;background:#111827;color:#dbeafe;text-align:left}.truth-table td{color:#e5e7eb}.truth-status{font-weight:950;border-radius:999px;padding:4px 8px;display:inline-block;background:#1e293b}.truth-status.PRESENT{color:#86efac}.truth-status.LATE{color:#fde68a}.truth-status.ABSENT{color:#fecaca}.truth-status.UNKNOWN{color:#cbd5e1}
+        .truth-decision{margin-top:14px;border:1px solid rgba(96,165,250,.28);border-radius:16px;background:rgba(15,23,42,.84);padding:14px}.truth-decision h4{margin:0 0 8px;color:#f8fafc}.truth-decision-list{display:grid;gap:6px;margin:8px 0 10px}.truth-decision-row{display:flex;gap:8px;justify-content:space-between;border:1px solid rgba(148,163,184,.14);border-radius:10px;padding:8px;background:#0b1220}.truth-muted{color:#94a3b8}.register-book.reg-light .truth-modal-body,.register-book.reg-light .truth-table-wrap{background:#fffaf0;color:#111827}.register-book.reg-light .truth-table th{background:#064e3b;color:#fff}.register-book.reg-light .truth-table td{background:#fffdf4;color:#172033}.register-book.reg-light .truth-decision{background:#fff7df;color:#172033}.register-book.reg-light .truth-decision h4{color:#111827}.register-book.reg-light .truth-search{background:#fff;color:#111827;border-color:#cbd5e1}.register-book.reg-light .truth-result-pill,.register-book.reg-light .truth-decision-row{background:#fff;color:#111827}
+        @media(max-width:720px){.truth-modal-card{max-width:100vw;max-height:100vh;border-radius:0}.truth-modal-head{flex-direction:column}.truth-toolbar{align-items:stretch}.truth-search{width:100%}.truth-result-pill{justify-content:center}.truth-table th,.truth-table td{padding:8px;font-size:11px}}
         
 /* TOGGLE SWITCH */
 .toggle-switch {
@@ -11460,7 +11689,7 @@ button[type="submit"]{margin-top:20px!important;}
                 <span style="color:#ea580c;font-weight:900">L</span> Late - Orange<br>
                 <span style="color:#dc2626;font-weight:900">A</span> Absent - Red<br>
                 <span style="color:#64748b;font-weight:900">U</span> Unknown - Gray<br><br>
-                Click on participant name to view summary.
+                Click a day cell to view why that register result was selected.<br>Click a participant name to view summary.
             </aside>
 
             <main class="register-book">
@@ -11503,7 +11732,7 @@ button[type="submit"]{margin-top:20px!important;}
                                 <tr>
                                     <td class="sticky-member reg-member" data-name="{{ row.name }}" data-present="{{ row.totals.P }}" data-late="{{ row.totals.L }}" data-absent="{{ row.totals.A }}" data-unknown="{{ row.totals.U }}" data-total="{{ row.total_meetings }}" data-percent="{{ row.attendance_pct }}">{{ row.name }}</td>
                                     <td class="reg-total-cell">{{ row.total_meetings }}</td>
-                                    {% for cell in row.cells %}<td class="reg-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}">{{ cell or '' }}</td>{% endfor %}
+                                    {% for cell in row.cells %}{% set day_value = loop.index %}{% set cell_date = '%04d-%02d-%02d'|format(data.year, data.month, day_value) %}<td class="reg-cell truth-cell {% if cell == 'P' %}reg-p{% elif cell == 'L' %}reg-l{% elif cell == 'A' %}reg-a{% elif cell == 'U' %}reg-u{% else %}reg-empty{% endif %}" data-member-id="{{ row.id }}" data-member-name="{{ row.name }}" data-cell-date="{{ cell_date }}" data-cell-mark="{{ cell or '' }}" title="View register truth for {{ row.name }} on {{ cell_date }}">{{ cell or '' }}</td>{% endfor %}
                                     <td>{{ row.totals.P }}</td><td>{{ row.totals.L }}</td><td>{{ row.totals.A }}</td><td>{{ row.totals.U }}</td><td>{{ row.attendance_pct }}%</td>
                                 </tr>
                                 {% endfor %}
@@ -11553,6 +11782,40 @@ button[type="submit"]{margin-top:20px!important;}
             </div>
         </div>
 
+        <div class="modal-backdrop" id="truthModal" aria-hidden="true">
+            <div class="modal-card truth-modal-card" role="dialog" aria-modal="true" aria-labelledby="truthModalTitle">
+                <div class="truth-modal-head">
+                    <div>
+                        <h3 id="truthModalTitle" class="truth-modal-title">Attendance Register Truth</h3>
+                        <div id="truthModalSub" class="truth-modal-sub">Select a register cell to inspect source rows.</div>
+                    </div>
+                    <button type="button" id="truthModalClose" class="truth-modal-close">Close</button>
+                </div>
+                <div class="truth-modal-body">
+                    <div class="truth-toolbar">
+                        <input id="truthSearch" class="truth-search" type="search" placeholder="Search meetings, participant, email, status...">
+                        <div id="truthFinalResult" class="truth-result-pill"><span class="mark">-</span><span>Final Register Result</span></div>
+                    </div>
+                    <div id="truthLoading" class="truth-muted">Loading register truth...</div>
+                    <div class="truth-table-wrap" id="truthTableWrap" style="display:none">
+                        <table class="truth-table">
+                            <thead>
+                                <tr>
+                                    <th>Meeting Date</th><th>Meeting ID</th><th>Meeting UUID</th><th>Topic</th><th>Meeting Start Time</th><th>Meeting End Time</th><th>Participant Name</th><th>Participant Email</th><th>Member Name</th><th>Member ID</th><th>Final Status</th><th>Duration</th><th>Join Time</th><th>Leave Time</th><th>Is Member</th>
+                                </tr>
+                            </thead>
+                            <tbody id="truthRows"></tbody>
+                        </table>
+                    </div>
+                    <div class="truth-decision" id="truthDecision" style="display:none">
+                        <h4>Register Decision Explanation</h4>
+                        <div id="truthDecisionRows" class="truth-decision-list"></div>
+                        <div id="truthDecisionReason" class="truth-muted"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <script>
         (() => {
             const modal = document.getElementById('regModal');
@@ -11570,6 +11833,70 @@ button[type="submit"]{margin-top:20px!important;}
             });
             closeBtn?.addEventListener('click', () => modal.classList.remove('show'));
             modal?.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('show'); });
+
+            const truthModal = document.getElementById('truthModal');
+            const truthClose = document.getElementById('truthModalClose');
+            const truthRows = document.getElementById('truthRows');
+            const truthLoading = document.getElementById('truthLoading');
+            const truthTableWrap = document.getElementById('truthTableWrap');
+            const truthDecision = document.getElementById('truthDecision');
+            const truthDecisionRows = document.getElementById('truthDecisionRows');
+            const truthDecisionReason = document.getElementById('truthDecisionReason');
+            const truthFinalResult = document.getElementById('truthFinalResult');
+            const truthSearch = document.getElementById('truthSearch');
+            const truthSub = document.getElementById('truthModalSub');
+            const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+            const statusClass = status => String(status || 'UNKNOWN').toUpperCase().replace(/[^A-Z]/g, '') || 'UNKNOWN';
+            let truthCacheRows = [];
+            function closeTruth(){ truthModal?.classList.remove('show'); truthModal?.setAttribute('aria-hidden', 'true'); }
+            function renderTruthRows(rows){
+                const query = (truthSearch?.value || '').trim().toLowerCase();
+                const filtered = query ? rows.filter(row => Object.values(row || {}).some(value => String(value ?? '').toLowerCase().includes(query))) : rows;
+                truthRows.innerHTML = filtered.length ? filtered.map(row => `
+                    <tr>
+                        <td>${esc(row.meeting_date)}</td><td>${esc(row.meeting_id)}</td><td>${esc(row.meeting_uuid)}</td><td>${esc(row.topic)}</td><td>${esc(row.meeting_start_time)}</td><td>${esc(row.meeting_end_time)}</td><td>${esc(row.participant_name)}</td><td>${esc(row.participant_email)}</td><td>${esc(row.member_name)}</td><td>${esc(row.member_id)}</td><td><span class="truth-status ${statusClass(row.final_status)}">${esc(row.final_status)}</span></td><td>${esc(row.duration)}</td><td>${esc(row.join_time)}</td><td>${esc(row.leave_time)}</td><td>${row.is_member ? 'Yes' : 'No'}</td>
+                    </tr>`).join('') : '<tr><td colspan="15" class="truth-muted">No matching contributing rows found.</td></tr>';
+            }
+            async function openTruth(cell){
+                const memberId = cell.dataset.memberId;
+                const cellDate = cell.dataset.cellDate;
+                truthModal?.classList.add('show');
+                truthModal?.setAttribute('aria-hidden', 'false');
+                truthSub.textContent = `${cell.dataset.memberName || 'Member'} · ${cellDate}`;
+                truthLoading.textContent = 'Loading register truth...';
+                truthLoading.style.display = 'block';
+                truthTableWrap.style.display = 'none';
+                truthDecision.style.display = 'none';
+                truthRows.innerHTML = '';
+                truthDecisionRows.innerHTML = '';
+                truthSearch.value = '';
+                truthFinalResult.innerHTML = '<span class="mark">-</span><span>Final Register Result</span>';
+                try{
+                    const params = new URLSearchParams({member_id: memberId, date: cellDate});
+                    const response = await fetch(`/api/register-cell-details?${params.toString()}`);
+                    const data = await response.json();
+                    if(!response.ok || !data.ok){ throw new Error(data.error || 'Unable to load register truth.'); }
+                    truthCacheRows = data.rows || [];
+                    const result = data.final_register_result || {};
+                    truthFinalResult.innerHTML = `<span class="mark">${esc(result.mark || '-')}</span><span>Final Register Result: ${esc(result.label || 'NO MEETING')}</span>`;
+                    renderTruthRows(truthCacheRows);
+                    const explanation = (data.decision && data.decision.explanation) || [];
+                    truthDecisionRows.innerHTML = explanation.length ? explanation.map(item => `
+                        <div class="truth-decision-row"><span>${esc(item.topic)} <span class="truth-muted">(${esc(item.meeting_id)} / ${esc(item.meeting_uuid)})</span></span><strong>${esc(item.status)} (${esc(item.mark)})</strong></div>`).join('') : '<div class="truth-muted">No meetings exist for this date, so the register cell is blank.</div>';
+                    truthDecisionReason.textContent = (data.decision && data.decision.reason) || 'Attendance Register uses priority P > L > A > U.';
+                    truthLoading.style.display = 'none';
+                    truthTableWrap.style.display = 'block';
+                    truthDecision.style.display = 'block';
+                }catch(err){
+                    truthLoading.textContent = err.message || 'Unable to load register truth.';
+                }
+            }
+            document.querySelectorAll('.truth-cell').forEach(cell => cell.addEventListener('click', () => openTruth(cell)));
+            truthSearch?.addEventListener('input', () => renderTruthRows(truthCacheRows));
+            truthClose?.addEventListener('click', closeTruth);
+            truthModal?.addEventListener('click', e => { if (e.target === truthModal) closeTruth(); });
+            document.addEventListener('keydown', e => { if (e.key === 'Escape') { modal?.classList.remove('show'); closeTruth(); } });
+
             const book = document.querySelector('.register-book');
             const themeBtn = document.getElementById('registerThemeToggle');
             function applyRegisterTheme(mode){
@@ -11601,6 +11928,23 @@ def attendance_register_data():
         request.args.get("page", 1),
         request.args.get("per_page", 25),
     ))
+
+
+
+
+@app.route("/api/register-cell-details")
+@login_required
+def api_register_cell_details():
+    try:
+        payload = register_cell_details_payload(request.args.get("member_id"), request.args.get("date"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except Exception as exc:
+        print(f"REGISTER_CELL_DETAILS_ERROR {exc}")
+        return jsonify({"ok": False, "error": "Unable to load register cell details."}), 500
+    return jsonify(payload)
 
 
 @app.route("/attendance-register/export/excel")
