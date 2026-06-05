@@ -7040,6 +7040,7 @@ def page(title, body, active="home"):
         {"key": "users", "label": "🔐 Users", "href": url_for("users")},
         {"key": "analytics", "label": "📊 Analytics", "href": url_for("analytics")},
         {"key": "member_intelligence", "label": "🏆 Member Intelligence", "href": url_for("member_intelligence")},
+        {"key": "identity_integrity", "label": "🛡️ Identity Integrity", "href": url_for("identity_integrity")},
         {"key": "ai_intelligence", "label": "🧠 AI Intelligence", "href": url_for("ai_intelligence")},
         {"key": "attendance_register", "label": "📒 Attendance Register", "href": url_for("attendance_register")},
         {"key": "notification_control", "label": "🔔 Notification Control", "href": url_for("notification_control")},
@@ -15352,6 +15353,9 @@ def za_option_a_premium_force_css_inject(response):
 
 # Duplicate final live tooltip/duration CSS patch removed; consolidated in DARK_THEME_CSS.
 
+
+# Register the read-only Identity Integrity Scanner without changing Phase 3 lifecycle logic.
+import routes.identity_integrity  # noqa: E402,F401
 
 
 if __name__ == "__main__":
