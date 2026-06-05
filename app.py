@@ -11327,6 +11327,71 @@ def format_duration_hms(seconds):
     return f"{hours:02d}:{minutes:02d}:{remaining:02d}"
 
 
+def format_duration_human(seconds):
+    try:
+        seconds = max(int(seconds or 0), 0)
+    except Exception:
+        seconds = 0
+    minutes = seconds // 60
+    remaining_seconds = seconds % 60
+    if minutes and remaining_seconds:
+        return f"{minutes} min {remaining_seconds} sec"
+    if minutes:
+        return f"{minutes} min"
+    return f"{remaining_seconds} sec"
+
+
+def build_register_truth_explanation(final_mark, summary, meeting_rows):
+    final_label = register_mark_label(final_mark)
+    meetings_count = int((summary or {}).get("meetings_on_day") or 0)
+    present_count = int((summary or {}).get("present") or 0)
+    late_count = int((summary or {}).get("late") or 0)
+    absent_count = int((summary or {}).get("absent") or 0)
+    unknown_count = int((summary or {}).get("unknown") or 0)
+    rows = list(meeting_rows or [])
+    lines = []
+
+    if meetings_count <= 0:
+        return ["No meetings were found on this day, so the register cell has no attendance result."]
+
+    if final_mark == "P":
+        if present_count == meetings_count:
+            lines.append(f"Member attended {present_count} of {meetings_count} meetings on this day.")
+        else:
+            lines.append(f"Member was PRESENT in {present_count} of {meetings_count} meetings on this day.")
+    elif final_mark == "L":
+        late_row = next((r for r in rows if r.get("mark") == "L"), None)
+        if late_row:
+            lines.append(
+                f"Member attended only {format_duration_human(late_row.get('duration_seconds'))} "
+                f"of a {format_duration_human(late_row.get('meeting_duration_seconds'))} meeting, therefore classified as LATE."
+            )
+        else:
+            lines.append("Member has a late attendance record, therefore the final day result became LATE.")
+    elif final_mark == "A":
+        lines.append("No attendance record found for this meeting." if meetings_count == 1 else f"No attendance record found for {absent_count} of {meetings_count} meetings on this day.")
+    elif final_mark == "U":
+        lines.append("Attendance exists for this day, but the available status could not be confidently classified, so the result is UNKNOWN.")
+    else:
+        lines.append("No meeting result was available for this register cell.")
+
+    if meetings_count > 1:
+        lines.append("Attendance Register uses priority P > L > A > U.")
+        if final_mark == "P":
+            lines.append("Because at least one meeting was PRESENT, the final day result became PRESENT.")
+        elif final_mark == "L":
+            lines.append("Because no meeting was PRESENT and at least one meeting was LATE, the final day result became LATE.")
+        elif final_mark == "A":
+            lines.append("Because no meeting was PRESENT or LATE and at least one meeting was ABSENT, the final day result became ABSENT.")
+        elif final_mark == "U":
+            lines.append("Because only UNKNOWN evidence was available, the final day result became UNKNOWN.")
+        lines.append(f"Breakdown: {present_count} present, {late_count} late, {absent_count} absent, {unknown_count} unknown.")
+
+    if final_label == "NO MEETING":
+        lines.append("This day has no meeting evidence to compare.")
+    return lines
+
+
 def parse_register_cell_date(value):
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
@@ -11420,76 +11485,130 @@ def register_cell_details_payload(member_id, cell_date):
 
     detail_rows = []
     explanation = []
+    meeting_breakdown = []
     final_mark = ""
 
     for meeting in meetings:
         uuid = meeting.get("meeting_uuid")
         contributing = rows_by_uuid.get(uuid) or []
+        meeting_duration_seconds = _truth_seconds_between(meeting.get("start_time"), meeting.get("end_time"))
+        meeting_entries = []
+
         if not contributing:
             synthetic_status = "ABSENT"
             mark = register_status_mark(synthetic_status)
-            final_mark = mark if REGISTER_CELL_PRIORITY[mark] > REGISTER_CELL_PRIORITY.get(final_mark, 0) else final_mark
-            explanation.append({
-                "meeting_id": meeting.get("meeting_id") or "-",
-                "meeting_uuid": uuid or "-",
-                "topic": meeting.get("topic") or "Untitled Meeting",
-                "status": synthetic_status,
-                "mark": mark,
-                "source": "missing_attendance_row",
-            })
-            detail_rows.append({
+            meeting_entries.append({
                 "meeting_date": cell_day.isoformat(),
                 "meeting_id": meeting.get("meeting_id") or "-",
                 "meeting_uuid": uuid or "-",
                 "topic": meeting.get("topic") or "Untitled Meeting",
+                "meeting_time": fmt_dt(meeting.get("start_time")),
                 "meeting_start_time": fmt_dt(meeting.get("start_time")),
                 "meeting_end_time": fmt_dt(meeting.get("end_time")),
+                "meeting_duration_seconds": meeting_duration_seconds,
+                "meeting_duration": format_duration_hms(meeting_duration_seconds),
                 "participant_name": "-",
-                "participant_email": "-",
+                "participant_email": member.get("email") or "-",
                 "member_name": member.get("display_name") or f"Member {member_id}",
                 "member_id": member_id,
                 "final_status": synthetic_status,
+                "mark": mark,
                 "duration_seconds": 0,
                 "duration": format_duration_hms(0),
                 "join_time": "-",
                 "leave_time": "-",
                 "is_member": True,
                 "row_source": "missing_attendance_row",
+                "raw_values": {
+                    "attendance_id": None,
+                    "meeting_status": meeting.get("status") or "",
+                    "source": "missing_attendance_row",
+                    "raw_status": "ABSENT",
+                },
             })
-            continue
+        else:
+            for row in contributing:
+                status = str(row.get("final_status") or row.get("status") or "").upper().strip()
+                mark = register_status_mark(status)
+                normalized_status = register_mark_label(mark)
+                meeting_entries.append({
+                    "meeting_date": cell_day.isoformat(),
+                    "meeting_id": row.get("meeting_id") or "-",
+                    "meeting_uuid": row.get("meeting_uuid") or "-",
+                    "topic": row.get("topic") or "Untitled Meeting",
+                    "meeting_time": fmt_dt(row.get("start_time")),
+                    "meeting_start_time": fmt_dt(row.get("start_time")),
+                    "meeting_end_time": fmt_dt(row.get("end_time")),
+                    "meeting_duration_seconds": meeting_duration_seconds,
+                    "meeting_duration": format_duration_hms(meeting_duration_seconds),
+                    "participant_name": row.get("participant_name") or "-",
+                    "participant_email": row.get("participant_email") or "-",
+                    "member_name": row.get("member_name") or member.get("display_name") or f"Member {member_id}",
+                    "member_id": row.get("member_id") or member_id,
+                    "final_status": normalized_status,
+                    "mark": mark,
+                    "duration_seconds": int(row.get("total_seconds") or 0),
+                    "duration": format_duration_hms(row.get("total_seconds") or 0),
+                    "join_time": fmt_dt(row.get("first_join")),
+                    "leave_time": fmt_dt(row.get("last_leave")),
+                    "is_member": bool(row.get("is_member")),
+                    "row_source": "attendance_row",
+                    "raw_values": {
+                        "attendance_id": row.get("attendance_id"),
+                        "attendance_status": row.get("status") or "",
+                        "attendance_final_status": row.get("final_status") or "",
+                        "attendance_total_seconds": int(row.get("total_seconds") or 0),
+                        "meeting_pk": row.get("meeting_pk"),
+                        "meeting_status": meeting.get("status") or "",
+                        "source": "attendance_row",
+                    },
+                })
 
-        for row in contributing:
-            status = str(row.get("final_status") or row.get("status") or "").upper().strip()
-            mark = register_status_mark(status)
+        meeting_mark = ""
+        for entry in meeting_entries:
+            mark = entry.get("mark") or register_status_mark(entry.get("final_status"))
+            meeting_mark = mark if REGISTER_CELL_PRIORITY[mark] > REGISTER_CELL_PRIORITY.get(meeting_mark, 0) else meeting_mark
             final_mark = mark if REGISTER_CELL_PRIORITY[mark] > REGISTER_CELL_PRIORITY.get(final_mark, 0) else final_mark
-            normalized_status = register_mark_label(mark)
+            detail_rows.append(entry)
             explanation.append({
-                "meeting_id": row.get("meeting_id") or "-",
-                "meeting_uuid": row.get("meeting_uuid") or "-",
-                "topic": row.get("topic") or "Untitled Meeting",
-                "status": normalized_status,
+                "meeting_id": entry.get("meeting_id") or "-",
+                "meeting_uuid": entry.get("meeting_uuid") or "-",
+                "topic": entry.get("topic") or "Untitled Meeting",
+                "meeting_time": entry.get("meeting_time") or "-",
+                "status": entry.get("final_status") or register_mark_label(mark),
                 "mark": mark,
-                "source": "attendance_row",
+                "source": entry.get("row_source") or "attendance_row",
             })
-            detail_rows.append({
-                "meeting_date": cell_day.isoformat(),
-                "meeting_id": row.get("meeting_id") or "-",
-                "meeting_uuid": row.get("meeting_uuid") or "-",
-                "topic": row.get("topic") or "Untitled Meeting",
-                "meeting_start_time": fmt_dt(row.get("start_time")),
-                "meeting_end_time": fmt_dt(row.get("end_time")),
-                "participant_name": row.get("participant_name") or "-",
-                "participant_email": row.get("participant_email") or "-",
-                "member_name": row.get("member_name") or member.get("display_name") or f"Member {member_id}",
-                "member_id": row.get("member_id") or member_id,
-                "final_status": normalized_status,
-                "duration_seconds": int(row.get("total_seconds") or 0),
-                "duration": format_duration_hms(row.get("total_seconds") or 0),
-                "join_time": fmt_dt(row.get("first_join")),
-                "leave_time": fmt_dt(row.get("last_leave")),
-                "is_member": bool(row.get("is_member")),
-                "row_source": "attendance_row",
-            })
+
+        representative = meeting_entries[0] if meeting_entries else {}
+        meeting_breakdown.append({
+            "meeting_time": representative.get("meeting_time") or fmt_dt(meeting.get("start_time")),
+            "topic": representative.get("topic") or meeting.get("topic") or "Untitled Meeting",
+            "status": register_mark_label(meeting_mark),
+            "mark": meeting_mark,
+            "duration_seconds": max(int((entry.get("duration_seconds") or 0)) for entry in meeting_entries) if meeting_entries else 0,
+            "duration": format_duration_hms(max(int((entry.get("duration_seconds") or 0)) for entry in meeting_entries) if meeting_entries else 0),
+            "join_time": representative.get("join_time") or "-",
+            "leave_time": representative.get("leave_time") or "-",
+            "meeting_duration_seconds": meeting_duration_seconds,
+            "meeting_duration": format_duration_hms(meeting_duration_seconds),
+        })
+
+    summary = {
+        "meetings_on_day": len(meetings),
+        "present": sum(1 for row in meeting_breakdown if row.get("mark") == "P"),
+        "late": sum(1 for row in meeting_breakdown if row.get("mark") == "L"),
+        "absent": sum(1 for row in meeting_breakdown if row.get("mark") == "A"),
+        "unknown": sum(1 for row in meeting_breakdown if row.get("mark") == "U"),
+    }
+    evidence_rows = [
+        {
+            "meeting_time": row.get("meeting_time") or "-",
+            "status": row.get("status") or "UNKNOWN",
+            "duration": row.get("duration") or format_duration_hms(row.get("duration_seconds") or 0),
+        }
+        for row in meeting_breakdown
+    ]
 
     return {
         "ok": True,
@@ -11500,6 +11619,14 @@ def register_cell_details_payload(member_id, cell_date):
         },
         "date": cell_day.isoformat(),
         "rows": detail_rows,
+        "meeting_breakdown": meeting_breakdown,
+        "summary": summary,
+        "human_explanation": build_register_truth_explanation(final_mark, summary, meeting_breakdown),
+        "pdf_validation": {
+            "title": "Compare with Meeting Report",
+            "rows": evidence_rows,
+            "note": "These values use the same meeting time, status, and duration fields displayed by reports.",
+        },
         "final_register_result": {
             "mark": final_mark,
             "label": register_mark_label(final_mark),
@@ -11639,7 +11766,7 @@ button[type="submit"]{margin-top:20px!important;}
         .truth-search{min-width:min(420px,100%);height:38px;border-radius:10px;border:1px solid rgba(96,165,250,.35);background:#07111f;color:#f8fafc;padding:8px 12px}
         .truth-result-pill{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:8px 12px;background:#111827;border:1px solid rgba(148,163,184,.24);font-weight:950}.truth-result-pill .mark{font-size:18px;color:#86efac}
         .truth-table-wrap{overflow:auto;border:1px solid rgba(148,163,184,.22);border-radius:14px;background:#07111f}.truth-table{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;font-size:12px}.truth-table th,.truth-table td{padding:9px 10px;border-bottom:1px solid rgba(148,163,184,.14);border-right:1px solid rgba(148,163,184,.12);vertical-align:top}.truth-table th{position:sticky;top:0;z-index:1;background:#111827;color:#dbeafe;text-align:left}.truth-table td{color:#e5e7eb}.truth-status{font-weight:950;border-radius:999px;padding:4px 8px;display:inline-block;background:#1e293b}.truth-status.PRESENT{color:#86efac}.truth-status.LATE{color:#fde68a}.truth-status.ABSENT{color:#fecaca}.truth-status.UNKNOWN{color:#cbd5e1}
-        .truth-decision{margin-top:14px;border:1px solid rgba(96,165,250,.28);border-radius:16px;background:rgba(15,23,42,.84);padding:14px}.truth-decision h4{margin:0 0 8px;color:#f8fafc}.truth-decision-list{display:grid;gap:6px;margin:8px 0 10px}.truth-decision-row{display:flex;gap:8px;justify-content:space-between;border:1px solid rgba(148,163,184,.14);border-radius:10px;padding:8px;background:#0b1220}.truth-muted{color:#94a3b8}.register-book.reg-light .truth-modal-body,.register-book.reg-light .truth-table-wrap{background:#fffaf0;color:#111827}.register-book.reg-light .truth-table th{background:#064e3b;color:#fff}.register-book.reg-light .truth-table td{background:#fffdf4;color:#172033}.register-book.reg-light .truth-decision{background:#fff7df;color:#172033}.register-book.reg-light .truth-decision h4{color:#111827}.register-book.reg-light .truth-search{background:#fff;color:#111827;border-color:#cbd5e1}.register-book.reg-light .truth-result-pill,.register-book.reg-light .truth-decision-row{background:#fff;color:#111827}
+        .truth-decision{margin-top:14px;border:1px solid rgba(96,165,250,.28);border-radius:16px;background:rgba(15,23,42,.84);padding:14px}.truth-decision h4{margin:0 0 8px;color:#f8fafc}.truth-decision-list{display:grid;gap:6px;margin:8px 0 10px}.truth-decision-row{display:flex;gap:8px;justify-content:space-between;border:1px solid rgba(148,163,184,.14);border-radius:10px;padding:8px;background:#0b1220}.truth-muted{color:#94a3b8}.truth-top-grid{display:grid;grid-template-columns:minmax(210px,.8fr) minmax(0,1.2fr);gap:12px;margin-bottom:14px}.truth-final-card{border:1px solid rgba(96,165,250,.30);border-radius:18px;background:linear-gradient(135deg,rgba(15,23,42,.95),rgba(30,41,59,.88));padding:14px}.truth-final-label{font-size:12px;color:#93c5fd;text-transform:uppercase;letter-spacing:.08em;font-weight:950}.truth-final-value{margin-top:6px;font-size:30px;font-weight:1000;color:#f8fafc}.truth-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:8px}.truth-summary-card,.truth-status-card{border:1px solid rgba(148,163,184,.18);border-radius:14px;background:#07111f;padding:10px}.truth-summary-card span,.truth-status-card span{display:block;color:#94a3b8;font-size:11px;font-weight:900;text-transform:uppercase}.truth-summary-card strong,.truth-status-card strong{display:block;margin-top:4px;color:#f8fafc;font-size:20px}.truth-explain{border:1px solid rgba(34,197,94,.24);border-radius:16px;background:rgba(5,46,22,.28);padding:14px;margin-bottom:14px}.truth-explain h4,.truth-section h4{margin:0 0 8px;color:#f8fafc}.truth-explain-list{margin:0;padding-left:20px;line-height:1.65}.truth-status-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}.truth-section{margin-top:14px}.truth-technical{margin-top:14px;border:1px solid rgba(148,163,184,.24);border-radius:14px;background:#07111f;padding:10px}.truth-technical summary{cursor:pointer;font-weight:950;color:#dbeafe}.truth-technical pre{white-space:pre-wrap;word-break:break-word;color:#cbd5e1;background:#020617;border-radius:10px;padding:10px;max-height:280px;overflow:auto}.register-book.reg-light .truth-final-card,.register-book.reg-light .truth-summary-card,.register-book.reg-light .truth-status-card,.register-book.reg-light .truth-technical{background:#fff;color:#111827}.register-book.reg-light .truth-final-value,.register-book.reg-light .truth-summary-card strong,.register-book.reg-light .truth-status-card strong,.register-book.reg-light .truth-explain h4,.register-book.reg-light .truth-section h4{color:#111827}.register-book.reg-light .truth-explain{background:#ecfdf5;color:#111827}@media(max-width:860px){.truth-top-grid,.truth-status-cards{grid-template-columns:1fr}.truth-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}.register-book.reg-light .truth-modal-body,.register-book.reg-light .truth-table-wrap{background:#fffaf0;color:#111827}.register-book.reg-light .truth-table th{background:#064e3b;color:#fff}.register-book.reg-light .truth-table td{background:#fffdf4;color:#172033}.register-book.reg-light .truth-decision{background:#fff7df;color:#172033}.register-book.reg-light .truth-decision h4{color:#111827}.register-book.reg-light .truth-search{background:#fff;color:#111827;border-color:#cbd5e1}.register-book.reg-light .truth-result-pill,.register-book.reg-light .truth-decision-row{background:#fff;color:#111827}
         @media(max-width:720px){.truth-modal-card{max-width:100vw;max-height:100vh;border-radius:0}.truth-modal-head{flex-direction:column}.truth-toolbar{align-items:stretch}.truth-search{width:100%}.truth-result-pill{justify-content:center}.truth-table th,.truth-table td{padding:8px;font-size:11px}}
         
 /* TOGGLE SWITCH */
@@ -11792,25 +11919,58 @@ button[type="submit"]{margin-top:20px!important;}
                     <button type="button" id="truthModalClose" class="truth-modal-close">Close</button>
                 </div>
                 <div class="truth-modal-body">
-                    <div class="truth-toolbar">
-                        <input id="truthSearch" class="truth-search" type="search" placeholder="Search meetings, participant, email, status...">
-                        <div id="truthFinalResult" class="truth-result-pill"><span class="mark">-</span><span>Final Register Result</span></div>
-                    </div>
                     <div id="truthLoading" class="truth-muted">Loading register truth...</div>
-                    <div class="truth-table-wrap" id="truthTableWrap" style="display:none">
-                        <table class="truth-table">
-                            <thead>
-                                <tr>
-                                    <th>Meeting Date</th><th>Meeting ID</th><th>Meeting UUID</th><th>Topic</th><th>Meeting Start Time</th><th>Meeting End Time</th><th>Participant Name</th><th>Participant Email</th><th>Member Name</th><th>Member ID</th><th>Final Status</th><th>Duration</th><th>Join Time</th><th>Leave Time</th><th>Is Member</th>
-                                </tr>
-                            </thead>
-                            <tbody id="truthRows"></tbody>
-                        </table>
-                    </div>
-                    <div class="truth-decision" id="truthDecision" style="display:none">
-                        <h4>Register Decision Explanation</h4>
-                        <div id="truthDecisionRows" class="truth-decision-list"></div>
-                        <div id="truthDecisionReason" class="truth-muted"></div>
+                    <div id="truthViewerContent" style="display:none">
+                        <div class="truth-top-grid">
+                            <div class="truth-final-card">
+                                <div class="truth-final-label">Final Result</div>
+                                <div id="truthFinalResult" class="truth-final-value">-</div>
+                            </div>
+                            <div class="truth-summary-grid">
+                                <div class="truth-summary-card"><span>Meetings on this day</span><strong id="truthSummaryMeetings">0</strong></div>
+                                <div class="truth-summary-card"><span>Present</span><strong id="truthSummaryPresent">0</strong></div>
+                                <div class="truth-summary-card"><span>Late</span><strong id="truthSummaryLate">0</strong></div>
+                                <div class="truth-summary-card"><span>Absent</span><strong id="truthSummaryAbsent">0</strong></div>
+                                <div class="truth-summary-card"><span>Unknown</span><strong id="truthSummaryUnknown">0</strong></div>
+                            </div>
+                        </div>
+                        <div class="truth-explain">
+                            <h4>Explanation</h4>
+                            <ul id="truthHumanExplanation" class="truth-explain-list"></ul>
+                        </div>
+                        <div id="truthMultiMeetingCards" class="truth-status-cards"></div>
+                        <div class="truth-toolbar">
+                            <input id="truthSearch" class="truth-search" type="search" placeholder="Search meeting time, status, duration, join, leave...">
+                        </div>
+                        <div class="truth-section">
+                            <h4>Meeting Breakdown</h4>
+                            <div class="truth-table-wrap" id="truthTableWrap">
+                                <table class="truth-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Meeting Time</th><th>Status</th><th>Duration</th><th>Join Time</th><th>Leave Time</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="truthRows"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="truth-section">
+                            <h4>Compare with Meeting Report</h4>
+                            <div class="truth-muted" id="truthPdfNote"></div>
+                            <div class="truth-table-wrap">
+                                <table class="truth-table">
+                                    <thead><tr><th>Meeting Time</th><th>Status</th><th>Duration</th></tr></thead>
+                                    <tbody id="truthPdfRows"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <details class="truth-technical">
+                            <summary>Show Technical Details</summary>
+                            <div id="truthDecisionReason" class="truth-muted" style="margin:10px 0"></div>
+                            <div id="truthDecisionRows" class="truth-decision-list"></div>
+                            <pre id="truthTechnicalJson"></pre>
+                        </details>
                     </div>
                 </div>
             </div>
@@ -11838,24 +11998,54 @@ button[type="submit"]{margin-top:20px!important;}
             const truthClose = document.getElementById('truthModalClose');
             const truthRows = document.getElementById('truthRows');
             const truthLoading = document.getElementById('truthLoading');
-            const truthTableWrap = document.getElementById('truthTableWrap');
-            const truthDecision = document.getElementById('truthDecision');
+            const truthViewerContent = document.getElementById('truthViewerContent');
             const truthDecisionRows = document.getElementById('truthDecisionRows');
             const truthDecisionReason = document.getElementById('truthDecisionReason');
             const truthFinalResult = document.getElementById('truthFinalResult');
             const truthSearch = document.getElementById('truthSearch');
             const truthSub = document.getElementById('truthModalSub');
+            const truthSummaryMeetings = document.getElementById('truthSummaryMeetings');
+            const truthSummaryPresent = document.getElementById('truthSummaryPresent');
+            const truthSummaryLate = document.getElementById('truthSummaryLate');
+            const truthSummaryAbsent = document.getElementById('truthSummaryAbsent');
+            const truthSummaryUnknown = document.getElementById('truthSummaryUnknown');
+            const truthHumanExplanation = document.getElementById('truthHumanExplanation');
+            const truthMultiMeetingCards = document.getElementById('truthMultiMeetingCards');
+            const truthPdfRows = document.getElementById('truthPdfRows');
+            const truthPdfNote = document.getElementById('truthPdfNote');
+            const truthTechnicalJson = document.getElementById('truthTechnicalJson');
             const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
             const statusClass = status => String(status || 'UNKNOWN').toUpperCase().replace(/[^A-Z]/g, '') || 'UNKNOWN';
             let truthCacheRows = [];
             function closeTruth(){ truthModal?.classList.remove('show'); truthModal?.setAttribute('aria-hidden', 'true'); }
             function renderTruthRows(rows){
                 const query = (truthSearch?.value || '').trim().toLowerCase();
-                const filtered = query ? rows.filter(row => Object.values(row || {}).some(value => String(value ?? '').toLowerCase().includes(query))) : rows;
+                const filtered = query ? rows.filter(row => ['meeting_time','final_status','duration','join_time','leave_time'].some(key => String(row?.[key] ?? '').toLowerCase().includes(query))) : rows;
                 truthRows.innerHTML = filtered.length ? filtered.map(row => `
                     <tr>
-                        <td>${esc(row.meeting_date)}</td><td>${esc(row.meeting_id)}</td><td>${esc(row.meeting_uuid)}</td><td>${esc(row.topic)}</td><td>${esc(row.meeting_start_time)}</td><td>${esc(row.meeting_end_time)}</td><td>${esc(row.participant_name)}</td><td>${esc(row.participant_email)}</td><td>${esc(row.member_name)}</td><td>${esc(row.member_id)}</td><td><span class="truth-status ${statusClass(row.final_status)}">${esc(row.final_status)}</span></td><td>${esc(row.duration)}</td><td>${esc(row.join_time)}</td><td>${esc(row.leave_time)}</td><td>${row.is_member ? 'Yes' : 'No'}</td>
-                    </tr>`).join('') : '<tr><td colspan="15" class="truth-muted">No matching contributing rows found.</td></tr>';
+                        <td>${esc(row.meeting_time || row.meeting_start_time || '-')}</td>
+                        <td><span class="truth-status ${statusClass(row.final_status)}">${esc(row.final_status || 'UNKNOWN')}</span></td>
+                        <td>${esc(row.duration || '00:00:00')}</td>
+                        <td>${esc(row.join_time || '-')}</td>
+                        <td>${esc(row.leave_time || '-')}</td>
+                    </tr>`).join('') : '<tr><td colspan="5" class="truth-muted">No matching meeting rows found.</td></tr>';
+            }
+            function renderTruthCards(summary){
+                const cards = [
+                    ['Present Meetings', summary.present || 0, 'PRESENT'],
+                    ['Late Meetings', summary.late || 0, 'LATE'],
+                    ['Absent Meetings', summary.absent || 0, 'ABSENT'],
+                ];
+                truthMultiMeetingCards.innerHTML = (summary.meetings_on_day || 0) > 1 ? cards.map(card => `
+                    <div class="truth-status-card"><span>${esc(card[0])}</span><strong class="truth-status ${statusClass(card[2])}">${esc(card[1])}</strong></div>
+                `).join('') : '';
+            }
+            function renderPdfValidation(pdfValidation){
+                const pdfRows = (pdfValidation && pdfValidation.rows) || [];
+                truthPdfNote.textContent = (pdfValidation && pdfValidation.note) || '';
+                truthPdfRows.innerHTML = pdfRows.length ? pdfRows.map(row => `
+                    <tr><td>${esc(row.meeting_time || '-')}</td><td><span class="truth-status ${statusClass(row.status)}">${esc(row.status || 'UNKNOWN')}</span></td><td>${esc(row.duration || '00:00:00')}</td></tr>
+                `).join('') : '<tr><td colspan="3" class="truth-muted">No meeting report comparison values available.</td></tr>';
             }
             async function openTruth(cell){
                 const memberId = cell.dataset.memberId;
@@ -11865,28 +12055,39 @@ button[type="submit"]{margin-top:20px!important;}
                 truthSub.textContent = `${cell.dataset.memberName || 'Member'} · ${cellDate}`;
                 truthLoading.textContent = 'Loading register truth...';
                 truthLoading.style.display = 'block';
-                truthTableWrap.style.display = 'none';
-                truthDecision.style.display = 'none';
+                truthViewerContent.style.display = 'none';
                 truthRows.innerHTML = '';
                 truthDecisionRows.innerHTML = '';
+                truthHumanExplanation.innerHTML = '';
+                truthPdfRows.innerHTML = '';
+                truthTechnicalJson.textContent = '';
                 truthSearch.value = '';
-                truthFinalResult.innerHTML = '<span class="mark">-</span><span>Final Register Result</span>';
+                truthFinalResult.textContent = '-';
                 try{
                     const params = new URLSearchParams({member_id: memberId, date: cellDate});
                     const response = await fetch(`/api/register-cell-details?${params.toString()}`);
                     const data = await response.json();
                     if(!response.ok || !data.ok){ throw new Error(data.error || 'Unable to load register truth.'); }
-                    truthCacheRows = data.rows || [];
+                    truthCacheRows = data.meeting_breakdown || data.rows || [];
                     const result = data.final_register_result || {};
-                    truthFinalResult.innerHTML = `<span class="mark">${esc(result.mark || '-')}</span><span>Final Register Result: ${esc(result.label || 'NO MEETING')}</span>`;
+                    const summary = data.summary || {};
+                    truthFinalResult.textContent = result.label || 'NO MEETING';
+                    truthSummaryMeetings.textContent = summary.meetings_on_day || 0;
+                    truthSummaryPresent.textContent = summary.present || 0;
+                    truthSummaryLate.textContent = summary.late || 0;
+                    truthSummaryAbsent.textContent = summary.absent || 0;
+                    truthSummaryUnknown.textContent = summary.unknown || 0;
+                    truthHumanExplanation.innerHTML = (data.human_explanation || []).map(line => `<li>${esc(line)}</li>`).join('') || '<li>No explanation is available for this cell.</li>';
+                    renderTruthCards(summary);
                     renderTruthRows(truthCacheRows);
+                    renderPdfValidation(data.pdf_validation || {});
                     const explanation = (data.decision && data.decision.explanation) || [];
                     truthDecisionRows.innerHTML = explanation.length ? explanation.map(item => `
                         <div class="truth-decision-row"><span>${esc(item.topic)} <span class="truth-muted">(${esc(item.meeting_id)} / ${esc(item.meeting_uuid)})</span></span><strong>${esc(item.status)} (${esc(item.mark)})</strong></div>`).join('') : '<div class="truth-muted">No meetings exist for this date, so the register cell is blank.</div>';
                     truthDecisionReason.textContent = (data.decision && data.decision.reason) || 'Attendance Register uses priority P > L > A > U.';
+                    truthTechnicalJson.textContent = JSON.stringify({member:data.member, date:data.date, rows:data.rows || []}, null, 2);
                     truthLoading.style.display = 'none';
-                    truthTableWrap.style.display = 'block';
-                    truthDecision.style.display = 'block';
+                    truthViewerContent.style.display = 'block';
                 }catch(err){
                     truthLoading.textContent = err.message || 'Unable to load register truth.';
                 }
