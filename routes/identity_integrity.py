@@ -12,10 +12,11 @@ if _legacy is None:
     raise RuntimeError("This module must be imported by app.py")
 globals().update({name: getattr(_legacy, name) for name in dir(_legacy) if not name.startswith("__")})
 
-IDENTITY_SCAN_CACHE_KEY = "identity_integrity:scan:v3_name_centric"
+IDENTITY_SCAN_CACHE_KEY = "identity_integrity:scan:v4_forensics"
 IDENTITY_RENDER_LIMIT = 1000
 IDENTITY_TOP_LIMIT = 20
 IDENTITY_WORST_LIMIT = 75
+IDENTITY_FORENSIC_ROW_LIMIT = 75
 
 
 def _identity_norm_text(value):
@@ -503,6 +504,207 @@ def _identity_score_loss_by_category(records):
     return rows
 
 
+def _identity_avg(records, getter):
+    if not records:
+        return 0.0
+    return round(sum(getter(record) for record in records) / len(records), 2)
+
+
+def _identity_component_analysis(records):
+    rows = []
+    for category in ("VERIFIED", "POSSIBLE MATCH", "SUSPICIOUS", "BROKEN"):
+        category_records = [record for record in records if record.get("category") == category]
+        rows.append(
+            {
+                "category": category,
+                "badge_class": _identity_badge_class(category),
+                "count": len(category_records),
+                "average_name_score": _identity_avg(category_records, lambda r: (r.get("explanation") or {}).get("name_score", 0)),
+                "average_historical_score": _identity_avg(category_records, lambda r: (r.get("explanation") or {}).get("historical_consistency_score", 0)),
+                "average_assignment_score": _identity_avg(category_records, lambda r: (r.get("explanation") or {}).get("member_match_score", 0)),
+                "average_email_bonus": _identity_avg(category_records, lambda r: (r.get("explanation") or {}).get("email_score", 0)),
+                "average_penalty": _identity_avg(category_records, lambda r: (r.get("explanation") or {}).get("penalty_score", 0)),
+                "average_final_confidence": _identity_avg(category_records, lambda r: r.get("confidence", 0)),
+            }
+        )
+    return rows
+
+
+def _identity_penalty_labels(record):
+    explanation = record.get("explanation") or {}
+    labels = []
+    causes = set(record.get("root_causes") or [])
+    if "Historical Inconsistency" in causes or explanation.get("historical_consistency_score", 0) < 24:
+        labels.append("Historical inconsistency")
+    if "Wrong Member Assignment" in causes or explanation.get("alternate"):
+        labels.append("Alternate member conflict")
+    if explanation.get("member_match_score", 0) < 20:
+        labels.append("Weak assignment stability")
+    if "Missing Member" in causes or not record.get("member_id"):
+        labels.append("Missing member linkage")
+    if "Name Mismatch" in causes or explanation.get("name_score", 0) < 28:
+        labels.append("Weak name match")
+    if "Email Mismatch" in causes:
+        labels.append("Email mismatch")
+    if explanation.get("penalty_score", 0) < 0:
+        labels.append("Formula penalty/cap")
+    if explanation.get("final_confidence", record.get("confidence", 0)) < explanation.get("subtotal_score", 0) + explanation.get("penalty_score", 0):
+        labels.append("Confidence cap")
+    return labels or ["No penalty source"]
+
+
+def _identity_top_penalty_sources(records, total_rows):
+    buckets = defaultdict(lambda: {"affected_rows": 0, "penalty_total": 0, "trust_impact_total": 0})
+    for record in records:
+        explanation = record.get("explanation") or {}
+        component_gap = (40 - explanation.get("name_score", 0)) + (40 - explanation.get("historical_consistency_score", 0)) + (20 - explanation.get("member_match_score", 0))
+        penalty_loss = abs(min(0, explanation.get("penalty_score", 0)))
+        trust_loss = max(0, 100 - record.get("confidence", 0))
+        labels = [label for label in _identity_penalty_labels(record) if label != "No penalty source"]
+        if not labels:
+            continue
+        per_label_penalty = (component_gap + penalty_loss) / len(labels)
+        per_label_impact = trust_loss / max(len(labels), 1)
+        for label in labels:
+            buckets[label]["affected_rows"] += 1
+            buckets[label]["penalty_total"] += per_label_penalty
+            buckets[label]["trust_impact_total"] += per_label_impact
+    rows = []
+    for label, bucket in buckets.items():
+        affected = bucket["affected_rows"]
+        rows.append(
+            {
+                "source": label,
+                "affected_rows": affected,
+                "average_penalty": round(bucket["penalty_total"] / affected, 2) if affected else 0.0,
+                "trust_impact": round(bucket["trust_impact_total"] / total_rows, 2) if total_rows else 0.0,
+            }
+        )
+    return sorted(rows, key=lambda item: (-item["trust_impact"], -item["affected_rows"], item["source"]))
+
+
+def _identity_row_forensic_reason(record):
+    explanation = record.get("explanation") or {}
+    labels = [label for label in _identity_penalty_labels(record) if label != "No penalty source"]
+    if explanation.get("penalty_score", 0) < 0:
+        labels.append(f"Penalty/cap {explanation.get('penalty_score')} points")
+    if not labels:
+        labels = ["Score reflects available name/history/assignment evidence"]
+    return "; ".join(dict.fromkeys(labels))
+
+
+def _identity_low_confidence_rows(records):
+    low_rows = [record for record in records if 40 <= record.get("confidence", 0) <= 60]
+    low_rows = sorted(low_rows, key=lambda r: (r.get("confidence", 0), r.get("attendance_id") or 0))[:IDENTITY_FORENSIC_ROW_LIMIT]
+    for record in low_rows:
+        record["forensic_reason"] = _identity_row_forensic_reason(record)
+    return low_rows
+
+
+def _identity_verified_forensic_rows(records):
+    return sorted([record for record in records if record.get("category") == "VERIFIED"], key=lambda r: (-r.get("confidence", 0), r.get("attendance_id") or 0))[:IDENTITY_FORENSIC_ROW_LIMIT]
+
+
+def _identity_confidence_distribution(records):
+    buckets = [
+        ("0-20", 0, 20),
+        ("21-40", 21, 40),
+        ("41-60", 41, 60),
+        ("61-80", 61, 80),
+        ("81-94", 81, 94),
+        ("95-100", 95, 100),
+    ]
+    rows = []
+    for label, low, high in buckets:
+        rows.append({"bucket": label, "count": sum(1 for record in records if low <= record.get("confidence", 0) <= high)})
+    return rows
+
+
+def _identity_missing_verified_factors(record):
+    explanation = record.get("explanation") or {}
+    factors = []
+    if explanation.get("name_score", 0) < 40:
+        factors.append("Exact Name Match")
+    if explanation.get("historical_consistency_score", 0) < 35:
+        factors.append("Historical Consistency")
+    if explanation.get("member_match_score", 0) < 20:
+        factors.append("Stable Assignment")
+    if explanation.get("penalty_score", 0) < 0:
+        factors.append("Penalty / Conflict")
+    return factors
+
+
+def _identity_verified_threshold_analysis(records):
+    non_verified = [record for record in records if record.get("confidence", 0) < 95]
+    within_5 = [record for record in non_verified if record.get("confidence", 0) >= 90]
+    within_10 = [record for record in non_verified if record.get("confidence", 0) >= 85]
+    one_missing = []
+    missing_counts = Counter()
+    for record in non_verified:
+        factors = _identity_missing_verified_factors(record)
+        for factor in factors:
+            missing_counts[factor] += 1
+        if len(factors) == 1:
+            one_missing.append(record)
+    most_common = missing_counts.most_common(1)[0][0] if missing_counts else "None"
+    return {
+        "within_5_count": len(within_5),
+        "within_10_count": len(within_10),
+        "one_missing_count": len(one_missing),
+        "most_common_missing_factor": most_common,
+        "missing_factors": [{"factor": factor, "count": count} for factor, count in missing_counts.most_common()],
+    }
+
+
+def _identity_trust_contribution_analysis(records, total_rows, trust_score):
+    if not total_rows:
+        return {"rows_positive": 0, "rows_negative": 0, "components": [], "final_trust_score": trust_score}
+    components = [
+        ("Name Matching", sum((r.get("explanation") or {}).get("name_score", 0) for r in records)),
+        ("Historical Consistency", sum((r.get("explanation") or {}).get("historical_consistency_score", 0) for r in records)),
+        ("Stable Assignment", sum((r.get("explanation") or {}).get("member_match_score", 0) for r in records)),
+        ("Email Bonus", sum((r.get("explanation") or {}).get("email_score", 0) for r in records)),
+        ("Penalties", sum((r.get("explanation") or {}).get("penalty_score", 0) for r in records)),
+        ("Confidence Caps", sum(r.get("confidence", 0) - ((r.get("explanation") or {}).get("subtotal_score", 0) + (r.get("explanation") or {}).get("penalty_score", 0)) for r in records)),
+    ]
+    return {
+        "rows_positive": sum(1 for r in records if r.get("confidence", 0) >= 70),
+        "rows_negative": sum(1 for r in records if r.get("confidence", 0) < 70),
+        "components": [{"component": name, "contribution": round(total / total_rows, 2)} for name, total in components],
+        "largest_booster": max(components[:4], key=lambda item: item[1])[0] if records else "None",
+        "largest_penalty_source": min(components[4:], key=lambda item: item[1])[0] if any(item[1] < 0 for item in components[4:]) else "No formula penalty",
+        "final_trust_score": trust_score,
+    }
+
+
+def _identity_trust_simulation(records, total_rows, trust_score):
+    if not total_rows:
+        return {"current_trust_score": trust_score, "without_penalties": trust_score, "stronger_history": trust_score, "stronger_assignment": trust_score}
+    without_penalties = sum(min(100, r.get("confidence", 0) + abs(min(0, (r.get("explanation") or {}).get("penalty_score", 0)))) for r in records) / total_rows
+    stronger_history = sum(min(100, r.get("confidence", 0) + max(0, 35 - (r.get("explanation") or {}).get("historical_consistency_score", 0))) for r in records) / total_rows
+    stronger_assignment = sum(min(100, r.get("confidence", 0) + max(0, 20 - (r.get("explanation") or {}).get("member_match_score", 0))) for r in records) / total_rows
+    return {
+        "current_trust_score": trust_score,
+        "without_penalties": round(without_penalties, 2),
+        "stronger_history": round(stronger_history, 2),
+        "stronger_assignment": round(stronger_assignment, 2),
+    }
+
+
+def _identity_low_trust_summary(records, total_rows, top_penalty_sources, trust_contribution):
+    if not total_rows:
+        return ["No attendance rows were available for trust score forensics."]
+    summary = []
+    for item in top_penalty_sources[:3]:
+        summary.append(f"{_identity_pct(item['affected_rows'], total_rows)}% of rows show {item['source'].lower()}.")
+    if trust_contribution.get("components"):
+        booster = trust_contribution.get("largest_booster") or "available positive evidence"
+        summary.append(f"The strongest positive trust contributor is {booster}.")
+    if not summary:
+        summary.append("No major confidence suppression factor was detected; trust score reflects the available verified evidence mix.")
+    return summary
+
+
 def _identity_load_scan(force=False):
     cached = None if force else _cache_get(IDENTITY_SCAN_CACHE_KEY)
     if cached:
@@ -681,6 +883,15 @@ def _identity_load_scan(force=False):
         key=lambda r: (-r["confidence"], r["attendance_id"] or 0),
     )[:IDENTITY_TOP_LIMIT]
     score_loss_by_category = _identity_score_loss_by_category(records)
+    component_analysis = _identity_component_analysis(records)
+    top_penalty_sources = _identity_top_penalty_sources(records, total_rows)
+    low_confidence_rows = _identity_low_confidence_rows(records)
+    verified_forensic_rows = _identity_verified_forensic_rows(records)
+    confidence_distribution = _identity_confidence_distribution(records)
+    verified_threshold_analysis = _identity_verified_threshold_analysis(records)
+    trust_contribution = _identity_trust_contribution_analysis(records, total_rows, trust_score)
+    trust_simulation = _identity_trust_simulation(records, total_rows, trust_score)
+    low_trust_summary = _identity_low_trust_summary(records, total_rows, top_penalty_sources, trust_contribution)
     calibration_warning = name_exact_count > 0 and counts["VERIFIED"] == 0
     formula_findings = [
         "Old email-centric formula: Email up to 45, name up to 25, member link up to 10, history up to 20; exact name-only rows could not reach VERIFIED without email-like credit.",
@@ -734,6 +945,15 @@ def _identity_load_scan(force=False):
         "worst_cases": worst_cases,
         "verified_candidates": verified_candidates,
         "score_loss_by_category": score_loss_by_category,
+        "component_analysis": component_analysis,
+        "trust_contribution": trust_contribution,
+        "top_penalty_sources": top_penalty_sources,
+        "low_confidence_rows": low_confidence_rows,
+        "verified_forensic_rows": verified_forensic_rows,
+        "confidence_distribution": confidence_distribution,
+        "verified_threshold_analysis": verified_threshold_analysis,
+        "trust_simulation": trust_simulation,
+        "low_trust_summary": low_trust_summary,
         "formula_findings": formula_findings,
         "scanned_at": datetime.utcnow(),
     }
@@ -1044,6 +1264,70 @@ def identity_integrity():
           {% for item in score_loss_by_category %}<tr><td><span class="identity-pill {{ item.badge_class if item.badge_class else '' }}">{{ item.category }}</span></td><td>{{ item.count }}</td><td><strong>{{ '%.2f'|format(item.average_confidence) }}%</strong></td><td><strong>{{ '%+.2f'|format(item.average_penalty) }}</strong></td><td>{{ item.most_common_reason }}</td></tr>{% endfor %}
         </tbody></table></div>
 
+        <h2 class="identity-section-title">Confidence Component Analysis</h2>
+        <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Category</th><th>Rows</th><th>Avg Name</th><th>Avg Historical</th><th>Avg Stable Assignment</th><th>Avg Email Bonus</th><th>Avg Penalty</th><th>Avg Final Confidence</th></tr></thead><tbody>
+          {% for item in component_analysis %}<tr><td><span class="identity-pill {{ item.badge_class }}">{{ item.category }}</span></td><td>{{ item.count }}</td><td>{{ '%.2f'|format(item.average_name_score) }}</td><td>{{ '%.2f'|format(item.average_historical_score) }}</td><td>{{ '%.2f'|format(item.average_assignment_score) }}</td><td>{{ '%.2f'|format(item.average_email_bonus) }}</td><td><strong>{{ '%+.2f'|format(item.average_penalty) }}</strong></td><td><strong>{{ '%.2f'|format(item.average_final_confidence) }}%</strong></td></tr>{% endfor %}
+        </tbody></table></div>
+
+        <h2 class="identity-section-title">Trust Score Contribution Analysis</h2>
+        <div class="identity-grid">
+          <div class="identity-card trust"><small>Rows Contributing Positively</small><strong>{{ trust_contribution.rows_positive }}</strong></div>
+          <div class="identity-card warn"><small>Rows Contributing Negatively</small><strong>{{ trust_contribution.rows_negative }}</strong></div>
+          <div class="identity-card trust"><small>Largest Confidence Booster</small><strong style="font-size:22px">{{ trust_contribution.largest_booster }}</strong></div>
+          <div class="identity-card broken"><small>Largest Penalty Source</small><strong style="font-size:22px">{{ trust_contribution.largest_penalty_source }}</strong></div>
+          <div class="identity-card trust"><small>Final Trust Score</small><strong>{{ '%.2f'|format(trust_contribution.final_trust_score) }}%</strong></div>
+        </div>
+        <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Component</th><th>Trust Contribution</th></tr></thead><tbody>
+          {% for item in trust_contribution.components %}<tr><td>{{ item.component }}</td><td><strong>{{ '%+.2f'|format(item.contribution) }}%</strong></td></tr>{% endfor %}
+          <tr><td><strong>Final Trust Score</strong></td><td><strong>{{ '%.2f'|format(trust_contribution.final_trust_score) }}%</strong></td></tr>
+        </tbody></table></div>
+
+        <h2 class="identity-section-title">Top Penalty Sources</h2>
+        <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Penalty Source</th><th>Affected Rows</th><th>Average Penalty</th><th>Trust Impact</th></tr></thead><tbody>
+          {% for item in top_penalty_sources %}<tr><td>{{ item.source }}</td><td>{{ item.affected_rows }}</td><td><strong>{{ '%.2f'|format(item.average_penalty) }}</strong></td><td><strong>-{{ '%.2f'|format(item.trust_impact) }}%</strong></td></tr>{% else %}<tr><td colspan="4" class="identity-muted">No penalty sources found.</td></tr>{% endfor %}
+        </tbody></table></div>
+
+        <h2 class="identity-section-title">Rows Scoring 40-60%</h2>
+        <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Participant</th><th>Linked Member</th><th>Name Score</th><th>History Score</th><th>Assignment Score</th><th>Penalty</th><th>Final Confidence</th><th>Reason</th></tr></thead><tbody>
+          {% for row in low_confidence_rows %}<tr><td><strong>{{ row.participant_name }}</strong><div class="identity-muted">{{ row.participant_email }}</div></td><td>{{ row.linked_member }}</td><td>{{ row.explanation.name_score }}</td><td>{{ row.explanation.historical_consistency_score }}</td><td>{{ row.explanation.member_match_score }}</td><td><strong>{{ '%+.2f'|format(row.explanation.penalty_score) }}</strong></td><td><strong>{{ row.confidence }}%</strong></td><td class="identity-reason">{{ row.forensic_reason }}</td></tr>{% else %}<tr><td colspan="8" class="identity-muted">No rows are currently scoring between 40% and 60%.</td></tr>{% endfor %}
+        </tbody></table></div>
+
+        <h2 class="identity-section-title">Verified Score Forensics</h2>
+        <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Participant</th><th>Linked Member</th><th>Verification Basis</th><th>Name Score</th><th>History Score</th><th>Assignment Score</th><th>Final Confidence</th></tr></thead><tbody>
+          {% for row in verified_forensic_rows %}<tr><td><strong>{{ row.participant_name }}</strong><div class="identity-muted">{{ row.participant_email }}</div></td><td>{{ row.linked_member }}</td><td>{{ row.verification_basis }}</td><td>{{ row.explanation.name_score }}</td><td>{{ row.explanation.historical_consistency_score }}</td><td>{{ row.explanation.member_match_score }}</td><td><strong>{{ row.confidence }}%</strong></td></tr>{% else %}<tr><td colspan="7" class="identity-muted">No VERIFIED rows found.</td></tr>{% endfor %}
+        </tbody></table></div>
+
+        <h2 class="identity-section-title">Confidence Distribution</h2>
+        <div class="identity-cause-list">
+          {% for item in confidence_distribution %}<div class="identity-cause"><span>{{ item.bucket }}</span><strong>{{ item.count }} rows</strong></div>{% endfor %}
+        </div>
+
+        <h2 class="identity-section-title">Verified Threshold Analysis</h2>
+        <div class="identity-grid">
+          <div class="identity-card warn"><small>Within 5 Points of VERIFIED</small><strong>{{ verified_threshold_analysis.within_5_count }}</strong></div>
+          <div class="identity-card warn"><small>Within 10 Points of VERIFIED</small><strong>{{ verified_threshold_analysis.within_10_count }}</strong></div>
+          <div class="identity-card trust"><small>Blocked by One Missing Component</small><strong>{{ verified_threshold_analysis.one_missing_count }}</strong></div>
+          <div class="identity-card warn"><small>Most Common Missing Factor</small><strong style="font-size:22px">{{ verified_threshold_analysis.most_common_missing_factor }}</strong></div>
+        </div>
+        <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Missing Factor</th><th>Rows</th></tr></thead><tbody>
+          {% for item in verified_threshold_analysis.missing_factors %}<tr><td>{{ item.factor }}</td><td><strong>{{ item.count }}</strong></td></tr>{% else %}<tr><td colspan="2" class="identity-muted">No non-verified rows found.</td></tr>{% endfor %}
+        </tbody></table></div>
+
+        <h2 class="identity-section-title">Trust Score Simulation (Diagnostics Only)</h2>
+        <div class="identity-grid">
+          <div class="identity-card trust"><small>Current Trust Score</small><strong>{{ '%.2f'|format(trust_simulation.current_trust_score) }}%</strong></div>
+          <div class="identity-card warn"><small>Without Penalties</small><strong>{{ '%.2f'|format(trust_simulation.without_penalties) }}%</strong></div>
+          <div class="identity-card warn"><small>With Stronger History</small><strong>{{ '%.2f'|format(trust_simulation.stronger_history) }}%</strong></div>
+          <div class="identity-card warn"><small>With Stronger Assignment Stability</small><strong>{{ '%.2f'|format(trust_simulation.stronger_assignment) }}%</strong></div>
+        </div>
+
+        <h2 class="identity-section-title">Root Cause of Low Trust</h2>
+        <div class="identity-card">
+          <ul class="identity-muted" style="margin:0;line-height:1.7">
+            {% for line in low_trust_summary %}<li>{{ line }}</li>{% endfor %}
+          </ul>
+        </div>
+
         <h2 class="identity-section-title">Top Affected Members</h2>
         <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Member Name</th><th>Issue Count</th><th>Broken Count</th><th>Suspicious Count</th><th>Trust Rating</th></tr></thead><tbody>
           {% for member in top_members %}<tr><td><strong>{{ member.member_name }}</strong><div class="identity-muted">{{ member.member_email }}</div></td><td>{{ member.issue_count }}</td><td>{{ member.broken_count }}</td><td>{{ member.suspicious_count }}</td><td><strong>{{ member.trust_rating }}%</strong></td></tr>{% else %}<tr><td colspan="5" class="identity-muted">No affected members found.</td></tr>{% endfor %}
@@ -1140,6 +1424,15 @@ def identity_integrity():
         worst_cases=scan["worst_cases"],
         verified_candidates=scan["verified_candidates"],
         score_loss_by_category=scan["score_loss_by_category"],
+        component_analysis=scan["component_analysis"],
+        trust_contribution=scan["trust_contribution"],
+        top_penalty_sources=scan["top_penalty_sources"],
+        low_confidence_rows=scan["low_confidence_rows"],
+        verified_forensic_rows=scan["verified_forensic_rows"],
+        confidence_distribution=scan["confidence_distribution"],
+        verified_threshold_analysis=scan["verified_threshold_analysis"],
+        trust_simulation=scan["trust_simulation"],
+        low_trust_summary=scan["low_trust_summary"],
         formula_findings=scan["formula_findings"],
     )
     return page("Identity Validation Center", body, active="identity_integrity")
