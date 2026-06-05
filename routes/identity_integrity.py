@@ -12,7 +12,7 @@ if _legacy is None:
     raise RuntimeError("This module must be imported by app.py")
 globals().update({name: getattr(_legacy, name) for name in dir(_legacy) if not name.startswith("__")})
 
-IDENTITY_SCAN_CACHE_KEY = "identity_integrity:scan:v2"
+IDENTITY_SCAN_CACHE_KEY = "identity_integrity:scan:v3_name_centric"
 IDENTITY_RENDER_LIMIT = 1000
 IDENTITY_TOP_LIMIT = 20
 IDENTITY_WORST_LIMIT = 75
@@ -155,23 +155,70 @@ def _identity_best_member(row, candidates, signature_counts):
     return best_member, best_strength
 
 
+def _identity_legacy_confidence(row, linked_member, best_member, best_strength, signature_counts):
+    """Return the pre-calibration email-centric confidence for Old vs New diagnostics only."""
+    participant_email = _identity_norm_email(row.get("participant_email"))
+    participant_name = _identity_norm_text(row.get("participant_name"))
+    score = 0
+    penalty = 0
+    if linked_member:
+        member_email = _identity_norm_email(linked_member.get("email"))
+        member_name = _identity_norm_text(_identity_member_name(linked_member))
+        linked_id = linked_member.get("id")
+        if participant_email and member_email and participant_email == member_email:
+            score += 45
+        elif not participant_email:
+            score += 20
+        elif not member_email:
+            score += 18
+
+        if participant_name and member_name and participant_name == member_name:
+            score += 25
+        elif participant_name and member_name:
+            overlap = _identity_token_overlap(participant_name, member_name)
+            if overlap >= 0.66:
+                score += 18
+            elif overlap >= 0.34:
+                score += 9
+
+        if row.get("is_member") or row.get("member_id"):
+            score += 10
+
+        sig = _identity_row_signature(row)
+        total_for_sig = sum(signature_counts.get(sig, {}).values())
+        linked_hits = signature_counts.get(sig, {}).get(linked_id, 0)
+        if total_for_sig:
+            score += round((linked_hits / total_for_sig) * 20)
+
+        linked_strength = _identity_candidate_strength(row, linked_member, signature_counts)
+        if best_member and best_member.get("id") != linked_id:
+            if best_strength >= max(70, linked_strength + 20):
+                penalty = min(0, 29 - score)
+            elif best_strength >= max(45, linked_strength + 10):
+                penalty = min(0, 69 - score)
+        return max(0, min(100, int(round(score + penalty))))
+
+    if best_member and best_strength >= 70:
+        return min(29, best_strength)
+    if best_member and best_strength >= 45:
+        return 45
+    return 55
+
+
 def _identity_explain_confidence(row, linked_member, best_member, best_strength, signature_counts):
     """
-    Row confidence is intentionally read-only and decomposed for investigation:
-    - Email Score: up to +45 for exact participant/member email evidence.
-    - Name Score: up to +25 for exact or strong name overlap evidence.
-    - Member Match Score: up to +10 for rows already classified/linked as member rows.
-    - Historical Consistency Score: up to +20 for repeated identity signatures pointing to the same member_id.
-    - Penalty Score: negative cap pressure when another member is a stronger fit or the row is unlinked/missing data.
-    Final confidence is the bounded 0-100 sum and is never written back to attendance.
+    Phase 4.2.4 name-centric confidence formula (read-only diagnostics):
+    - Name Score: up to +40. Exact participant/member name is the primary production identity signal.
+    - Historical Consistency Score: up to +40. Repeated use of the same normalized participant signature with the
+      same linked member represents stable historical identity evidence.
+    - Member Assignment Stability Score: up to +20. Existing linked member rows are trusted as production assignments
+      when they agree with name/history and have no stronger contradictory alternate.
+    - Email Evidence Score: up to +15 bonus. Exact email evidence improves confidence when available, but missing
+      participant/member email is neutral (0), not a penalty, because production member emails are not maintained.
+    - Contradictory Evidence: email mismatches, weak history, missing names, or materially stronger alternate members
+      can reduce/cap confidence. No writes, remaps, schema changes, or attendance/member updates are performed.
 
-    Phase 4.2.2 calibration finding notes:
-    - Exact linked email + exact linked name + linked member evidence can only reach VERIFIED when historical consistency
-      contributes at least 15 points because the VERIFIED threshold is 95 and the non-history exact subtotal is 80.
-    - Alternate-member penalties are implemented as category caps by pushing the subtotal down to 69 or 29; exact linked
-      matches must therefore expose score_before_caps/score_after_caps so admins can see whether a cap suppressed them.
-    - Missing linked-member rows are also capped even when a best-member candidate is strong; this scanner reports that
-      suppression only and never remaps, updates, or writes attendance/member data.
+    Exact name + high history + stable linked member can independently reach VERIFIED confidence without email.
     """
     reasons = []
     root_causes = []
@@ -195,6 +242,8 @@ def _identity_explain_confidence(row, linked_member, best_member, best_strength,
         "root_causes": [],
         "possible_false_positive": False,
         "alternate": None,
+        "verification_basis": "Unverified",
+        "email_neutral": False,
     }
 
     if linked_member:
@@ -203,30 +252,25 @@ def _identity_explain_confidence(row, linked_member, best_member, best_strength,
         linked_id = linked_member.get("id")
 
         if participant_email and member_email and participant_email == member_email:
-            explanation["email_score"] = 45
-            reasons.append("Participant email exactly matches the linked member email.")
-        elif not participant_email:
-            explanation["email_score"] = 20
-            root_causes.append("Missing Email")
-            reasons.append("Participant email is missing, so only neutral partial email credit was awarded.")
-        elif not member_email:
-            explanation["email_score"] = 18
-            root_causes.append("Missing Email")
-            reasons.append("Linked member email is missing, so exact email verification is not possible.")
-        else:
+            explanation["email_score"] = 15
+            reasons.append("Participant email exactly matches the linked member email; email evidence added bonus confidence.")
+        elif participant_email and member_email and participant_email != member_email:
             root_causes.append("Email Mismatch")
-            reasons.append("Participant email does not match the linked member email.")
+            reasons.append("Participant email conflicts with the linked member email.")
+        else:
+            explanation["email_neutral"] = True
+            reasons.append("Email evidence is missing or incomplete; missing email is neutral in the name-only identity model.")
 
         if participant_name and member_name and participant_name == member_name:
-            explanation["name_score"] = 25
-            reasons.append("Participant name exactly matches the linked member name.")
+            explanation["name_score"] = 40
+            reasons.append("Exact name match between participant and linked member.")
         elif participant_name and member_name:
             overlap = _identity_token_overlap(participant_name, member_name)
             if overlap >= 0.66:
-                explanation["name_score"] = 18
+                explanation["name_score"] = 28
                 reasons.append("Participant and member names have strong token overlap.")
             elif overlap >= 0.34:
-                explanation["name_score"] = 9
+                explanation["name_score"] = 15
                 reasons.append("Participant and member names have partial token overlap.")
             else:
                 root_causes.append("Name Mismatch")
@@ -236,8 +280,8 @@ def _identity_explain_confidence(row, linked_member, best_member, best_strength,
             reasons.append("Name comparison could not be fully verified.")
 
         if row.get("is_member") or row.get("member_id"):
-            explanation["member_match_score"] = 10
-            reasons.append("Attendance row is linked/marked as a known member participant.")
+            explanation["member_match_score"] = 20
+            reasons.append("Stable member assignment exists on the attendance row.")
         else:
             root_causes.append("Unknown Participant")
             reasons.append("Attendance row is not marked as a known member participant.")
@@ -248,8 +292,11 @@ def _identity_explain_confidence(row, linked_member, best_member, best_strength,
         if total_for_sig:
             consistency = linked_hits / total_for_sig
             explanation["history_percent"] = round(consistency * 100, 1)
-            explanation["historical_consistency_score"] = round(consistency * 20)
-            reasons.append(f"Historical consistency is {round(consistency * 100, 1)}% for this participant signature.")
+            explanation["historical_consistency_score"] = round(consistency * 40)
+            if consistency >= 0.85:
+                reasons.append(f"Historical consistency high at {round(consistency * 100, 1)}% for this participant signature.")
+            else:
+                reasons.append(f"Historical consistency is {round(consistency * 100, 1)}% for this participant signature.")
             if consistency < 0.60:
                 root_causes.append("Historical Inconsistency")
         else:
@@ -260,6 +307,11 @@ def _identity_explain_confidence(row, linked_member, best_member, best_strength,
         base_score = sum(explanation[key] for key in ("email_score", "name_score", "member_match_score", "historical_consistency_score"))
         explanation["subtotal_score"] = base_score
         explanation["score_before_caps"] = base_score
+
+        if participant_email and member_email and participant_email != member_email:
+            explanation["penalty_score"] -= 10
+            reasons.append("Contradictory email evidence reduced confidence, but missing email would not.")
+
         if best_member and best_member.get("id") != linked_id:
             alternate_reason = _identity_alternate_reason(row, linked_member, best_member, linked_strength, best_strength)
             alternate = {
@@ -269,26 +321,27 @@ def _identity_explain_confidence(row, linked_member, best_member, best_strength,
                 "confidence": best_strength,
                 "reason": alternate_reason,
             }
-            if best_strength >= max(70, linked_strength + 20):
-                explanation["penalty_score"] = min(0, 29 - base_score)
+            if best_strength >= max(80, linked_strength + 25):
+                explanation["penalty_score"] += min(0, 29 - (base_score + explanation["penalty_score"]))
                 root_causes.append("Wrong Member Assignment")
-                reasons.append(f"A stronger alternate member match was found: {alternate['name']}.")
+                reasons.append(f"A materially stronger alternate member match was found: {alternate['name']}.")
                 explanation["alternate"] = alternate
-            elif best_strength >= max(45, linked_strength + 10):
-                explanation["penalty_score"] = min(0, 69 - base_score)
+            elif best_strength >= max(60, linked_strength + 15):
+                explanation["penalty_score"] += min(0, 69 - (base_score + explanation["penalty_score"]))
                 root_causes.append("Wrong Member Assignment")
                 reasons.append(f"Another member is a plausible stronger match: {alternate['name']}.")
                 explanation["alternate"] = alternate
             elif best_strength > linked_strength:
                 explanation["alternate"] = alternate
+
+        if explanation["name_score"] >= 40 and explanation["historical_consistency_score"] >= 35 and explanation["member_match_score"] >= 20 and explanation["penalty_score"] >= 0:
+            reasons.append("Name-only VERIFIED eligibility met: exact name match, high historical consistency, and stable member assignment.")
+            reasons.append("No contradictory evidence found.")
     else:
         root_causes.append("Missing Member")
         if not row.get("is_member"):
             root_causes.append("Unknown Participant")
-        if not participant_email:
-            root_causes.append("Missing Email")
         if best_member and best_strength >= 70:
-            explanation["penalty_score"] = -71
             explanation["alternate"] = {
                 "member_id": best_member.get("id"),
                 "name": _identity_member_name(best_member) or f"Member #{best_member.get('id')}",
@@ -317,10 +370,10 @@ def _identity_explain_confidence(row, linked_member, best_member, best_strength,
             explanation["final_confidence"] = 45
         else:
             reasons.append("Unknown participant row has no linked member to verify.")
-            base_score = 55
+            base_score = 40 if participant_name else 20
             explanation["subtotal_score"] = base_score
             explanation["score_before_caps"] = base_score
-            explanation["final_confidence"] = 55
+            explanation["final_confidence"] = base_score
         explanation["penalty_score"] = explanation["final_confidence"] - base_score
 
     if linked_member:
@@ -330,12 +383,21 @@ def _identity_explain_confidence(row, linked_member, best_member, best_strength,
         explanation["final_confidence"] = max(0, min(100, int(round(base_score + explanation["penalty_score"]))))
     explanation["score_after_caps"] = explanation["final_confidence"]
 
+    if _identity_category(explanation["final_confidence"]) == "VERIFIED":
+        has_email = explanation.get("email_score", 0) > 0
+        has_name = explanation.get("name_score", 0) >= 28 and explanation.get("historical_consistency_score", 0) >= 30
+        if has_email and has_name:
+            explanation["verification_basis"] = "Hybrid Evidence"
+        elif has_email:
+            explanation["verification_basis"] = "Email"
+        else:
+            explanation["verification_basis"] = "Name"
+
     explanation["root_causes"] = sorted(set(root_causes)) or ["No Major Identity Issue"]
     explanation["reason_lines"] = reasons
     explanation["reason"] = "; ".join(reasons) + "."
     explanation["possible_false_positive"] = _identity_is_possible_false_positive(explanation)
     return explanation
-
 
 def _identity_alternate_reason(row, linked_member, best_member, linked_strength, best_strength):
     participant_email = _identity_norm_email(row.get("participant_email"))
@@ -355,9 +417,9 @@ def _identity_alternate_reason(row, linked_member, best_member, linked_strength,
 def _identity_is_possible_false_positive(explanation):
     return bool(
         explanation.get("final_confidence", 0) < 70
-        and explanation.get("email_score", 0) >= 40
-        and explanation.get("name_score", 0) >= 18
-        and explanation.get("historical_consistency_score", 0) >= 15
+        and explanation.get("name_score", 0) >= 28
+        and explanation.get("historical_consistency_score", 0) >= 30
+        and explanation.get("member_match_score", 0) >= 20
     )
 
 
@@ -385,13 +447,17 @@ def _identity_category_explainer(confidence, explanation):
     }[category]
     reason_lines = list(explanation.get("reason_lines") or [])
     reasons = []
-    if explanation.get("email_score", 0) >= 40:
+    if explanation.get("email_score", 0) > 0:
         reasons.append("Email matched member email")
-    if explanation.get("name_score", 0) >= 25:
-        reasons.append("Name matched member name")
-    elif explanation.get("name_score", 0) >= 18:
+    elif explanation.get("email_neutral"):
+        reasons.append("Missing email treated as neutral")
+    if explanation.get("name_score", 0) >= 40:
+        reasons.append("Exact name match")
+    elif explanation.get("name_score", 0) >= 28:
         reasons.append("Name had strong member-name overlap")
-    if explanation.get("historical_consistency_score", 0) >= 15:
+    if explanation.get("member_match_score", 0) >= 20:
+        reasons.append("Stable member assignment")
+    if explanation.get("historical_consistency_score", 0) >= 35:
         reasons.append("Historical consistency high")
     if explanation.get("penalty_score", 0) < 0:
         reasons.append("Penalty/cap reduced the final confidence")
@@ -492,10 +558,13 @@ def _identity_load_scan(force=False):
     meeting_rollup = defaultdict(lambda: {"issue_count": 0, "broken_count": 0, "suspicious_count": 0, "confidence_total": 0, "row_count": 0, "topic": "Untitled Meeting", "date": None})
     issue_count = 0
     confidence_total = 0
+    old_confidence_total = 0
     false_positive_count = 0
     email_exact_count = 0
     name_exact_count = 0
     full_exact_count = 0
+    old_counts = Counter()
+    verification_basis_counts = Counter()
 
     for row in attendance_rows:
         email_exact, name_exact, full_exact = _identity_current_match_flags(row)
@@ -514,11 +583,17 @@ def _identity_load_scan(force=False):
             }
         candidates = _identity_candidate_pool(row, members, members_by_email, member_token_index, member_by_id, member_index_by_id)
         best_member, best_strength = _identity_best_member(row, candidates, signature_counts)
+        old_confidence = _identity_legacy_confidence(row, linked_member, best_member, best_strength, signature_counts)
+        old_category = _identity_category(old_confidence)
+        old_counts[old_category] += 1
+        old_confidence_total += old_confidence
         explanation = _identity_explain_confidence(row, linked_member, best_member, best_strength, signature_counts)
         confidence = explanation["final_confidence"]
         category = _identity_category(confidence)
         category_explainer = _identity_category_explainer(confidence, explanation)
         counts[category] += 1
+        if category == "VERIFIED":
+            verification_basis_counts[explanation.get("verification_basis") or "Unverified"] += 1
         is_issue = category in ("SUSPICIOUS", "BROKEN")
         if is_issue:
             issue_count += 1
@@ -540,7 +615,10 @@ def _identity_load_scan(force=False):
             "linked_member": linked_member_label,
             "member_email": row.get("linked_member_email") or "—",
             "confidence": confidence,
+            "old_confidence": old_confidence,
+            "old_category": old_category,
             "category": category,
+            "verification_basis": explanation.get("verification_basis"),
             "badge_class": _identity_badge_class(category),
             "reason": explanation["reason"],
             "member_id": row.get("member_id"),
@@ -583,12 +661,13 @@ def _identity_load_scan(force=False):
 
     total_rows = len(attendance_rows)
     trust_score = round((confidence_total / total_rows), 2) if total_rows else 100.0
-    adjusted_confidence_total = confidence_total + sum(max(0, 70 - r["confidence"]) for r in records if r["possible_false_positive"])
-    adjusted_trust_score = round((adjusted_confidence_total / total_rows), 2) if total_rows else 100.0
-    trust_score_difference = round(adjusted_trust_score - trust_score, 2)
-    false_positive_impact = round((adjusted_confidence_total - confidence_total) / total_rows, 2) if total_rows else 0.0
+    old_trust_score = round((old_confidence_total / total_rows), 2) if total_rows else 100.0
+    trust_score_difference = round(trust_score - old_trust_score, 2)
+    false_positive_impact = round(sum(max(0, 70 - r["confidence"]) for r in records if r["possible_false_positive"]) / total_rows, 2) if total_rows else 0.0
     true_suspicious = max(0, counts["SUSPICIOUS"] - false_positive_count)
     true_broken = counts["BROKEN"]
+    old_suspicious_total = old_counts["SUSPICIOUS"] + old_counts["BROKEN"]
+    new_suspicious_total = counts["SUSPICIOUS"] + counts["BROKEN"]
 
     top_members = _identity_top_member_rollup(member_rollup)
     top_meetings = _identity_top_meeting_rollup(meeting_rollup)
@@ -598,16 +677,17 @@ def _identity_load_scan(force=False):
     ]
     worst_cases = sorted([r for r in records if r["category"] in ("SUSPICIOUS", "BROKEN")], key=lambda r: (r["confidence"], r["attendance_id"] or 0))[:IDENTITY_WORST_LIMIT]
     verified_candidates = sorted(
-        [r for r in records if r.get("full_exact_match") or r["confidence"] >= 90],
+        [r for r in records if r["category"] == "VERIFIED" or r["confidence"] >= 90 or (r.get("name_exact_match") and (r.get("explanation") or {}).get("historical_consistency_score", 0) >= 35)],
         key=lambda r: (-r["confidence"], r["attendance_id"] or 0),
     )[:IDENTITY_TOP_LIMIT]
     score_loss_by_category = _identity_score_loss_by_category(records)
-    calibration_warning = full_exact_count > 0 and counts["VERIFIED"] == 0
+    calibration_warning = name_exact_count > 0 and counts["VERIFIED"] == 0
     formula_findings = [
-        "Exact email + exact name + linked-member evidence totals 80 before history, so VERIFIED requires at least 15/20 historical consistency points.",
-        "Alternate-member logic can cap otherwise strong rows to 69 or 29; Score Before Caps and Score After Caps expose every suppression.",
-        "Rows without linked members remain capped for diagnostics only; no automatic remapping or writes are performed.",
-        "Threshold reachability is now auditable per row through subtotal, penalty, cap, final confidence, and threshold fields.",
+        "Old email-centric formula: Email up to 45, name up to 25, member link up to 10, history up to 20; exact name-only rows could not reach VERIFIED without email-like credit.",
+        "New name-centric formula: Name up to 40, historical consistency up to 40, stable member assignment up to 20, and exact email as an optional +15 bonus.",
+        "Missing participant/member email is neutral: it adds no bonus but does not create a root cause, penalty, or confidence cap by itself.",
+        "Exact name + high historical consistency + stable linked member can reach VERIFIED even when all email evidence is absent.",
+        "Alternate-member caps remain diagnostic-only for contradictory evidence; the scanner performs no remaps, writes, schema changes, or auto-fixes.",
     ]
 
     scan = {
@@ -634,10 +714,19 @@ def _identity_load_scan(force=False):
             "likely_false_positives": false_positive_count,
             "true_suspicious_rows": true_suspicious,
             "true_broken_rows": true_broken,
-            "original_trust_score": trust_score,
-            "adjusted_trust_score": adjusted_trust_score,
+            "original_trust_score": old_trust_score,
+            "adjusted_trust_score": trust_score,
             "trust_score_difference": trust_score_difference,
             "false_positive_impact": false_positive_impact,
+            "old_verified_count": old_counts["VERIFIED"],
+            "new_verified_count": counts["VERIFIED"],
+            "verified_count_difference": counts["VERIFIED"] - old_counts["VERIFIED"],
+            "old_suspicious_count": old_suspicious_total,
+            "new_suspicious_count": new_suspicious_total,
+            "suspicious_count_difference": new_suspicious_total - old_suspicious_total,
+            "verified_by_email": verification_basis_counts["Email"],
+            "verified_by_name": verification_basis_counts["Name"],
+            "verified_by_hybrid": verification_basis_counts["Hybrid Evidence"],
         },
         "top_members": top_members,
         "top_meetings": top_meetings,
@@ -860,7 +949,7 @@ def identity_integrity():
 
         <div class="identity-grid">
           <div class="identity-card"><small>Total Attendance Rows</small><strong>{{ summary.total_rows }}</strong></div>
-          <div class="identity-card trust"><small>Identity Trust Score</small><strong>{{ '%.2f'|format(summary.trust_score) }}%</strong></div>
+          <div class="identity-card trust"><small>Calibrated Trust Score</small><strong>{{ '%.2f'|format(summary.trust_score) }}%</strong></div>
           <div class="identity-card"><small>Verified</small><strong>{{ summary.verified }}</strong></div>
           <div class="identity-card"><small>Possible Match</small><strong>{{ summary.possible }}</strong></div>
           <div class="identity-card warn"><small>Suspicious</small><strong>{{ summary.suspicious }}</strong></div>
@@ -872,8 +961,11 @@ def identity_integrity():
           <div class="identity-card"><small>Email Exact Matches</small><strong>{{ diagnostics.email_exact_matches }}</strong></div>
           <div class="identity-card"><small>Name Exact Matches</small><strong>{{ diagnostics.name_exact_matches }}</strong></div>
           <div class="identity-card trust"><small>Full Exact Matches</small><strong>{{ diagnostics.full_exact_matches }}</strong></div>
-          <div class="identity-card"><small>Current Verified Count</small><strong>{{ diagnostics.current_verified_count }}</strong></div>
-          <div class="identity-card warn"><small>Expected Verified Count</small><strong>{{ diagnostics.expected_verified_count }}</strong></div>
+          <div class="identity-card"><small>Verified by Name</small><strong>{{ diagnostics.verified_by_name }}</strong></div>
+          <div class="identity-card"><small>Verified by Email</small><strong>{{ diagnostics.verified_by_email }}</strong></div>
+          <div class="identity-card trust"><small>Verified by Hybrid Evidence</small><strong>{{ diagnostics.verified_by_hybrid }}</strong></div>
+          <div class="identity-card"><small>Old Verified Count</small><strong>{{ diagnostics.old_verified_count }}</strong></div>
+          <div class="identity-card trust"><small>New Verified Count</small><strong>{{ diagnostics.new_verified_count }}</strong></div>
         </div>
         {% if diagnostics.calibration_warning %}
         <div class="identity-card broken">
@@ -887,12 +979,25 @@ def identity_integrity():
         <div class="identity-grid">
           <div class="identity-card"><small>Rows Examined</small><strong>{{ diagnostics.rows_examined }}</strong></div>
           <div class="identity-card trust"><small>Original Trust Score</small><strong>{{ '%.2f'|format(diagnostics.original_trust_score) }}%</strong></div>
-          <div class="identity-card trust"><small>Adjusted Trust Score</small><strong>{{ '%.2f'|format(diagnostics.adjusted_trust_score) }}%</strong></div>
+          <div class="identity-card trust"><small>Calibrated Trust Score</small><strong>{{ '%.2f'|format(diagnostics.adjusted_trust_score) }}%</strong></div>
           <div class="identity-card warn"><small>Difference</small><strong>{{ '%+.2f'|format(diagnostics.trust_score_difference) }}%</strong></div>
           <div class="identity-card warn"><small>False Positive Impact</small><strong>{{ '%+.2f'|format(diagnostics.false_positive_impact) }}%</strong></div>
           <div class="identity-card warn"><small>Likely False Positives V2</small><strong>{{ diagnostics.likely_false_positives }}</strong></div>
           <div class="identity-card warn"><small>True Suspicious Rows</small><strong>{{ diagnostics.true_suspicious_rows }}</strong></div>
           <div class="identity-card broken"><small>True Broken Rows</small><strong>{{ diagnostics.true_broken_rows }}</strong></div>
+        </div>
+
+
+
+        <h2 class="identity-section-title">Old Model vs New Model</h2>
+        <div class="identity-grid">
+          <div class="identity-card warn"><small>Old Model</small><strong style="font-size:22px">Email-Centric</strong></div>
+          <div class="identity-card trust"><small>New Model</small><strong style="font-size:22px">Name-Centric</strong></div>
+          <div class="identity-card"><small>Verified Count Difference</small><strong>{{ '%+d'|format(diagnostics.verified_count_difference) }}</strong></div>
+          <div class="identity-card trust"><small>Trust Score Difference</small><strong>{{ '%+.2f'|format(diagnostics.trust_score_difference) }}%</strong></div>
+          <div class="identity-card warn"><small>Suspicious Count Difference</small><strong>{{ '%+d'|format(diagnostics.suspicious_count_difference) }}</strong></div>
+          <div class="identity-card"><small>Old Suspicious/Broken</small><strong>{{ diagnostics.old_suspicious_count }}</strong></div>
+          <div class="identity-card"><small>New Suspicious/Broken</small><strong>{{ diagnostics.new_suspicious_count }}</strong></div>
         </div>
 
         <div class="identity-grid">
@@ -950,8 +1055,8 @@ def identity_integrity():
         </tbody></table></div>
 
         <h2 class="identity-section-title">Top Verified Candidates</h2>
-        <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Participant</th><th>Participant Email</th><th>Linked Member</th><th>Member Email</th><th>Confidence</th><th>Category</th></tr></thead><tbody>
-          {% for row in verified_candidates %}<tr><td><strong>{{ row.participant_name }}</strong></td><td>{{ row.participant_email }}</td><td>{{ row.linked_member }}</td><td>{{ row.member_email }}</td><td><strong>{{ row.confidence }}%</strong></td><td><span class="identity-pill {{ row.badge_class }}">{{ row.category }}</span>{% if row.full_exact_match %}<div class="identity-muted">Full exact identity match</div>{% endif %}</td></tr>{% else %}<tr><td colspan="6" class="identity-muted">No rows currently qualify as clear verified candidates.</td></tr>{% endfor %}
+        <div class="identity-table-wrap"><table class="identity-table"><thead><tr><th>Participant</th><th>Participant Email</th><th>Linked Member</th><th>Member Email</th><th>Confidence</th><th>Category</th><th>Verified By</th></tr></thead><tbody>
+          {% for row in verified_candidates %}<tr><td><strong>{{ row.participant_name }}</strong></td><td>{{ row.participant_email }}</td><td>{{ row.linked_member }}</td><td>{{ row.member_email }}</td><td><strong>{{ row.confidence }}%</strong><div class="identity-muted">Old: {{ row.old_confidence }}%</div></td><td><span class="identity-pill {{ row.badge_class }}">{{ row.category }}</span>{% if row.full_exact_match %}<div class="identity-muted">Full exact identity match</div>{% endif %}</td><td>{{ row.verification_basis or 'Candidate' }}<div class="identity-muted">{{ row.reason }}</div></td></tr>{% else %}<tr><td colspan="7" class="identity-muted">No rows currently qualify as clear verified candidates.</td></tr>{% endfor %}
         </tbody></table></div>
 
         <h2 class="identity-section-title">Top Worst Cases</h2>
@@ -976,16 +1081,18 @@ def identity_integrity():
                   <details class="identity-details">
                     <summary>Confidence decision breakdown</summary>
                     <div class="identity-score-grid">
-                      <div class="identity-score"><span>Raw Email Score</span><b>{{ row.explanation.email_score }}</b></div>
-                      <div class="identity-score"><span>Raw Name Score</span><b>{{ row.explanation.name_score }}</b></div>
-                      <div class="identity-score"><span>Raw Member Match Score</span><b>{{ row.explanation.member_match_score }}</b></div>
-                      <div class="identity-score"><span>Raw Historical Score</span><b>{{ row.explanation.historical_consistency_score }}</b></div>
+                      <div class="identity-score"><span>Email Bonus (Neutral if Missing)</span><b>{{ row.explanation.email_score }}</b></div>
+                      <div class="identity-score"><span>Name Score</span><b>{{ row.explanation.name_score }}</b></div>
+                      <div class="identity-score"><span>Stable Assignment Score</span><b>{{ row.explanation.member_match_score }}</b></div>
+                      <div class="identity-score"><span>Historical Consistency Score</span><b>{{ row.explanation.historical_consistency_score }}</b></div>
                       <div class="identity-score"><span>Subtotal</span><b>{{ row.explanation.subtotal_score }}</b></div>
                       <div class="identity-score"><span>Raw Penalty Score</span><b>{{ row.explanation.penalty_score }}</b></div>
                       <div class="identity-score"><span>Score Before Caps</span><b>{{ row.explanation.score_before_caps }}</b></div>
                       <div class="identity-score"><span>Score After Caps</span><b>{{ row.explanation.score_after_caps }}</b></div>
                       <div class="identity-score"><span>Threshold Applied</span><b>{{ row.category_explainer.threshold }}</b></div>
+                      <div class="identity-score"><span>Old Email-Centric Confidence</span><b>{{ row.old_confidence }}%</b></div>
                       <div class="identity-score"><span>Final Confidence</span><b>{{ row.explanation.final_confidence }}%</b></div>
+                      <div class="identity-score"><span>Verified By</span><b>{{ row.verification_basis or '—' }}</b></div>
                     </div>
                     <div class="identity-muted" style="margin-top:8px">Root causes: {{ row.root_causes|join(', ') }}</div>
                     <div class="identity-alt">
